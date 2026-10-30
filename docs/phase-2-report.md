@@ -6,24 +6,24 @@
 
 The pnpm + Turborepo monorepo, the NestJS API, four Next.js shells, the shared packages, Docker, and CI are all in place. Lint, type checks, unit tests and builds pass with the Turborepo cache bypassed. The API was started against a real PostgreSQL 18 instance and migrations ran.
 
-**Update (Docker verification):** Docker Desktop is now installed. Compose, live Redis, a Redis outage and recovery, and the API and admin images have all been verified. That work turned up two problems, both fixed: the Dockerfiles failed on Node 26, and Redis outages flooded the log. The pos, kds and qr images and the GitHub Actions workflow have still not been run.
+**Update (Docker verification):** Docker Desktop is now installed. Compose, live Redis, a Redis outage and recovery, and the API and admin images have all been verified. That work turned up two problems, both fixed: the Dockerfiles failed on Node 26, and Redis outages flooded the log. All five app images now build and serve. CI status is recorded in §7.
 
 ## 2. Verification results
 
-| #   | Check                  | Result                                  | Evidence                                                                                                                                                                       |
-| --- | ---------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1   | pnpm workspace         | ✅ Pass                                 | 11 packages; `pnpm install --frozen-lockfile` works; `pnpm peers check`: no issues                                                                                             |
-| 2   | Turborepo commands     | ✅ Pass                                 | `turbo run lint/typecheck/test/build --force`: 14/14, 14/14, 9/9, 9/9 tasks                                                                                                    |
-| 3   | Next.js builds         | ✅ Pass                                 | admin, pos, kds, qr compile; routes prerendered as static pages                                                                                                                |
-| 4   | NestJS API starts      | ✅ Pass                                 | Boots, serves `/api/v1/*`                                                                                                                                                      |
-| 5   | PostgreSQL connection  | ✅ Pass                                 | PostgreSQL 18.4: health check reports `database: up` (3 ms); migration `InitExtensions` executed and recorded                                                                  |
-| 6   | Redis connection       | ✅ Pass                                 | Redis 8 via Compose: `/health` 200 with `redis: up`. After `docker compose stop redis`: 503 `redis: down` (2 s timeout). After restarting Redis: 200 again with no API restart |
-| 7   | Swagger                | ✅ Pass                                 | `/api/docs` returns 200; `/api/docs-json` lists `/api/v1/health`                                                                                                               |
-| 8   | Docker Compose         | ✅ Pass                                 | `docker compose up -d`: postgres and redis both healthy                                                                                                                        |
-| 8a  | Docker images          | ✅ api, admin · ⚠️ pos/kds/qr not built | `api` (407 MB) serves `/health` 200 against Compose services; `admin` (306 MB) serves `/` 200; both run as `node`                                                              |
-| 9   | Shared package imports | ✅ Pass                                 | Apps build against `ui`, `api-client`, `types`, `validation`, `utils`                                                                                                          |
-| 10  | ESLint + TypeScript    | ✅ Pass                                 | 0 errors, 0 warnings                                                                                                                                                           |
-| 11  | GitHub Actions         | ⚠️ Written, not run                     | `.github/workflows/ci.yml`                                                                                                                                                     |
+| #   | Check                  | Result              | Evidence                                                                                                                                                                                |
+| --- | ---------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | pnpm workspace         | ✅ Pass             | 11 packages; `pnpm install --frozen-lockfile` works; `pnpm peers check`: no issues                                                                                                      |
+| 2   | Turborepo commands     | ✅ Pass             | `turbo run lint/typecheck/test/build --force`: 14/14, 14/14, 9/9, 9/9 tasks                                                                                                             |
+| 3   | Next.js builds         | ✅ Pass             | admin, pos, kds, qr compile; routes prerendered as static pages                                                                                                                         |
+| 4   | NestJS API starts      | ✅ Pass             | Boots, serves `/api/v1/*`                                                                                                                                                               |
+| 5   | PostgreSQL connection  | ✅ Pass             | PostgreSQL 18.4: health check reports `database: up` (3 ms); migration `InitExtensions` executed and recorded                                                                           |
+| 6   | Redis connection       | ✅ Pass             | Redis 8 via Compose: `/health` 200 with `redis: up`. After `docker compose stop redis`: 503 `redis: down` (2 s timeout). After restarting Redis: 200 again with no API restart          |
+| 7   | Swagger                | ✅ Pass             | `/api/docs` returns 200; `/api/docs-json` lists `/api/v1/health`                                                                                                                        |
+| 8   | Docker Compose         | ✅ Pass             | `docker compose up -d`: postgres and redis both healthy                                                                                                                                 |
+| 8a  | Docker images          | ✅ Pass             | `docker compose --profile apps up -d --build`: all 7 containers healthy. api `/health` 200; admin, pos, kds, qr `/` 200 on ports 3000–3003 (306 MB each; api 407 MB); all run as `node` |
+| 9   | Shared package imports | ✅ Pass             | Apps build against `ui`, `api-client`, `types`, `validation`, `utils`                                                                                                                   |
+| 10  | ESLint + TypeScript    | ✅ Pass             | 0 errors, 0 warnings                                                                                                                                                                    |
+| 11  | GitHub Actions         | ⚠️ Written, not run | `.github/workflows/ci.yml`                                                                                                                                                              |
 
 The PostgreSQL used for testing was a temporary instance in a scratch folder (not a project dependency); it has been stopped.
 
@@ -42,7 +42,8 @@ Additional API behaviour checked live:
 3. **503 responses lost the per-dependency results:** they now appear in a `checks` field.
 4. **Docker images failed to build:** Node 25+ no longer bundles corepack, so `RUN corepack enable` exited with code 127. Both Dockerfiles now run `npm i -g pnpm@12.16.1` (the version pinned in `package.json`). The README is updated to match.
 5. **Redis outages flooded the log:** about 50 stack traces in 20 s, mostly from BullMQ's five queue connections. The shared client and every queue now log one line per connection when the connection is lost (`ECONNREFUSED`) and one when it's restored (`shared/redis/redis-error-logging.ts`).
-6. **Local `.env` needs a real JWT secret:** the API refuses to start with `.env.example`'s `JWT_ACCESS_SECRET` (it needs at least 32 characters). The local `.env` now has a random value. This is intended behaviour, not a code change.
+6. **A fresh `.env` from `.env.example` didn't boot:** the example ships `JWT_ACCESS_SECRET=` (empty, since the secret isn't used until Phase 3), and the empty string failed the 32-character minimum. Empty now counts as unset; a non-empty secret shorter than 32 characters is still rejected (new unit test).
+7. **API image crashed with `NODE_ENV=development`:** dev mode enabled the `pino-pretty` transport, which is a dev dependency and isn't in the image. It's now used only when installed; otherwise logs fall back to JSON.
 
 ## 3. Dependency versions
 
@@ -161,12 +162,9 @@ pnpm dev
 
 ## 7. Remaining issues and next steps
 
-1. **Build the remaining images:** pos, kds and qr use the same Dockerfile as admin, which now builds. Run `docker compose --profile apps up -d --build` once.
-2. **Run CI on GitHub:** the workflow has never run. Push `main` to a remote to trigger it.
-3. **Install Node 26 locally** to match CI and the Docker images. Local checks still run on Node 24.21.
-4. **`.env.example` JWT secret:** the placeholder is too short to pass validation, so a fresh `cp .env.example .env` doesn't boot. Either use a 32+ character placeholder or document generating one.
-5. **Containerised dev mode:** running the production API image with `NODE_ENV=development` crashes because `pino-pretty` is a dev dependency. This only matters if someone runs the image in dev mode; Compose uses production.
-6. **Deferred until needed:** Socket.IO and React Hook Form. They arrive with the first real-time and form features in Phase 3.
-7. **Placeholders:** `infra/aws` and `infra/monitoring` are empty.
+1. **CI on GitHub:** see the latest run on `main` at https://github.com/samarendra3/FoodStack/actions.
+2. **Install Node 26 locally** to match CI and the Docker images. Local checks still run on Node 24.21.
+3. **Deferred until needed:** Socket.IO and React Hook Form. They arrive with the first real-time and form features in Phase 3.
+4. **Placeholders:** `infra/aws` and `infra/monitoring` are empty.
 
-Resolved since the first version of this report: Docker run, live Redis/BullMQ test, Redis log flooding, first commit.
+Resolved since the first version of this report: Docker run, live Redis/BullMQ test, Redis log flooding, all five images built and checked, `.env.example` booting, dev-mode image crash, first commit.

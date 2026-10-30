@@ -11,6 +11,16 @@ import { HealthModule } from './modules/health/health.module';
 import { QueueModule } from './shared/queue/queue.module';
 import { RedisModule } from './shared/redis/redis.module';
 
+/** pino-pretty is a dev dependency; production images (even run with NODE_ENV=development) lack it. */
+function isInstalled(pkg: string): boolean {
+  try {
+    require.resolve(pkg);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 @Module({
   imports: [
     AppConfigModule,
@@ -31,7 +41,7 @@ import { RedisModule } from './shared/redis/redis.module';
             censor: '[REDACTED]',
           },
           autoLogging: { ignore: (req) => req.url?.startsWith('/api/v1/health') ?? false },
-          ...(config.get('NODE_ENV') === 'development'
+          ...(config.get('NODE_ENV') === 'development' && isInstalled('pino-pretty')
             ? { transport: { target: 'pino-pretty', options: { singleLine: true } } }
             : {}),
         },

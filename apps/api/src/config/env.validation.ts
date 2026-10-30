@@ -43,7 +43,11 @@ export const envSchema = z
     QUEUE_PREFIX: z.string().min(1).default('foodstack'),
 
     // Placeholders: consumed by the auth module in Phase 3.
-    JWT_ACCESS_SECRET: z.string().min(32).optional(),
+    // `.env.example` ships `JWT_ACCESS_SECRET=`; treat the empty value as unset.
+    JWT_ACCESS_SECRET: z.preprocess(
+      (v) => (v === '' ? undefined : v),
+      z.string().min(32).optional(),
+    ),
     JWT_ACCESS_TTL: z.string().default('15m'),
     JWT_REFRESH_TTL: z.string().default('30d'),
 

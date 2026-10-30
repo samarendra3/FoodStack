@@ -19,6 +19,13 @@ describe('validateEnv', () => {
     expect(() => validateEnv({})).toThrow(/DATABASE_PASSWORD/);
   });
 
+  it('treats an empty JWT secret as unset but rejects a short one', () => {
+    expect(validateEnv({ ...base, JWT_ACCESS_SECRET: '' }).JWT_ACCESS_SECRET).toBeUndefined();
+    expect(() => validateEnv({ ...base, JWT_ACCESS_SECRET: 'too-short' })).toThrow(
+      /JWT_ACCESS_SECRET/,
+    );
+  });
+
   it('rejects wildcard CORS in production', () => {
     expect(() => validateEnv({ ...base, NODE_ENV: 'production', CORS_ORIGINS: '*' })).toThrow(
       /Wildcard/,
