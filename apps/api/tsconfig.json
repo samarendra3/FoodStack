@@ -1,0 +1,9 @@
+{
+  "extends": "@foodstack/config/tsconfig/nestjs.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "types": ["node", "jest"]
+  },
+  "include": ["src"]
+}

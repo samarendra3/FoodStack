@@ -1,0 +1,10 @@
+packages:
+  - apps/*
+  - packages/*
+
+# Dependencies allowed to run install scripts (native bindings). Telemetry scripts stay blocked.
+allowBuilds:
+  '@parcel/watcher': true
+  msgpackr-extract: true
+  unrs-resolver: true
+  '@scarf/scarf': false

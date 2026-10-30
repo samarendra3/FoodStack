@@ -1,0 +1,20 @@
+{
+  "$schema": "https://ui.shadcn.com/schema.json",
+  "style": "new-york",
+  "rsc": true,
+  "tsx": true,
+  "tailwind": {
+    "config": "",
+    "css": "src/styles/globals.css",
+    "baseColor": "slate",
+    "cssVariables": true
+  },
+  "iconLibrary": "lucide",
+  "aliases": {
+    "components": "@foodstack/ui/components",
+    "utils": "@foodstack/ui/lib/utils",
+    "ui": "@foodstack/ui/components",
+    "lib": "@foodstack/ui/lib",
+    "hooks": "@foodstack/ui/hooks"
+  }
+}
