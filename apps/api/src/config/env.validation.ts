@@ -28,8 +28,12 @@ export const envSchema = z
 
     DATABASE_HOST: z.string().min(1),
     DATABASE_PORT: z.coerce.number().int().positive().default(5432),
+    // Runtime role: no table ownership, no BYPASSRLS (docs/phase-3-design.md §1).
     DATABASE_USER: z.string().min(1),
     DATABASE_PASSWORD: z.string().min(1),
+    // Schema owner; used only by the migration CLI, never by the running API.
+    DATABASE_MIGRATION_USER: z.string().min(1).optional(),
+    DATABASE_MIGRATION_PASSWORD: z.string().min(1).optional(),
     DATABASE_NAME: z.string().min(1),
     DATABASE_SSL: booleanString,
     DATABASE_POOL_MAX: z.coerce.number().int().positive().default(10),
@@ -42,19 +46,30 @@ export const envSchema = z
     REDIS_TLS: booleanString,
     QUEUE_PREFIX: z.string().min(1).default('foodstack'),
 
-    // Placeholders: consumed by the auth module in Phase 3.
-    // `.env.example` ships `JWT_ACCESS_SECRET=`; treat the empty value as unset.
-    JWT_ACCESS_SECRET: z.preprocess(
-      (v) => (v === '' ? undefined : v),
-      z.string().min(32).optional(),
-    ),
-    JWT_ACCESS_TTL: z.string().default('15m'),
-    JWT_REFRESH_TTL: z.string().default('30d'),
-
     AWS_REGION: z.string().default('ap-south-1'),
     AWS_S3_BUCKET: z.string().optional(),
   })
   .superRefine((env, ctx) => {
+    if (
+      (env.DATABASE_MIGRATION_USER === undefined) !==
+      (env.DATABASE_MIGRATION_PASSWORD === undefined)
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['DATABASE_MIGRATION_PASSWORD'],
+        message: 'Set DATABASE_MIGRATION_USER and DATABASE_MIGRATION_PASSWORD together',
+      });
+    }
+    if (
+      env.DATABASE_MIGRATION_USER !== undefined &&
+      env.DATABASE_MIGRATION_USER === env.DATABASE_USER
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['DATABASE_USER'],
+        message: 'The API must not connect as the schema owner (DATABASE_MIGRATION_USER)',
+      });
+    }
     if (env.NODE_ENV === 'production') {
       if (env.CORS_ORIGINS.length === 0) {
         ctx.addIssue({ code: 'custom', path: ['CORS_ORIGINS'], message: 'Required in production' });

@@ -5,17 +5,26 @@ import { Env } from '../config/env.validation';
 /**
  * Single source of TypeORM options for the Nest app and the migration CLI.
  * Schema changes go through migrations only: `synchronize` is never enabled.
+ *
+ * `role: 'owner'` connects as the schema owner (migrations); the API always uses the app role,
+ * which cannot bypass row-level security.
  */
-export function buildDataSourceOptions(env: Env): DataSourceOptions {
+export function buildDataSourceOptions(env: Env, role: 'app' | 'owner' = 'app'): DataSourceOptions {
+  const asOwner = role === 'owner';
+  if (asOwner && !env.DATABASE_MIGRATION_USER) {
+    throw new Error(
+      'DATABASE_MIGRATION_USER and DATABASE_MIGRATION_PASSWORD are required for migrations',
+    );
+  }
   return {
     type: 'postgres',
     host: env.DATABASE_HOST,
     port: env.DATABASE_PORT,
-    username: env.DATABASE_USER,
-    password: env.DATABASE_PASSWORD,
+    username: asOwner ? env.DATABASE_MIGRATION_USER : env.DATABASE_USER,
+    password: asOwner ? env.DATABASE_MIGRATION_PASSWORD : env.DATABASE_PASSWORD,
     database: env.DATABASE_NAME,
     ssl: env.DATABASE_SSL ? { rejectUnauthorized: true } : false,
-    applicationName: `foodstack-api-${env.NODE_ENV}`,
+    applicationName: `foodstack-${asOwner ? 'migrations' : 'api'}-${env.NODE_ENV}`,
     // Entities are registered per module via `TypeOrmModule.forFeature`; the glob serves the CLI.
     entities: [join(__dirname, '..', 'modules', '**', '*.entity.{js,ts}')],
     migrations: [join(__dirname, 'migrations', '*.{js,ts}')],

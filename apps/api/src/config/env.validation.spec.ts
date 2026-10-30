@@ -19,11 +19,20 @@ describe('validateEnv', () => {
     expect(() => validateEnv({})).toThrow(/DATABASE_PASSWORD/);
   });
 
-  it('treats an empty JWT secret as unset but rejects a short one', () => {
-    expect(validateEnv({ ...base, JWT_ACCESS_SECRET: '' }).JWT_ACCESS_SECRET).toBeUndefined();
-    expect(() => validateEnv({ ...base, JWT_ACCESS_SECRET: 'too-short' })).toThrow(
-      /JWT_ACCESS_SECRET/,
+  it('requires migration credentials as a pair', () => {
+    expect(() => validateEnv({ ...base, DATABASE_MIGRATION_USER: 'foodstack_owner' })).toThrow(
+      /DATABASE_MIGRATION_PASSWORD/,
     );
+  });
+
+  it('rejects running the API as the schema owner', () => {
+    expect(() =>
+      validateEnv({
+        ...base,
+        DATABASE_MIGRATION_USER: 'foodstack',
+        DATABASE_MIGRATION_PASSWORD: 'secret',
+      }),
+    ).toThrow(/schema owner/);
   });
 
   it('rejects wildcard CORS in production', () => {

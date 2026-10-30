@@ -1,7 +1,7 @@
 # Local development stack. Ports bind to 127.0.0.1 only; production uses managed AWS
 # services (RDS, ElastiCache) in private subnets - see docs/deployment.md.
 #
-#   docker compose up -d postgres redis          # infrastructure only (run apps with pnpm dev)
+#   docker compose up -d postgres redis mailpit  # infrastructure only (run apps with pnpm dev)
 #   docker compose --profile apps up -d --build  # everything in containers
 
 name: foodstack
@@ -15,9 +15,13 @@ services:
     image: postgres:18-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${DATABASE_USER:?set DATABASE_USER in .env}
-      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?set DATABASE_PASSWORD in .env}
+      # Superuser = schema owner, used only for migrations (docs/phase-3-design.md §1).
+      POSTGRES_USER: ${DATABASE_MIGRATION_USER:?set DATABASE_MIGRATION_USER in .env}
+      POSTGRES_PASSWORD: ${DATABASE_MIGRATION_PASSWORD:?set DATABASE_MIGRATION_PASSWORD in .env}
       POSTGRES_DB: ${DATABASE_NAME:-foodstack}
+      # Runtime role created by init/02-app-role.sh; the API connects as this role.
+      DATABASE_USER: ${DATABASE_USER:?set DATABASE_USER in .env}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:?set DATABASE_PASSWORD in .env}
     ports:
       - '127.0.0.1:${DATABASE_PORT:-5432}:5432'
     volumes:
@@ -47,6 +51,17 @@ services:
       retries: 10
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
+
+  # Local SMTP sink for development email (web UI on http://localhost:8025).
+  mailpit:
+    image: axllent/mailpit:v1.31.6
+    restart: unless-stopped
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+    ports:
+      - '127.0.0.1:1025:1025'
+      - '127.0.0.1:8025:8025'
 
   api:
     profiles: [apps]

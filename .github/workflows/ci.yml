@@ -51,6 +51,56 @@ jobs:
         env:
           NEXT_PUBLIC_API_URL: https://api.example.invalid/api/v1
 
+  e2e:
+    name: Database and API e2e tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: foodstack_owner
+          POSTGRES_PASSWORD: ci-owner-password
+          POSTGRES_DB: foodstack
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U foodstack_owner -d foodstack"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      NODE_ENV: test
+      DATABASE_HOST: localhost
+      DATABASE_NAME: foodstack_test
+      DATABASE_USER: foodstack_app
+      DATABASE_PASSWORD: ci-app-password
+      DATABASE_MIGRATION_USER: foodstack_owner
+      DATABASE_MIGRATION_PASSWORD: ci-owner-password
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Same scripts the local Postgres container runs on a fresh volume.
+      - name: Create test database and app role
+        env:
+          PGHOST: localhost
+          PGPASSWORD: ci-owner-password
+          POSTGRES_USER: foodstack_owner
+          POSTGRES_DB: foodstack
+        run: |
+          psql -v ON_ERROR_STOP=1 -U foodstack_owner -d postgres -f infra/docker/postgres/init/01-test-database.sql
+          sh infra/docker/postgres/init/02-app-role.sh
+
+      - name: e2e tests
+        run: pnpm --filter @foodstack/api test:e2e
+
   docker:
     name: Docker images build
     runs-on: ubuntu-latest
