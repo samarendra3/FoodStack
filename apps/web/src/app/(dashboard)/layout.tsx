@@ -16,7 +16,12 @@ import { UserMenu } from '@/components/user-menu';
 const nav: NavSection[] = [
   {
     items: [
-      { label: 'Dashboard', href: '/', icon: <LayoutDashboard className="size-4" />, active: true },
+      {
+        label: 'Dashboard',
+        href: '/dashboard',
+        icon: <LayoutDashboard className="size-4" />,
+        active: true,
+      },
     ],
   },
   {
@@ -42,7 +47,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   return (
     <DashboardShell
       nav={nav}
-      breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Dashboard' }]}
+      breadcrumbs={[{ label: 'Home', href: '/dashboard' }, { label: 'Dashboard' }]}
       userArea={<UserMenu />}
     >
       {children}
