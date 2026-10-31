@@ -53,8 +53,12 @@ export const envSchema = z
 
     DATABASE_HOST: z.string().min(1),
     DATABASE_PORT: z.coerce.number().int().positive().default(5432),
+    /** Runtime role: DML only, no superuser, no BYPASSRLS (checked at startup). */
     DATABASE_USER: z.string().min(1),
     DATABASE_PASSWORD: z.string().min(1),
+    /** Schema owner used by the migration CLI. Falls back to DATABASE_USER when unset. */
+    DATABASE_MIGRATION_USER: optionalString,
+    DATABASE_MIGRATION_PASSWORD: optionalString,
     DATABASE_NAME: z.string().min(1),
     DATABASE_SSL: booleanString,
     /** CA bundle for TLS verification (e.g. the AWS RDS global bundle). System CAs when unset. */
@@ -133,6 +137,21 @@ export const envSchema = z
           message: (error as Error).message,
         });
       }
+    }
+
+    if (Boolean(env.DATABASE_MIGRATION_USER) !== Boolean(env.DATABASE_MIGRATION_PASSWORD)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['DATABASE_MIGRATION_PASSWORD'],
+        message: 'DATABASE_MIGRATION_USER and DATABASE_MIGRATION_PASSWORD must be set together',
+      });
+    }
+    if (env.DATABASE_MIGRATION_USER && env.DATABASE_MIGRATION_USER === env.DATABASE_USER) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['DATABASE_USER'],
+        message: 'The API role must differ from the migration (schema owner) role',
+      });
     }
 
     if (env.DATABASE_SSL_CA_PATH && !existsSync(env.DATABASE_SSL_CA_PATH)) {

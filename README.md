@@ -26,12 +26,19 @@ Node.js 26 (see `.nvmrc`; ≥ 24.11 works), pnpm 12 (`npm i -g pnpm@12.16.1`; No
 ## Getting started
 
 ```bash
-cp .env.example .env            # then set DATABASE_PASSWORD / REDIS_PASSWORD
+cp .env.example .env            # then set the DATABASE_*, DATABASE_MIGRATION_* and REDIS passwords
 pnpm install
 pnpm docker:up                  # PostgreSQL 18 + Redis on 127.0.0.1
-pnpm db:migrate
+pnpm db:migrate                 # runs as DATABASE_MIGRATION_USER (schema owner)
 pnpm dev                        # all apps + API in watch mode
 ```
+
+The API connects as `DATABASE_USER`, a restricted role that row-level security applies to; it is
+created when the Postgres volume is first initialised (`infrastructure/docker/postgres/init`).
+If you created the volume before this role existed, recreate it: `docker compose down -v`.
+
+For the containerised stack (`--profile apps`, runs with `NODE_ENV=production`) also add a JWT
+key pair to `.env`: `pnpm --filter @foodstack/api keys:generate >> .env`.
 
 Tests use a separate database: copy `apps/api/.env.test.example` to `apps/api/.env.test`.
 

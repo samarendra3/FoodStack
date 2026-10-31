@@ -40,6 +40,27 @@ flowchart TB
 3. **release tag**: deploy to staging → E2E (Playwright) + k6 smoke → manual approval → production blue/green (CodeDeploy for ECS) with automatic rollback on alarm.
 
 - Migrations are backward-compatible (expand/contract) so rollback of code does not require DB rollback.
+- Migration task command (API image): `node node_modules/typeorm/cli.js migration:run -d dist/database/data-source.js` with `DATABASE_MIGRATION_USER/PASSWORD` set; locally the compose `migrate` service runs it before `api` starts.
+
+### Database roles (RDS)
+
+Created once per environment by the platform team (the RDS master user is used only for this):
+
+```sql
+CREATE ROLE foodstack_migrator LOGIN PASSWORD '…' NOSUPERUSER BYPASSRLS;  -- owns the schema; BYPASSRLS for data backfills
+CREATE ROLE foodstack_app LOGIN PASSWORD '…' NOSUPERUSER NOBYPASSRLS;     -- the API and workers
+GRANT CONNECT ON DATABASE foodstack TO foodstack_app;
+GRANT CREATE, USAGE ON SCHEMA public TO foodstack_migrator;
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+GRANT USAGE ON SCHEMA public TO foodstack_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE foodstack_migrator IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO foodstack_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE foodstack_migrator IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO foodstack_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE foodstack_migrator IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO foodstack_app;
+```
+
+The API refuses to start in staging/production if its role is a superuser or has `BYPASSRLS`.
+`citext` and `pg_trgm` are trusted extensions, so the migrator can create them without superuser.
+
 - Sentry release + source maps uploaded per deploy.
 - GitHub OIDC → AWS IAM roles (no long-lived keys).
 

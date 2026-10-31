@@ -7,14 +7,21 @@ import { SnakeNamingStrategy } from './snake-naming.strategy';
 /**
  * Single source of TypeORM options for the Nest app and the migration CLI.
  * Schema changes go through migrations only: `synchronize` is never enabled.
+ *
+ * `role: 'app'` connects as the runtime role (DML only, subject to RLS); `'migration'` as the
+ * schema owner, falling back to the runtime role when no migration credentials are configured.
  */
-export function buildDataSourceOptions(env: Env): DataSourceOptions {
+export function buildDataSourceOptions(
+  env: Env,
+  role: 'app' | 'migration' = 'app',
+): DataSourceOptions {
+  const asMigrator = role === 'migration' && env.DATABASE_MIGRATION_USER !== undefined;
   return {
     type: 'postgres',
     host: env.DATABASE_HOST,
     port: env.DATABASE_PORT,
-    username: env.DATABASE_USER,
-    password: env.DATABASE_PASSWORD,
+    username: asMigrator ? env.DATABASE_MIGRATION_USER : env.DATABASE_USER,
+    password: asMigrator ? env.DATABASE_MIGRATION_PASSWORD : env.DATABASE_PASSWORD,
     database: env.DATABASE_NAME,
     ssl: env.DATABASE_SSL
       ? {
@@ -25,7 +32,7 @@ export function buildDataSourceOptions(env: Env): DataSourceOptions {
             : {}),
         }
       : false,
-    applicationName: `foodstack-api-${env.NODE_ENV}`,
+    applicationName: `foodstack-${role === 'migration' ? 'migrate' : 'api'}-${env.NODE_ENV}`,
     // Entities are registered per module via `TypeOrmModule.forFeature`; the glob serves the CLI.
     entities: [join(__dirname, '..', 'modules', '**', '*.entity.{js,ts}')],
     migrations: [join(__dirname, 'migrations', '*.{js,ts}')],

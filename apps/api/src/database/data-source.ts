@@ -12,4 +12,5 @@ for (const file of envFilePaths()) {
   if (existsSync(file)) process.loadEnvFile(file);
 }
 
-export default new DataSource(buildDataSourceOptions(validateEnv(process.env)));
+// Migrations run as the schema owner (DATABASE_MIGRATION_USER), never as the API's runtime role.
+export default new DataSource(buildDataSourceOptions(validateEnv(process.env), 'migration'));

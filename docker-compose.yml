@@ -14,10 +14,14 @@ services:
   postgres:
     image: postgres:18-alpine
     restart: unless-stopped
+    # The container superuser is the migration role (schema owner). The API's restricted role is
+    # created by infrastructure/docker/postgres/init/02-app-role.sh on first start.
     environment:
-      POSTGRES_USER: ${DATABASE_USER:?set DATABASE_USER in .env}
-      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?set DATABASE_PASSWORD in .env}
+      POSTGRES_USER: ${DATABASE_MIGRATION_USER:?set DATABASE_MIGRATION_USER in .env}
+      POSTGRES_PASSWORD: ${DATABASE_MIGRATION_PASSWORD:?set DATABASE_MIGRATION_PASSWORD in .env}
       POSTGRES_DB: ${DATABASE_NAME:-foodstack}
+      APP_DB_USER: ${DATABASE_USER:?set DATABASE_USER in .env}
+      APP_DB_PASSWORD: ${DATABASE_PASSWORD:?set DATABASE_PASSWORD in .env}
     ports:
       - '127.0.0.1:${DATABASE_PORT:-5432}:5432'
     volumes:
@@ -48,22 +52,36 @@ services:
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
 
-  api:
+  # One-shot: applies pending migrations as the schema owner, then exits. The api waits for it.
+  migrate:
     profiles: [apps]
-    build:
+    build: &api-build
       context: .
       dockerfile: infrastructure/docker/api.Dockerfile
     env_file: .env
-    # Production rules apply: JWT_PRIVATE_KEY / JWT_PUBLIC_KEY must be set in .env
-    # (pnpm --filter @foodstack/api keys:generate) and API docs are off.
-    environment:
+    environment: &api-env
       NODE_ENV: production
       SWAGGER_ENABLED: 'false'
       DATABASE_HOST: postgres
       REDIS_HOST: redis
+    command:
+      ['node', 'node_modules/typeorm/cli.js', 'migration:run', '-d', 'dist/database/data-source.js']
+    restart: 'no'
+    healthcheck: { disable: true }
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  api:
+    profiles: [apps]
+    build: *api-build
+    env_file: .env
+    # Production rules apply: JWT_PRIVATE_KEY / JWT_PUBLIC_KEY must be set in .env
+    # (pnpm --filter @foodstack/api keys:generate) and API docs are off.
+    environment: *api-env
     ports:
       - '127.0.0.1:4000:4000'
     depends_on:
+      migrate: { condition: service_completed_successfully }
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
     healthcheck:

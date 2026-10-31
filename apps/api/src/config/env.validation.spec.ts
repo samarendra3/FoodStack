@@ -94,6 +94,23 @@ describe('validateEnv', () => {
     ).toThrow(/Not a PEM key/);
   });
 
+  it('requires migration credentials as a pair, for a role other than the API role', () => {
+    expect(() => validateEnv({ ...base, DATABASE_MIGRATION_USER: 'owner' })).toThrow(
+      /must be set together/,
+    );
+    expect(() =>
+      validateEnv({
+        ...base,
+        DATABASE_MIGRATION_USER: base.DATABASE_USER,
+        DATABASE_MIGRATION_PASSWORD: 'x',
+      }),
+    ).toThrow(/must differ/);
+    expect(
+      validateEnv({ ...base, DATABASE_MIGRATION_USER: '', DATABASE_MIGRATION_PASSWORD: '' })
+        .DATABASE_MIGRATION_USER,
+    ).toBeUndefined();
+  });
+
   it('checks that the database CA bundle exists', () => {
     expect(() => validateEnv({ ...base, DATABASE_SSL_CA_PATH: '/nope/rds-ca.pem' })).toThrow(
       /DATABASE_SSL_CA_PATH: File not found/,
