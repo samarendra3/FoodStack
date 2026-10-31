@@ -73,6 +73,10 @@ export const envSchema = z
     REDIS_TLS: booleanString,
     QUEUE_PREFIX: z.string().min(1).default('foodstack'),
 
+    /** Global per-IP limit: RATE_LIMIT_MAX requests per RATE_LIMIT_WINDOW_MS. */
+    RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
+    RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),
+
     // Access tokens are signed with EdDSA (Ed25519); the public key is published as a JWKS.
     // Generate a pair with `pnpm --filter @foodstack/api keys:generate`.
     JWT_PRIVATE_KEY: pemKey,

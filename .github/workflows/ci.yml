@@ -34,6 +34,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Dependency audit
+        # Fails on new moderate+ advisories; reviewed exceptions live in pnpm-workspace.yaml.
+        run: pnpm audit --prod --audit-level moderate
+
       - name: Format check
         run: pnpm format:check
 
