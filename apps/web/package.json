@@ -19,6 +19,7 @@
     "@foodstack/validators": "workspace:*",
     "@tanstack/react-query": "5.105.0",
     "lucide-react": "1.64.0",
+    "motion": "14.2.0",
     "next": "16.4.3",
     "react": "19.3.1",
     "react-dom": "19.3.1",

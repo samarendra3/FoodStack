@@ -3,3 +3,8 @@
 
 /* Scan shared UI package for Tailwind classes. */
 @source '../../../../packages/ui/src';
+
+/* Display face for marketing headings; the font variable is set by the (marketing) layout. */
+@theme inline {
+  --font-display: var(--font-jakarta), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+}

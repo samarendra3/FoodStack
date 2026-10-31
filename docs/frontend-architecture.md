@@ -5,9 +5,10 @@
 Each app is a separate Next.js project sharing packages. Example: `apps/web/src/app`
 
 ```
+(marketing)/page.tsx              ← public landing page at /
 (auth)/login, (auth)/forgot-password, (auth)/mfa
 (dashboard)/layout.tsx            ← sidebar + topbar + branch switcher
-(dashboard)/page.tsx              ← overview
+(dashboard)/dashboard/page.tsx    ← overview at /dashboard
 (dashboard)/menu/{categories,products,modifiers,menus,price-lists}
 (dashboard)/orders, /tables, /kitchen-stations
 (dashboard)/billing/{invoices,payments,refunds,credit-notes}
