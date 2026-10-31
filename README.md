@@ -40,7 +40,9 @@ If you created the volume before this role existed, recreate it: `docker compose
 For the containerised stack (`--profile apps`, runs with `NODE_ENV=production`) also add a JWT
 key pair to `.env`: `pnpm --filter @foodstack/api keys:generate >> .env`.
 
-Tests use a separate database: copy `apps/api/.env.test.example` to `apps/api/.env.test`.
+API integration tests run against real PostgreSQL and Redis (`pnpm docker:up` first) and always
+use the separate `foodstack_test` database: `pnpm --filter @foodstack/api test:integration`.
+Optional overrides go in `apps/api/.env.test` (see `apps/api/.env.test.example`).
 
 ## Commands
 

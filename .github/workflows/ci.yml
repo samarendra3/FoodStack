@@ -55,6 +55,36 @@ jobs:
         env:
           NEXT_PUBLIC_API_URL: https://api.example.invalid/api/v1
 
+  integration:
+    name: API integration (PostgreSQL + Redis)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Same services and init scripts (roles, test database) as local development.
+      - name: Start PostgreSQL and Redis
+        run: |
+          cp .env.example .env
+          docker compose up -d --wait postgres redis
+
+      - name: Integration tests (migrations up/down, roles, RLS, Redis, app boot)
+        run: pnpm --filter @foodstack/api test:integration
+
+      - name: Service logs
+        if: failure()
+        run: docker compose logs postgres redis
+
   docker:
     name: Docker images build
     runs-on: ubuntu-latest
