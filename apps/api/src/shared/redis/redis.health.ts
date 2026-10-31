@@ -13,7 +13,7 @@ export class RedisHealthIndicator {
   async isHealthy(key = 'redis', timeoutMs = 2_000) {
     const indicator = this.healthIndicatorService.check(key);
     try {
-      // The shared client queues commands while disconnected, so bound the wait explicitly.
+      // The client already fails fast (no offline queue, command timeout); this bound is a backstop.
       const pong = await Promise.race([
         this.redis.ping(),
         new Promise<never>((_, reject) =>

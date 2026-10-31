@@ -4,7 +4,7 @@ import { ModuleRef } from '@nestjs/core';
 import type { Queue } from 'bullmq';
 import { AppConfigService } from '../config/app-config.service';
 import { logRedisErrorsOncePerOutage } from '../shared/redis/redis-error-logging';
-import { buildRedisOptions } from '../shared/redis/redis.options';
+import { buildQueueRedisOptions } from '../shared/redis/redis.options';
 import { ALL_QUEUES } from './queue.constants';
 
 /**
@@ -17,7 +17,7 @@ import { ALL_QUEUES } from './queue.constants';
     BullModule.forRootAsync({
       inject: [AppConfigService],
       useFactory: (config: AppConfigService) => ({
-        connection: buildRedisOptions(config),
+        connection: buildQueueRedisOptions(config),
         prefix: config.get('QUEUE_PREFIX'),
         defaultJobOptions: {
           attempts: 5,
