@@ -8,7 +8,7 @@ import { AppConfigService } from './config/app-config.service';
 import { AppConfigModule } from './config/config.module';
 import { DatabaseModule } from './database/database.module';
 import { HealthModule } from './modules/health/health.module';
-import { QueueModule } from './shared/queue/queue.module';
+import { QueueModule } from './queues/queue.module';
 import { RedisModule } from './shared/redis/redis.module';
 
 /** pino-pretty is a dev dependency; production images (even run with NODE_ENV=development) lack it. */
@@ -51,6 +51,11 @@ function isInstalled(pkg: string): boolean {
     RedisModule,
     QueueModule,
     HealthModule,
+    // Feature modules (scaffolded under ./modules and ./websocket); register as each is implemented:
+    // AuthModule, TenantsModule, RestaurantsModule, BranchesModule, StaffModule, RolesModule,
+    // FloorsModule, TablesModule, DiningSessionsModule, MenuModule, OrdersModule, KitchenModule,
+    // BillingModule, PaymentsModule, InventoryModule, CustomersModule, ReportsModule,
+    // NotificationsModule, AuditLogsModule, WebsocketModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: ProblemDetailsFilter },

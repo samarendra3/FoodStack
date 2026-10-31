@@ -1,3 +1,3 @@
-import { base } from '@foodstack/config/eslint/base';
+import { base } from '@foodstack/eslint-config/base';
 
 export default base;

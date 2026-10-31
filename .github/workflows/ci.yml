@@ -59,11 +59,15 @@ jobs:
     strategy:
       matrix:
         include:
-          - { name: api, file: infra/docker/api.Dockerfile, args: '' }
-          - { name: admin, file: infra/docker/next.Dockerfile, args: 'APP=admin' }
-          - { name: pos, file: infra/docker/next.Dockerfile, args: 'APP=pos' }
-          - { name: kds, file: infra/docker/next.Dockerfile, args: 'APP=kds' }
-          - { name: qr, file: infra/docker/next.Dockerfile, args: 'APP=qr' }
+          - { name: api, file: infrastructure/docker/api.Dockerfile, args: '' }
+          - { name: web, file: infrastructure/docker/next.Dockerfile, args: 'APP=web' }
+          - { name: pos, file: infrastructure/docker/next.Dockerfile, args: 'APP=pos' }
+          - {
+              name: kitchen-display,
+              file: infrastructure/docker/next.Dockerfile,
+              args: 'APP=kitchen-display',
+            }
+          - { name: qr, file: infrastructure/docker/next.Dockerfile, args: 'APP=qr' }
     steps:
       - uses: actions/checkout@v5
       - uses: docker/setup-buildx-action@v3

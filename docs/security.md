@@ -12,7 +12,7 @@
 
 ### Input validation
 
-- [ ] All DTOs validated (Zod schemas shared in `packages/validation`, NestJS validation pipe, `whitelist` + `forbidNonWhitelisted`)
+- [ ] All DTOs validated (Zod schemas shared in `packages/validators`, NestJS validation pipe, `whitelist` + `forbidNonWhitelisted`)
 - [ ] Strict types for money (integers), ids (UUID), enums; max lengths and array sizes
 - [ ] File uploads: presigned S3, MIME sniffing, size limits, image re-encoding, no public buckets
 

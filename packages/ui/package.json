@@ -31,6 +31,7 @@
   },
   "devDependencies": {
     "@foodstack/config": "workspace:*",
+    "@foodstack/eslint-config": "workspace:*",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "eslint": "9.39.5",
