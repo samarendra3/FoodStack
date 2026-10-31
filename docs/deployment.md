@@ -41,6 +41,8 @@ flowchart TB
 
 - Migrations are backward-compatible (expand/contract) so rollback of code does not require DB rollback.
 - Migration task command (API image): `node node_modules/typeorm/cli.js migration:run -d dist/database/data-source.js` with `DATABASE_MIGRATION_USER/PASSWORD` set; locally the compose `migrate` service runs it before `api` starts.
+- Sentry release + source maps uploaded per deploy.
+- GitHub OIDC → AWS IAM roles (no long-lived keys).
 
 ### Database roles (RDS)
 
@@ -60,9 +62,6 @@ ALTER DEFAULT PRIVILEGES FOR ROLE foodstack_migrator IN SCHEMA public GRANT EXEC
 
 The API refuses to start in staging/production if its role is a superuser or has `BYPASSRLS`.
 `citext` and `pg_trgm` are trusted extensions, so the migrator can create them without superuser.
-
-- Sentry release + source maps uploaded per deploy.
-- GitHub OIDC → AWS IAM roles (no long-lived keys).
 
 ## 5. Operations
 
