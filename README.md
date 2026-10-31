@@ -5,16 +5,19 @@ The architecture lives in [`docs/`](docs/system-architecture.md).
 
 ## Layout
 
-| Path                                                                | What                                                                              |
-| ------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `apps/api`                                                          | NestJS 12 API, `/api/v1`, Swagger at `/api/docs` (port 4000)                      |
-| `apps/admin`                                                        | Restaurant admin dashboard (port 3000)                                            |
-| `apps/pos`                                                          | POS billing (port 3001)                                                           |
-| `apps/kds`                                                          | Kitchen display (port 3002)                                                       |
-| `apps/qr`                                                           | Customer QR ordering (port 3003)                                                  |
-| `packages/ui`                                                       | Design tokens, shadcn/ui components, shared layouts                               |
-| `packages/types` · `validation` · `api-client` · `utils` · `config` | Shared code and tooling config                                                    |
-| `infra/docker`                                                      | Dockerfiles, Postgres init scripts · `infra/aws`, `infra/monitoring` are reserved |
+| Path                                                     | What                                                                                                |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `apps/api`                                               | NestJS 12 API, `/api/v1`, Swagger at `/api/docs` (port 4000)                                        |
+| `apps/web`                                               | Restaurant admin dashboard (port 3000)                                                              |
+| `apps/pos`                                               | POS billing (port 3001)                                                                             |
+| `apps/kitchen-display`                                   | Kitchen display (port 3002)                                                                         |
+| `apps/qr`                                                | Customer QR ordering (port 3003)                                                                    |
+| `apps/waiter-mobile`                                     | Waiter app, React Native + Expo (`pnpm --filter @foodstack/waiter-mobile dev`)                      |
+| `packages/ui`                                            | Design tokens, shadcn/ui components, shared layouts                                                 |
+| `packages/types` · `validators` · `api-client` · `utils` | Shared code                                                                                         |
+| `packages/config` · `eslint-config`                      | Shared tsconfig and ESLint configs                                                                  |
+| `infrastructure/docker`                                  | Dockerfiles, Postgres init scripts · `infrastructure/aws`, `infrastructure/monitoring` are reserved |
+| `tests/integration` · `tests/e2e`                        | Cross-app integration and end-to-end tests                                                          |
 
 ## Prerequisites
 
@@ -23,14 +26,23 @@ Node.js 26 (see `.nvmrc`; ≥ 24.11 works), pnpm 12 (`npm i -g pnpm@12.16.1`; No
 ## Getting started
 
 ```bash
-cp .env.example .env            # then set DATABASE_PASSWORD / REDIS_PASSWORD
+cp .env.example .env            # then set the DATABASE_*, DATABASE_MIGRATION_* and REDIS passwords
 pnpm install
 pnpm docker:up                  # PostgreSQL 18 + Redis on 127.0.0.1
-pnpm db:migrate
+pnpm db:migrate                 # runs as DATABASE_MIGRATION_USER (schema owner)
 pnpm dev                        # all apps + API in watch mode
 ```
 
-Tests use a separate database: copy `apps/api/.env.test.example` to `apps/api/.env.test`.
+The API connects as `DATABASE_USER`, a restricted role that row-level security applies to; it is
+created when the Postgres volume is first initialised (`infrastructure/docker/postgres/init`).
+If you created the volume before this role existed, recreate it: `docker compose down -v`.
+
+For the containerised stack (`--profile apps`, runs with `NODE_ENV=production`) also add a JWT
+key pair to `.env`: `pnpm --filter @foodstack/api keys:generate >> .env`.
+
+API integration tests run against real PostgreSQL and Redis (`pnpm docker:up` first) and always
+use the separate `foodstack_test` database: `pnpm --filter @foodstack/api test:integration`.
+Optional overrides go in `apps/api/.env.test` (see `apps/api/.env.test.example`).
 
 ## Commands
 

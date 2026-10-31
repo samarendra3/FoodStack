@@ -9,17 +9,19 @@
     "start": "node dist/main.js",
     "start:prod": "node dist/main.js",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p integration/tsconfig.json",
     "test": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js",
     "test:watch": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --watch",
     "test:cov": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --coverage",
+    "keys:generate": "node scripts/generate-jwt-keys.mjs",
     "typeorm": "typeorm -d dist/database/data-source.js",
     "migration:create": "typeorm migration:create",
     "migration:generate": "nest build && typeorm migration:generate -d dist/database/data-source.js",
     "migration:run": "nest build && typeorm migration:run -d dist/database/data-source.js",
     "migration:revert": "nest build && typeorm migration:revert -d dist/database/data-source.js",
     "migration:show": "nest build && typeorm migration:show -d dist/database/data-source.js",
-    "clean": "rm -rf dist .turbo coverage"
+    "clean": "rm -rf dist .turbo coverage",
+    "test:integration": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config integration/jest.config.json --runInBand"
   },
   "dependencies": {
     "@nestjs/bullmq": "12.0.0",
@@ -29,6 +31,7 @@
     "@nestjs/platform-express": "12.3.2",
     "@nestjs/swagger": "12.0.5",
     "@nestjs/terminus": "12.1.0",
+    "@nestjs/throttler": "6.7.1",
     "@nestjs/typeorm": "12.0.2",
     "bullmq": "6.5.1",
     "class-transformer": "0.5.1",
@@ -46,6 +49,7 @@
   },
   "devDependencies": {
     "@foodstack/config": "workspace:*",
+    "@foodstack/eslint-config": "workspace:*",
     "@nestjs/cli": "12.0.11",
     "@nestjs/testing": "12.3.2",
     "@types/express": "5.0.6",

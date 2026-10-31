@@ -2,7 +2,7 @@
 
 ## 1. Routing (Next.js 16 App Router)
 
-Each app is a separate Next.js project sharing packages. Example: `apps/admin/src/app`
+Each app is a separate Next.js project sharing packages. Example: `apps/web/src/app`
 
 ```
 (auth)/login, (auth)/forgot-password, (auth)/mfa
@@ -41,7 +41,7 @@ shadcn/ui primitives + composites: `DataTable` (TanStack Table: server paginatio
 
 ## 6. Forms & validation
 
-React Hook Form + Zod resolvers; schemas imported from `packages/validation` (same as backend) → identical rules. Server field errors mapped back to fields.
+React Hook Form + Zod resolvers; schemas imported from `packages/validators` (same as backend) → identical rules. Server field errors mapped back to fields.
 
 ## 7. Errors & loading
 

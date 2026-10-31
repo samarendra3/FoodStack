@@ -25,6 +25,7 @@
   "dependencies": {},
   "devDependencies": {
     "@foodstack/config": "workspace:*",
+    "@foodstack/eslint-config": "workspace:*",
     "eslint": "9.39.5",
     "typescript": "6.0.3",
     "vitest": "5.0.5"
