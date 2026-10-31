@@ -22,9 +22,11 @@ async function bootstrap() {
   app.setGlobalPrefix('api');
   app.enableVersioning({ type: VersioningType.URI, defaultVersion: '1' });
 
+  // Staging/production require an explicit list (env validation). Only local development and
+  // tests fall back to reflecting the request origin.
   const origins = config.get('CORS_ORIGINS');
   app.enableCors({
-    origin: origins.length > 0 ? origins : config.isProduction ? false : true,
+    origin: origins.length > 0 ? origins : !config.isDeployed,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: [

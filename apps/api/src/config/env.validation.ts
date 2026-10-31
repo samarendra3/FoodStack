@@ -1,4 +1,6 @@
+import { existsSync } from 'node:fs';
 import { z } from 'zod';
+import { decodePem, isKeyPair } from './jwt-keys';
 
 const booleanString = z
   .enum(['true', 'false'])
@@ -14,6 +16,29 @@ const csv = z
       .map((item) => item.trim())
       .filter(Boolean),
   );
+
+/** Empty strings (as shipped in `.env.example`) count as unset. */
+const emptyAsUndefined = (v: unknown) => (v === '' ? undefined : v);
+
+const optionalString = z.preprocess(emptyAsUndefined, z.string().min(1).optional());
+
+/** PEM key, raw or base64-encoded; normalized to PEM. Parse errors become validation issues. */
+const pemKey = z.preprocess(
+  emptyAsUndefined,
+  z
+    .string()
+    .transform((value, ctx) => {
+      try {
+        return decodePem(value);
+      } catch (error) {
+        ctx.addIssue({ code: 'custom', message: (error as Error).message });
+        return z.NEVER;
+      }
+    })
+    .optional(),
+);
+
+export const DEPLOYED_ENVIRONMENTS = ['staging', 'production'] as const;
 
 /** Every environment variable the API reads. Startup fails fast if this does not parse. */
 export const envSchema = z
@@ -32,6 +57,8 @@ export const envSchema = z
     DATABASE_PASSWORD: z.string().min(1),
     DATABASE_NAME: z.string().min(1),
     DATABASE_SSL: booleanString,
+    /** CA bundle for TLS verification (e.g. the AWS RDS global bundle). System CAs when unset. */
+    DATABASE_SSL_CA_PATH: optionalString,
     DATABASE_POOL_MAX: z.coerce.number().int().positive().default(10),
     DATABASE_STATEMENT_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
     DATABASE_LOGGING: booleanString,
@@ -42,12 +69,11 @@ export const envSchema = z
     REDIS_TLS: booleanString,
     QUEUE_PREFIX: z.string().min(1).default('foodstack'),
 
-    // Placeholders: consumed by the auth module in Phase 3.
-    // `.env.example` ships `JWT_ACCESS_SECRET=`; treat the empty value as unset.
-    JWT_ACCESS_SECRET: z.preprocess(
-      (v) => (v === '' ? undefined : v),
-      z.string().min(32).optional(),
-    ),
+    // Access tokens are signed with EdDSA (Ed25519); the public key is published as a JWKS.
+    // Generate a pair with `pnpm --filter @foodstack/api keys:generate`.
+    JWT_PRIVATE_KEY: pemKey,
+    JWT_PUBLIC_KEY: pemKey,
+    JWT_KEY_ID: z.string().min(1).default('local'),
     JWT_ACCESS_TTL: z.string().default('15m'),
     JWT_REFRESH_TTL: z.string().default('30d'),
 
@@ -55,21 +81,74 @@ export const envSchema = z
     AWS_S3_BUCKET: z.string().optional(),
   })
   .superRefine((env, ctx) => {
-    if (env.NODE_ENV === 'production') {
+    if (isDeployedEnvironment(env.NODE_ENV)) {
       if (env.CORS_ORIGINS.length === 0) {
-        ctx.addIssue({ code: 'custom', path: ['CORS_ORIGINS'], message: 'Required in production' });
+        ctx.addIssue({
+          code: 'custom',
+          path: ['CORS_ORIGINS'],
+          message: `Required in ${env.NODE_ENV}`,
+        });
       }
       if (env.CORS_ORIGINS.includes('*')) {
         ctx.addIssue({
           code: 'custom',
           path: ['CORS_ORIGINS'],
-          message: 'Wildcard not allowed in production',
+          message: `Wildcard not allowed in ${env.NODE_ENV}`,
         });
       }
+      for (const key of ['JWT_PRIVATE_KEY', 'JWT_PUBLIC_KEY'] as const) {
+        if (!env[key]) {
+          ctx.addIssue({ code: 'custom', path: [key], message: `Required in ${env.NODE_ENV}` });
+        }
+      }
+    }
+
+    if (env.NODE_ENV === 'production' && env.SWAGGER_ENABLED) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['SWAGGER_ENABLED'],
+        message: 'API docs must not be public in production',
+      });
+    }
+
+    if (Boolean(env.JWT_PRIVATE_KEY) !== Boolean(env.JWT_PUBLIC_KEY)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['JWT_PUBLIC_KEY'],
+        message: 'JWT_PRIVATE_KEY and JWT_PUBLIC_KEY must be set together',
+      });
+    } else if (env.JWT_PRIVATE_KEY && env.JWT_PUBLIC_KEY) {
+      try {
+        if (!isKeyPair(env.JWT_PRIVATE_KEY, env.JWT_PUBLIC_KEY)) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['JWT_PUBLIC_KEY'],
+            message: 'Does not match JWT_PRIVATE_KEY',
+          });
+        }
+      } catch (error) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['JWT_PRIVATE_KEY'],
+          message: (error as Error).message,
+        });
+      }
+    }
+
+    if (env.DATABASE_SSL_CA_PATH && !existsSync(env.DATABASE_SSL_CA_PATH)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['DATABASE_SSL_CA_PATH'],
+        message: `File not found: ${env.DATABASE_SSL_CA_PATH}`,
+      });
     }
   });
 
 export type Env = z.infer<typeof envSchema>;
+
+export function isDeployedEnvironment(nodeEnv: Env['NODE_ENV']): boolean {
+  return (DEPLOYED_ENVIRONMENTS as readonly string[]).includes(nodeEnv);
+}
 
 export function validateEnv(raw: Record<string, unknown>): Env {
   const result = envSchema.safeParse(raw);

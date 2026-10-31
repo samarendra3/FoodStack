@@ -54,8 +54,11 @@ services:
       context: .
       dockerfile: infrastructure/docker/api.Dockerfile
     env_file: .env
+    # Production rules apply: JWT_PRIVATE_KEY / JWT_PUBLIC_KEY must be set in .env
+    # (pnpm --filter @foodstack/api keys:generate) and API docs are off.
     environment:
       NODE_ENV: production
+      SWAGGER_ENABLED: 'false'
       DATABASE_HOST: postgres
       REDIS_HOST: redis
     ports:
