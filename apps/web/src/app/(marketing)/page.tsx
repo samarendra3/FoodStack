@@ -41,6 +41,7 @@ import {
   StaggerItem,
 } from '@/components/landing/motion';
 import { FloatingIcons, type FloatingIcon } from '@/components/landing/floating-icons';
+import { PricingSection } from '@/components/landing/pricing';
 import { SiteFooter } from '@/components/landing/site-footer';
 import { SiteHeader } from '@/components/landing/site-header';
 import ctaImage from '../../../public/images/cta-bg-image.png';
@@ -397,6 +398,8 @@ export default function LandingPage() {
               </Reveal>
             </div>
           </section>
+
+          <PricingSection />
 
           {/* CTA */}
           <section id="get-started" className="scroll-mt-28 px-4 pt-4 pb-16 sm:px-6">

@@ -49,7 +49,7 @@ const columns = [
     title: 'Company',
     links: [
       { label: 'About', href: '#' },
-      { label: 'Pricing', href: '#get-started' },
+      { label: 'Pricing', href: '#pricing' },
       { label: 'Careers', href: '#' },
       { label: 'Contact', href: '#' },
     ],

@@ -118,7 +118,7 @@ type Section = 'home' | 'product' | 'features' | 'pricing';
 const spy: { id: string; section: Section }[] = [
   { id: 'product', section: 'product' },
   { id: 'features', section: 'features' },
-  { id: 'get-started', section: 'pricing' },
+  { id: 'pricing', section: 'pricing' },
 ];
 
 /** Tracks which page section is under the header, for the active nav highlight. */
@@ -279,10 +279,7 @@ export function SiteHeader() {
           </a>
           <NavDropdown label="Product" items={menus.product} active={active === 'product'} />
           <NavDropdown label="Features" items={menus.features} active={active === 'features'} />
-          <a
-            href="#get-started"
-            className={cn(itemBase, active === 'pricing' ? itemActive : itemIdle)}
-          >
+          <a href="#pricing" className={cn(itemBase, active === 'pricing' ? itemActive : itemIdle)}>
             Pricing
           </a>
           <NavDropdown label="Resources" items={menus.resources} active={false} />
@@ -310,7 +307,7 @@ export function SiteHeader() {
               { label: 'Home', href: '#', icon: <House className="size-4" /> },
               { label: 'Product', href: '#product', icon: <LayoutDashboard className="size-4" /> },
               { label: 'Features', href: '#features', icon: <Sparkles className="size-4" /> },
-              { label: 'Pricing', href: '#get-started', icon: <Tag className="size-4" /> },
+              { label: 'Pricing', href: '#pricing', icon: <Tag className="size-4" /> },
               { label: 'Resources', href: '#', icon: <BookOpen className="size-4" /> },
             ]}
           />
