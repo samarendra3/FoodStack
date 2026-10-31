@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DataSourceOptions } from 'typeorm';
 import { Env } from '../config/env.validation';
+import { SnakeNamingStrategy } from './snake-naming.strategy';
 
 /**
  * Single source of TypeORM options for the Nest app and the migration CLI.
@@ -30,6 +31,7 @@ export function buildDataSourceOptions(env: Env): DataSourceOptions {
     migrations: [join(__dirname, 'migrations', '*.{js,ts}')],
     migrationsTableName: 'typeorm_migrations',
     migrationsTransactionMode: 'each',
+    namingStrategy: new SnakeNamingStrategy(),
     synchronize: false,
     migrationsRun: false,
     logging: env.DATABASE_LOGGING ? ['query', 'error', 'migration'] : ['error', 'migration'],
