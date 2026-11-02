@@ -1,5 +1,0 @@
-@import 'tailwindcss';
-@import '@foodstack/ui/styles.css';
-
-/* Scan shared UI package for Tailwind classes. */
-@source '../../../../packages/ui/src';

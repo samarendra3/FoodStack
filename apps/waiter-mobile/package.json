@@ -1,0 +1,33 @@
+{
+  "name": "@foodstack/waiter-mobile",
+  "version": "0.0.0",
+  "private": true,
+  "description": "FoodStack waiter app (React Native + Expo)",
+  "main": "index.ts",
+  "scripts": {
+    "dev": "expo start",
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf .expo .turbo"
+  },
+  "dependencies": {
+    "@foodstack/api-client": "workspace:*",
+    "@foodstack/types": "workspace:*",
+    "@foodstack/validators": "workspace:*",
+    "expo": "~58.0.21",
+    "expo-status-bar": "~58.0.4",
+    "react": "19.3.0",
+    "react-native": "0.88.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@foodstack/eslint-config": "workspace:*",
+    "@types/react": "~19.3.0",
+    "eslint": "9.39.5",
+    "typescript": "6.0.3"
+  }
+}

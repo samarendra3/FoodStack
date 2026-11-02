@@ -14,7 +14,7 @@ Where this design differs from `authentication.md`, `authorization.md`, `multi-t
 | D3  | TOTP MFA is **mandatory** for Super Admin and Platform Support, **optional** for Restaurant Owner and Restaurant Admin. Staff PIN and device registration are deferred to the POS phase. |
 | D4  | Self-service registration creates tenant (`trial`) + restaurant + default branch + owner in one transaction. Email verification is required before the owner can use the tenant.         |
 | D5  | Email via Nodemailer over SMTP, sent from the BullMQ `notifications` queue. Mailpit in Compose for local development.                                                                    |
-| D6  | PostgreSQL RLS with two roles: `foodstack_owner` (owns schema, runs migrations) and `foodstack_app` (the API; no ownership, no `BYPASSRLS`).                                             |
+| D6  | PostgreSQL RLS with two roles: `foodstack_migrator` (owns schema, runs migrations) and `foodstack_app` (the API; no ownership, no `BYPASSRLS`).                                          |
 
 Also required: refresh rotation with reuse detection, a non-authoritative `fs_session` marker cookie, immediate tenant-suspension enforcement, append-only audit logs, tenant-safe jobs, explicit tenant and branch authorization, and automated cross-tenant tests.
 
@@ -22,15 +22,15 @@ Also required: refresh rotation with reuse detection, a non-authoritative `fs_se
 
 ## 1. Database roles and connection model
 
-| Role              | Attributes                                              | Used by                                                                   | Privileges                                                                                                                                                                |
-| ----------------- | ------------------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `foodstack_owner` | `LOGIN`, owns database and schema `public`              | Postgres container superuser (`POSTGRES_USER`), TypeORM migrations, seeds | All. Never used by the running API.                                                                                                                                       |
-| `foodstack_app`   | `LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE` | The API at runtime, BullMQ processors                                     | `SELECT/INSERT/UPDATE/DELETE` on application tables via default privileges; **only `SELECT, INSERT` on `audit_logs` and `login_attempts`**; `USAGE` on sequences. No DDL. |
+| Role                 | Attributes                                              | Used by                                                                   | Privileges                                                                                                                                                                |
+| -------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `foodstack_migrator` | `LOGIN`, owns database and schema `public`              | Postgres container superuser (`POSTGRES_USER`), TypeORM migrations, seeds | All. Never used by the running API.                                                                                                                                       |
+| `foodstack_app`      | `LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE` | The API at runtime, BullMQ processors                                     | `SELECT/INSERT/UPDATE/DELETE` on application tables via default privileges; **only `SELECT, INSERT` on `audit_logs` and `login_attempts`**; `USAGE` on sequences. No DDL. |
 
 - Every tenant table has `ENABLE` **and** `FORCE ROW LEVEL SECURITY`, so policies also apply to the owner role if it ever connects to serve traffic.
 - Request context is passed with transaction-local settings, which are safe with connection pooling:
   `SET LOCAL app.tenant_id = '<uuid>'`, `app.user_id`, `app.branch_ids` (reserved, unused in Phase 3) and `app.platform = 'on'` (platform guard only). Settings are read with `current_setting('app.tenant_id', true)`, so a missing setting yields `NULL` and matches **no** rows (fail closed).
-- `typeorm_migrations` and the `permissions` catalogue are owned by `foodstack_owner`; the app role can read `permissions` only.
+- `typeorm_migrations` and the `permissions` catalogue are owned by `foodstack_migrator`; the app role can read `permissions` only.
 
 ### 1.1 Environment and Compose changes (additive)
 
@@ -146,7 +146,7 @@ Registration (no tenant yet) runs in a transaction that first inserts the tenant
 
 ### 2.3 Migration plan
 
-Each migration is reviewed SQL (TypeORM `MigrationInterface`, `migrationsTransactionMode: 'each'`), reversible, and run as `foodstack_owner`.
+Each migration is reviewed SQL (TypeORM `MigrationInterface`, `migrationsTransactionMode: 'each'`), reversible, and run as `foodstack_migrator`.
 
 | #   | Migration                       | Contents                                                                                                                                                                |
 | --- | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

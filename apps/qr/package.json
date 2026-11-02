@@ -16,7 +16,7 @@
     "@foodstack/types": "workspace:*",
     "@foodstack/ui": "workspace:*",
     "@foodstack/utils": "workspace:*",
-    "@foodstack/validation": "workspace:*",
+    "@foodstack/validators": "workspace:*",
     "@tanstack/react-query": "5.105.0",
     "lucide-react": "1.64.0",
     "next": "16.4.3",
@@ -26,6 +26,7 @@
   },
   "devDependencies": {
     "@foodstack/config": "workspace:*",
+    "@foodstack/eslint-config": "workspace:*",
     "@tailwindcss/postcss": "4.3.3",
     "@types/node": "24.19.2",
     "@types/react": "19.3.0",

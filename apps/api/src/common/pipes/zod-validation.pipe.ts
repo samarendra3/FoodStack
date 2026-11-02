@@ -2,7 +2,7 @@ import { BadRequestException, PipeTransform } from '@nestjs/common';
 import { ZodType } from 'zod';
 
 /**
- * Validates input with a shared Zod schema (from @foodstack/validation), complementing the
+ * Validates input with a shared Zod schema (from @foodstack/validators), complementing the
  * global class-validator pipe: `@Body(new ZodValidationPipe(schema)) body: Input`.
  */
 export class ZodValidationPipe<T> implements PipeTransform<unknown, T> {

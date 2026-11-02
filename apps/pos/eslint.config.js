@@ -1,3 +1,3 @@
-import { next } from '@foodstack/config/eslint/next';
+import { next } from '@foodstack/eslint-config/next';
 
 export default next;

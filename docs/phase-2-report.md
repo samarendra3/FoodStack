@@ -69,7 +69,9 @@ NestJS 12 ships only as ES modules. Following the official v12 template, the API
 
 ## 4. Folder structure
 
-The Phase 1 names were kept, as the Phase 2 brief instructs when the two differ:
+> **Update (restructure):** the monorepo was later moved to the brief's layout (branch `chore/restructure-monorepo`): `apps/admin` → `apps/web`, `apps/kds` → `apps/kitchen-display`, `packages/validation` → `packages/validators`, `infra/` → `infrastructure/`, ESLint configs split into `packages/eslint-config`, plus `apps/waiter-mobile` and `tests/`. The tree below shows the current layout; the results tables above record Phase 2 under its original names.
+
+At the time of Phase 2 the Phase 1 names were kept, as the Phase 2 brief instructs when the two differ:
 
 | Phase 2 brief         | Implemented           |
 | --------------------- | --------------------- |
@@ -82,19 +84,22 @@ The Phase 1 names were kept, as the Phase 2 brief instructs when the two differ:
 ```
 FoodStack/
 ├─ apps/
-│  ├─ api/          NestJS: src/{common,config,database,modules,shared}, app.module.ts, main.ts
-│  ├─ admin/        Restaurant admin (port 3000)
-│  ├─ pos/          POS (port 3001)
-│  ├─ kds/          Kitchen display (port 3002)
-│  └─ qr/           Customer QR ordering (port 3003)
+│  ├─ api/              NestJS: src/{common,config,database,modules,queues,shared,websocket}, app.module.ts, main.ts
+│  ├─ web/              Restaurant admin (port 3000)
+│  ├─ pos/              POS (port 3001)
+│  ├─ kitchen-display/  Kitchen display (port 3002)
+│  ├─ qr/               Customer QR ordering (port 3003)
+│  └─ waiter-mobile/    Waiter app (React Native + Expo)
 ├─ packages/
 │  ├─ ui/           Design tokens, shadcn-style components, DashboardShell
-│  ├─ types/  validation/  api-client/  utils/
-│  └─ config/       Shared tsconfig + ESLint
-├─ infra/
+│  ├─ types/  validators/  api-client/  utils/
+│  ├─ config/       Shared tsconfig
+│  └─ eslint-config/ Shared ESLint flat configs
+├─ infrastructure/
 │  ├─ docker/       api.Dockerfile, next.Dockerfile, postgres/init
 │  ├─ aws/          (placeholder)
 │  └─ monitoring/   (placeholder)
+├─ tests/          integration/, e2e/
 ├─ docs/  .github/workflows/ci.yml  .husky/
 └─ docker-compose.yml  turbo.json  pnpm-workspace.yaml  .env.example  README.md
 ```
@@ -165,6 +170,6 @@ pnpm dev
 1. **CI on GitHub:** see the latest run on `main` at https://github.com/samarendra3/FoodStack/actions.
 2. **Install Node 26 locally** to match CI and the Docker images. Local checks still run on Node 24.21.
 3. **Deferred until needed:** Socket.IO and React Hook Form. They arrive with the first real-time and form features in Phase 3.
-4. **Placeholders:** `infra/aws` and `infra/monitoring` are empty.
+4. **Placeholders:** `infrastructure/aws` and `infrastructure/monitoring` are empty.
 
 Resolved since the first version of this report: Docker run, live Redis/BullMQ test, Redis log flooding, all five images built and checked, `.env.example` booting, dev-mode image crash, first commit.

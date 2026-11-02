@@ -23,7 +23,7 @@ export default async function globalSetup(): Promise<void> {
   }
 
   const dataSource = new DataSource({
-    ...buildDataSourceOptions({ ...env, DATABASE_LOGGING: false }, 'owner'),
+    ...buildDataSourceOptions({ ...env, DATABASE_LOGGING: false }, 'migration'),
     entities: [],
     migrations: ALL_MIGRATIONS,
     logging: ['error'],

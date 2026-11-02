@@ -2,7 +2,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
  * Privileges for the runtime role `foodstack_app` (docs/phase-3-design.md §1).
- * The role itself is created outside migrations (infra/docker/postgres/init/02-app-role.sh)
+ * The role itself is created outside migrations (infrastructure/docker/postgres/init/02-app-role.sh)
  * because it carries a password. Tables created by later migrations inherit these defaults;
  * tables that must be append-only or read-only revoke the extra privileges explicitly.
  *
@@ -17,7 +17,7 @@ export class AppRoleGrants1798000001000 implements MigrationInterface {
       DO $$
       BEGIN
         IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'foodstack_app') THEN
-          RAISE EXCEPTION 'Role foodstack_app does not exist. Run infra/docker/postgres/init/02-app-role.sh first.';
+          RAISE EXCEPTION 'Role foodstack_app does not exist. Run infrastructure/docker/postgres/init/02-app-role.sh first.';
         END IF;
       END $$
     `);

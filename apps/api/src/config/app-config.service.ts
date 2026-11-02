@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Env, envSchema } from './env.validation';
+import { Env, envSchema, isDeployedEnvironment } from './env.validation';
 
 /** Typed access to validated configuration. */
 @Injectable()
@@ -19,5 +19,10 @@ export class AppConfigService {
 
   get isProduction(): boolean {
     return this.get('NODE_ENV') === 'production';
+  }
+
+  /** Staging or production: shared, internet-facing environments with production-grade rules. */
+  get isDeployed(): boolean {
+    return isDeployedEnvironment(this.get('NODE_ENV'));
   }
 }

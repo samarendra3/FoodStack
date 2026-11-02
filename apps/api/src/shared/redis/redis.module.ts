@@ -3,11 +3,14 @@ import Redis from 'ioredis';
 import { AppConfigService } from '../../config/app-config.service';
 import { logRedisErrorsOncePerOutage } from './redis-error-logging';
 import { REDIS_CLIENT } from './redis.constants';
-import { buildRedisOptions } from './redis.options';
+import { buildCacheRedisOptions } from './redis.options';
 
 const logger = new Logger('Redis');
 
-/** Shared Redis connection for cache, rate limiting and health checks. */
+/**
+ * Shared request-path Redis connection (cache, rate limiting, health checks). It fails fast
+ * while Redis is down; BullMQ keeps its own retry-forever connections (see QueueModule).
+ */
 @Global()
 @Module({
   providers: [
@@ -16,7 +19,7 @@ const logger = new Logger('Redis');
       inject: [AppConfigService],
       useFactory: (config: AppConfigService) => {
         const client = new Redis({
-          ...buildRedisOptions(config),
+          ...buildCacheRedisOptions(config),
           lazyConnect: false,
           connectionName: 'foodstack-api',
         });
