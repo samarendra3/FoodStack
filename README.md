@@ -48,6 +48,22 @@ Mailpit catches all development email: http://localhost:8025.
 
 Row-level security e2e tests (`pnpm --filter @foodstack/api test:e2e`) also use `foodstack_test`: they drop and rebuild its schema (migrations up, down and up again), then check tenant isolation as the runtime role.
 
+### Signing in
+
+Sign in at http://localhost:3000/login. Each role lands on its own page: Super Admin on
+`/platform/dashboard`; Owner, Restaurant Admin and Branch Manager on `/restaurant/dashboard`;
+Cashier on `/pos`; Kitchen Staff on `/kitchen`; Waiter on `/waiter`. No credentials are seeded.
+Create accounts with the CLI; each command prints a one-time link where the person sets a password:
+
+```bash
+pnpm --filter @foodstack/api cli platform:create-admin --email admin@example.com --name "Ada Admin"
+pnpm --filter @foodstack/api cli tenant:create --name "Spice Hub" --slug spice-hub   --owner-email owner@example.com --owner-name "Olu Owner"
+pnpm --filter @foodstack/api cli tenant:add-member --tenant spice-hub --email cashier@example.com   --name "Cara Cashier" --role cashier            # also: waiter, kitchen_staff, branch_manager, restaurant_admin
+```
+
+Super Admins set up an authenticator app (TOTP) at their first sign-in. Password-reset emails
+arrive in Mailpit. `MFA_ENCRYPTION_KEY` must be set (`.env.example` has a local-only value).
+
 ## Commands
 
 | Command                                                                      | Does                                                                          |

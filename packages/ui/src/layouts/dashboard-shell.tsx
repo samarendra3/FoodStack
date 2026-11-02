@@ -83,6 +83,28 @@ export function DashboardShell({
             {userArea}
           </div>
         </header>
+        {/* Below lg the sidebar is hidden: the same links scroll horizontally under the header. */}
+        <nav
+          aria-label="Sections"
+          className="flex gap-1 overflow-x-auto border-b bg-card px-4 py-2 sm:px-6 lg:hidden"
+        >
+          {nav
+            .flatMap((section) => section.items)
+            .map((item) => (
+              <a
+                key={item.href}
+                href={item.href}
+                aria-current={item.active ? 'page' : undefined}
+                className={cn(
+                  'flex shrink-0 items-center gap-2 rounded-md px-3 py-1.5 text-sm whitespace-nowrap text-muted-foreground transition-colors hover:bg-muted hover:text-foreground',
+                  item.active && 'bg-accent font-medium text-accent-foreground',
+                )}
+              >
+                {item.icon}
+                {item.label}
+              </a>
+            ))}
+        </nav>
         <main className="flex-1 p-4 sm:p-6">{children}</main>
       </div>
     </div>

@@ -9,7 +9,8 @@
     "start": "next start --port 3000",
     "lint": "eslint .",
     "typecheck": "next typegen && tsc --noEmit",
-    "clean": "rm -rf .next .turbo"
+    "clean": "rm -rf .next .turbo",
+    "test": "vitest run"
   },
   "dependencies": {
     "@foodstack/api-client": "workspace:*",
@@ -35,6 +36,7 @@
     "@types/react-dom": "19.3.0",
     "eslint": "9.39.5",
     "tailwindcss": "4.3.3",
-    "typescript": "6.0.3"
+    "typescript": "6.0.3",
+    "vitest": "5.0.5"
   }
 }

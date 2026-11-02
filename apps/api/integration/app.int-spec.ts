@@ -4,9 +4,11 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/app.setup';
+import { Public } from '../src/modules/auth/decorators';
 import { testEnv } from './helpers';
 
 /** Stand-in for a business endpoint (none exist yet) to exercise the global guards. */
+@Public()
 @Controller('it-echo')
 class EchoController {
   @Get()

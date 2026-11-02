@@ -12,6 +12,7 @@ import {
   TypeOrmHealthIndicator,
 } from '@nestjs/terminus';
 import { SkipThrottle } from '@nestjs/throttler';
+import { Public } from '../auth/decorators';
 import { RedisHealthIndicator } from '../../shared/redis/redis.health';
 
 type IndicatorMap = HealthCheckResult['details'];
@@ -37,6 +38,7 @@ export function publicHealthResult(result: HealthCheckResult): HealthCheckResult
 }
 
 @ApiTags('Health')
+@Public()
 @SkipThrottle()
 @Controller('health')
 export class HealthController {

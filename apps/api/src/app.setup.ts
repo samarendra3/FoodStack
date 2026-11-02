@@ -1,5 +1,6 @@
 import { ValidationPipe, VersioningType } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
+import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { AppConfigService } from './config/app-config.service';
 import { setupSwagger } from './swagger';
@@ -15,6 +16,8 @@ export function configureApp(app: NestExpressApplication): void {
   app.disable('x-powered-by');
   if (config.get('TRUST_PROXY')) app.set('trust proxy', 1);
   app.useBodyParser('json', { limit: '1mb' });
+  // Reads the refresh cookie on /auth endpoints; the token itself is the secret (no signing).
+  app.use(cookieParser());
 
   // All routes live under /api/v{n}; v1 is the default version (docs/system-architecture.md §3).
   app.setGlobalPrefix('api');
@@ -33,6 +36,7 @@ export function configureApp(app: NestExpressApplication): void {
       'Idempotency-Key',
       'X-Branch-Id',
       'X-Request-Id',
+      'X-FoodStack-CSRF',
     ],
     exposedHeaders: ['X-Request-Id'],
     maxAge: 600,
