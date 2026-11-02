@@ -24,6 +24,7 @@ import type { Metadata } from 'next';
 import Image from 'next/image';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
+import { CornerCurves } from '@/components/landing/corner-curves';
 import {
   DashboardPreview,
   GrowthCard,
@@ -135,6 +136,11 @@ export default function LandingPage() {
         <main className="flex-1">
           {/* Hero */}
           <section className="relative z-10 flex flex-col bg-background pb-20 lg:block lg:pb-0">
+            {/* Green curves in the top-left corner, mirroring the bottom-right ribbons */}
+            <CornerCurves
+              id="hero-corner"
+              className="absolute top-0 left-0 h-40 w-40 sm:h-56 sm:w-60 lg:h-80 lg:w-96"
+            />
             {/* Photo: a card under the copy on small screens, a right-hand backdrop on desktop
                 that runs up behind the floating header. */}
             <Reveal
@@ -261,7 +267,7 @@ export default function LandingPage() {
                     className={cn(
                       buttonVariants({ size: 'lg' }),
                       pill,
-                      'h-14 px-8 text-base shadow-xl shadow-primary/30',
+                      'h-14 px-8 text-base shadow-lg shadow-primary/20',
                     )}
                   >
                     Get started <ArrowRight />

@@ -106,7 +106,7 @@ function BillingToggle({ value, onChange }: { value: Billing; onChange: (b: Bill
               <motion.span
                 layoutId="billing-pill"
                 transition={{ type: 'spring', stiffness: 420, damping: 34 }}
-                className="absolute inset-0 rounded-lg bg-primary shadow-md shadow-primary/25"
+                className="absolute inset-0 rounded-lg bg-primary shadow-sm shadow-primary/15"
               />
             ) : null}
             <span className="relative">{option === 'monthly' ? 'Monthly' : 'Yearly'}</span>
@@ -250,7 +250,7 @@ export function PricingSection() {
                     buttonVariants({ size: 'lg' }),
                     'mt-8 h-12 w-full rounded-lg font-semibold',
                     dark
-                      ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/30 hover:bg-emerald-400'
+                      ? 'bg-emerald-500 text-white shadow-md shadow-emerald-500/20 hover:bg-emerald-400'
                       : plan.monthly === null
                         ? 'bg-secondary text-secondary-foreground hover:bg-secondary/90'
                         : 'bg-card text-foreground ring-1 ring-border hover:bg-muted',

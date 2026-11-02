@@ -147,7 +147,7 @@ function useActiveSection(): Section {
 const itemBase =
   'flex h-9 items-center gap-1.5 rounded-lg px-3.5 text-sm font-medium transition-colors';
 const itemIdle = 'text-foreground/80 hover:bg-muted hover:text-foreground';
-const itemActive = 'bg-primary text-primary-foreground shadow-md shadow-primary/25';
+const itemActive = 'bg-primary text-primary-foreground shadow-sm shadow-primary/15';
 
 function NavDropdown({
   label,
@@ -297,7 +297,7 @@ export function SiteHeader() {
             href="/login"
             className={cn(
               buttonVariants(),
-              'hidden h-10 rounded-lg px-4 font-semibold shadow-md shadow-primary/25 sm:inline-flex',
+              'hidden h-10 rounded-lg px-4 font-semibold shadow-sm shadow-primary/15 sm:inline-flex',
             )}
           >
             Get started <ArrowRight />
