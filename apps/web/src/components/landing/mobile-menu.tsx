@@ -89,7 +89,7 @@ export function MobileMenu({ links }: { links: MobileMenuLink[] }) {
                 Sign in
               </Link>
               <Link
-                href="/login"
+                href="/get-started"
                 onClick={() => setOpen(false)}
                 className={cn(buttonVariants({ size: 'lg' }), 'rounded-lg font-semibold')}
               >

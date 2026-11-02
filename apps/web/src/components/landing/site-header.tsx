@@ -294,7 +294,7 @@ export function SiteHeader() {
             Sign in
           </Link>
           <Link
-            href="/login"
+            href="/get-started"
             className={cn(
               buttonVariants(),
               'hidden h-10 rounded-lg px-4 font-semibold shadow-sm shadow-primary/15 sm:inline-flex',

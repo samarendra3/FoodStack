@@ -19,6 +19,7 @@ import { validateEnv } from './config/env.validation';
 import { Db } from './core/db/db-context';
 import { issueUserToken, writeAudit } from './modules/auth/user-tokens';
 import { buildDataSourceOptions } from './database/typeorm.options';
+import { provisionTenant, upsertUser } from './modules/tenants/provision-tenant';
 
 const SET_PASSWORD_TTL_MS = 72 * 3_600_000;
 /** Roles granted per branch; every other tenant role is granted for the whole tenant. */
@@ -64,23 +65,9 @@ async function inTransaction<T>(ds: DataSource, work: (db: Db) => Promise<T>): P
   return ds.transaction(async (manager) => work(new Db(manager.queryRunner!)));
 }
 
-/** Finds or creates the user; returns its id and whether it already had a password. */
-async function upsertUser(db: Db, email: string, fullName: string) {
-  const existing = await db.one<{ id: string; password_hash: string | null }>(
-    'SELECT id, password_hash FROM users WHERE email = $1',
-    [email.toLowerCase()],
-  );
-  if (existing) return { id: existing.id, hasPassword: existing.password_hash !== null };
-  const created = await db.one<{ id: string }>(
-    'INSERT INTO users (email, full_name) VALUES ($1, $2) RETURNING id',
-    [email.toLowerCase(), fullName],
-  );
-  return { id: created!.id, hasPassword: false };
-}
-
 async function setPasswordLink(db: Db, userId: string): Promise<string> {
   const { token } = await issueUserToken(db, userId, 'password_reset', SET_PASSWORD_TTL_MS);
-  return `${env.APP_URL}/reset-password?token=${token}`;
+  return `${env.APP_URL}/welcome?token=${token}`;
 }
 
 async function createPlatformAdmin(ds: DataSource): Promise<string> {
@@ -110,43 +97,17 @@ async function createTenant(ds: DataSource): Promise<string> {
   const name = required('name');
   const ownerEmail = required('owner-email');
   return inTransaction(ds, async (db) => {
-    const owner = await upsertUser(db, ownerEmail, required('owner-name'));
-    // Creating tenants is a platform action; the new tenant's rows are then written in its scope.
-    await db.setScope({ platform: true });
-    const tenant = await db.one<{ id: string }>(
-      `INSERT INTO tenants (slug, name, status, trial_ends_at)
-       VALUES ($1, $2, 'trial', now() + interval '14 days') RETURNING id`,
-      [slug, name],
-    );
-    await db.setScope({ tenantId: tenant!.id, userId: owner.id });
-    const restaurant = await db.one<{ id: string }>(
-      `INSERT INTO restaurants (tenant_id, name, slug, currency_code, country_code, timezone)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-      [tenant!.id, name, slug, values.currency, values.country, values.timezone],
-    );
-    await db.query(
-      `INSERT INTO branches (tenant_id, restaurant_id, code, name, timezone, is_default)
-       VALUES ($1, $2, 'MAIN', 'Main branch', $3, true)`,
-      [tenant!.id, restaurant!.id, values.timezone],
-    );
-    const membership = await db.one<{ id: string }>(
-      `INSERT INTO tenant_memberships (tenant_id, user_id, status, joined_at)
-       VALUES ($1, $2, 'active', now()) RETURNING id`,
-      [tenant!.id, owner.id],
-    );
-    await db.query(
-      `INSERT INTO user_role_assignments (tenant_id, membership_id, role_id, scope_type)
-       SELECT $1, $2, id, 'tenant' FROM roles WHERE tenant_id IS NULL AND code = 'owner'`,
-      [tenant!.id, membership!.id],
-    );
-    await writeAudit(db, {
-      action: 'tenant.created',
-      tenantId: tenant!.id,
-      entityType: 'tenant',
-      entityId: tenant!.id,
-      metadata: { via: 'cli', slug },
+    const owner = await provisionTenant(db, {
+      name,
+      slug,
+      ownerEmail,
+      ownerName: required('owner-name'),
+      currency: values.currency!,
+      country: values.country!,
+      timezone: values.timezone!,
+      via: 'cli',
     });
-    const link = owner.hasPassword ? null : await setPasswordLink(db, owner.id);
+    const link = owner.ownerHasPassword ? null : await setPasswordLink(db, owner.ownerId);
     return [
       `Restaurant "${name}" (${slug}) created with branch MAIN; owner ${ownerEmail}.`,
       link ? `Owner sets a password here (valid 72 h): ${link}` : 'Owner already has a password.',

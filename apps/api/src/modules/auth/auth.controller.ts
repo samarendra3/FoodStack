@@ -160,12 +160,34 @@ export class AuthController {
   @Post('password/reset')
   @HttpCode(HttpStatus.NO_CONTENT)
   @Throttle({ default: { limit: 10, ttl: 15 * MINUTE } })
-  @ApiOperation({ summary: 'Set a new password from a reset link; ends all sessions' })
+  @ApiOperation({
+    summary:
+      'Set a password from an emailed link; ends all sessions. With signIn, answers like /auth/login.',
+  })
   async resetPassword(
-    @Body(new ZodValidationPipe(resetPasswordSchema)) body: { token: string; password: string },
+    @Body(new ZodValidationPipe(resetPasswordSchema))
+    body: { token: string; password: string; signIn: boolean },
     @Req() req: Request,
-  ): Promise<void> {
-    await this.auth.resetPassword(body.token, body.password, meta(req));
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const email = await this.auth.resetPassword(body.token, body.password, meta(req));
+    if (!body.signIn) return undefined;
+    // The normal sign-in path: lockout, tenant status and Super Admin TOTP all still apply.
+    noStore(res);
+    const result = await this.auth.login(
+      { email, password: body.password, rememberMe: false },
+      meta(req),
+    );
+    if (result.kind === 'mfa') {
+      res.status(HttpStatus.ACCEPTED);
+      return {
+        mfaRequired: true,
+        mfaEnrollmentRequired: result.mfaEnrollmentRequired,
+        challengeToken: result.challengeToken,
+      };
+    }
+    res.status(HttpStatus.OK);
+    return this.issue(res, result.session);
   }
 
   private issue(res: Response, session: IssuedSession) {

@@ -3,7 +3,7 @@
 import type { AuthSession, MfaChallenge } from '@foodstack/types';
 import { Button } from '@foodstack/ui/components/button';
 import { loginFormSchema } from '@foodstack/validators';
-import { Loader2, Lock, Mail } from 'lucide-react';
+import { Info, Loader2, Lock, LogIn, Mail, ShieldCheck, Store } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { type FormEvent, useEffect, useState } from 'react';
@@ -106,13 +106,17 @@ function CredentialsStep({
   return (
     <>
       <AuthHeading
-        title="Sign in to FoodStack"
-        description="One sign-in for platform administrators, restaurant teams and staff."
+        title="Welcome Back!"
+        description="Sign in to manage your restaurant operations"
       />
-      <form noValidate onSubmit={onSubmit} className="space-y-5">
+      <form
+        noValidate
+        onSubmit={onSubmit}
+        className="space-y-3.5 [@media(min-height:860px)]:space-y-5"
+      >
         {formError ? <FormAlert>{formError}</FormAlert> : null}
         <Field
-          label="Email"
+          label="Email Address"
           type="email"
           name="email"
           autoComplete="username"
@@ -144,37 +148,76 @@ function CredentialsStep({
           }
           onChange={(e) => setValues((v) => ({ ...v, password: e.target.value }))}
         />
-        <label className="flex w-fit cursor-pointer items-center gap-2.5 text-sm select-none">
-          <input
-            type="checkbox"
-            name="rememberMe"
-            checked={values.rememberMe}
-            disabled={submitting}
-            onChange={(e) => setValues((v) => ({ ...v, rememberMe: e.target.checked }))}
-            className="size-4 rounded border-input accent-[var(--color-primary)]"
-          />
-          Remember me for 30 days
-        </label>
-        <Button type="submit" size="lg" className="w-full" disabled={submitting}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <label className="flex w-fit cursor-pointer items-center gap-2.5 text-sm font-medium select-none">
+            <input
+              type="checkbox"
+              name="rememberMe"
+              checked={values.rememberMe}
+              disabled={submitting}
+              onChange={(e) => setValues((v) => ({ ...v, rememberMe: e.target.checked }))}
+              className="size-5 rounded border-input accent-[var(--color-primary)]"
+            />
+            Remember me
+          </label>
+          <span className="hidden items-center sm:flex gap-1.5 text-sm text-slate-600">
+            Keep me signed in for 30 days
+            <Info className="size-4" aria-hidden />
+          </span>
+        </div>
+        <Button
+          type="submit"
+          size="lg"
+          className="h-12 [@media(min-height:860px)]:h-14 w-full rounded-xl text-lg shadow-lg shadow-emerald-700/20"
+          disabled={submitting}
+        >
           {submitting ? (
             <>
               <Loader2 className="animate-spin" aria-hidden />
               Signing in…
             </>
           ) : (
-            'Sign in'
+            <>
+              <LogIn className="size-5" aria-hidden />
+              Sign In
+            </>
           )}
         </Button>
       </form>
-      <p className="mt-8 text-center text-sm text-muted-foreground">
+      <div className="my-4 hidden [@media(min-height:860px)]:flex items-center gap-4 text-sm text-slate-500">
+        <span className="h-px flex-1 bg-slate-200" />
+        or
+        <span className="h-px flex-1 bg-slate-200" />
+      </div>
+      {/* One form for everyone: these tiles explain who signs in here; they are not separate logins. */}
+      <ul className="hidden gap-3 [@media(min-height:860px)]:grid sm:grid-cols-2">
+        {ROLE_TILES.map(({ icon: Icon, title, text }) => (
+          <li
+            key={title}
+            className="flex items-center gap-4 rounded-xl border border-slate-200 bg-slate-50/60 p-4 shadow-sm"
+          >
+            <Icon className="size-10 shrink-0 fill-emerald-600 text-white" aria-hidden />
+            <div>
+              <p className="font-semibold text-slate-900">{title}</p>
+              <p className="text-xs leading-relaxed text-slate-600">{text}</p>
+            </div>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-3 [@media(min-height:860px)]:mt-6 text-center text-sm text-slate-700">
         New to FoodStack?{' '}
         <Link
-          href="/#pricing"
+          href="/get-started"
           className="font-medium text-primary underline-offset-4 hover:underline"
         >
-          See plans
+          Get started
         </Link>
       </p>
     </>
   );
 }
+
+const ROLE_TILES = [
+  { icon: ShieldCheck, title: 'Super Admin', text: 'Manage all restaurants and platform settings' },
+  { icon: Store, title: 'Restaurant Admin', text: 'Manage your restaurant and branches' },
+];

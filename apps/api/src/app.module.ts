@@ -7,11 +7,13 @@ import { ResponseEnvelopeInterceptor } from './common/interceptors/response-enve
 import { AppConfigService } from './config/app-config.service';
 import { AppConfigModule } from './config/config.module';
 import { DatabaseModule } from './database/database.module';
+import { AccessRequestsModule } from './modules/access-requests/access-requests.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { HealthModule } from './modules/health/health.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { PlatformModule } from './modules/platform/platform.module';
 import { TenantsModule } from './modules/tenants/tenants.module';
+import { TeamModule } from './modules/team/team.module';
 import { QueueModule } from './queues/queue.module';
 import { RateLimitModule } from './shared/rate-limit/rate-limit.module';
 import { RedisModule } from './shared/redis/redis.module';
@@ -56,6 +58,8 @@ function isInstalled(pkg: string): boolean {
     AuthModule,
     TenantsModule,
     PlatformModule,
+    AccessRequestsModule,
+    TeamModule,
     // Feature modules (scaffolded under ./modules and ./websocket); register as each is implemented:
     // RestaurantsModule, BranchesModule, StaffModule, RolesModule,
     // FloorsModule, TablesModule, DiningSessionsModule, MenuModule, OrdersModule, KitchenModule,

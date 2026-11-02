@@ -17,9 +17,17 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
+// Applies the saved theme (landing page or Super Admin area) before paint so it does not flash light → dark. It lives
+// here because the root layout is rendered only on the server: a <script> rendered by a nested
+// layout is re-created on client navigation, which React never executes and warns about.
+const themeScript = `try{var p=location.pathname,k=p==='/'?'fs-theme':p.indexOf('/platform')===0?'fs-app-theme':null;if(k&&localStorage.getItem(k)==='dark')document.documentElement.classList.add('dark')}catch(e){}`;
+
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" className={inter.variable}>
+    <html lang="en" className={inter.variable} suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+      </head>
       <body>
         <Providers>{children}</Providers>
       </body>

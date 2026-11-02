@@ -64,6 +64,11 @@ pnpm --filter @foodstack/api cli tenant:add-member --tenant spice-hub --email ca
 Super Admins set up an authenticator app (TOTP) at their first sign-in. Password-reset emails
 arrive in Mailpit. `MFA_ENCRYPTION_KEY` must be set (`.env.example` has a local-only value).
 
+New restaurants usually arrive through the website: **Get started** (`/get-started`) stores a
+request, and Super Admins are emailed about it. In **Requests** (`/platform/requests`) a Super Admin
+approves it, which creates the restaurant on a 14-day trial and emails the owner a set-password
+link, or rejects it. `tenant:create` above does the same without a request.
+
 ## Commands
 
 | Command                                                                      | Does                                                                          |

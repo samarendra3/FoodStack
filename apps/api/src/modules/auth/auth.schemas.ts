@@ -53,4 +53,6 @@ export const forgotPasswordSchema = z.strictObject({ email });
 export const resetPasswordSchema = z.strictObject({
   token: opaqueToken,
   password: newPasswordSchema,
+  /** Sign straight in afterwards (same checks as POST /auth/login, including TOTP). */
+  signIn: z.boolean().default(false),
 });

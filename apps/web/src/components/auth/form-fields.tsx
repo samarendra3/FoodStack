@@ -46,7 +46,7 @@ export function Field({
           id={id}
           aria-invalid={error ? true : undefined}
           aria-describedby={describedBy}
-          className={cn(icon && 'pl-9', className)}
+          className={cn('h-12 rounded-xl', icon && 'pl-10', className)}
           {...props}
         />
         {trailing ? (

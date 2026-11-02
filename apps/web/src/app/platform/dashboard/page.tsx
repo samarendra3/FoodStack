@@ -1,13 +1,15 @@
 'use client';
 
-import { Badge, type BadgeProps } from '@foodstack/ui/components/badge';
-import { Card, CardDescription, CardHeader, CardTitle } from '@foodstack/ui/components/card';
-import { EmptyState } from '@foodstack/ui/components/empty-state';
+import { cn } from '@foodstack/ui/lib/utils';
 import { useQuery } from '@tanstack/react-query';
-import { Activity, Building2, ShieldAlert, UserRound } from 'lucide-react';
+import { AlarmClock, BarChart3, ShieldCheck, Store, UsersRound } from 'lucide-react';
+import { motion } from 'motion/react';
+import Image from 'next/image';
 import { useAuth, useProfile } from '@/components/auth/auth-provider';
-import { StatCard, StatCardSkeleton } from '@/components/dashboard/stat-card';
 import { authErrorMessage } from '@/lib/auth/errors';
+import heroImage from '../../../../public/images/cta-bg-image.png';
+import { card, ease, RestaurantsPanel } from '../restaurants-panel';
+import { StatCard, StatCardSkeleton } from '../stat-card';
 
 interface PlatformDashboard {
   tenants: { total: number; byStatus: Record<string, number>; newLast7Days: number };
@@ -16,25 +18,6 @@ interface PlatformDashboard {
   failedLoginsLast24h: number;
 }
 
-interface TenantRow {
-  id: string;
-  name: string;
-  slug: string;
-  status: string;
-  trialEndsAt: string | null;
-  createdAt: string;
-  activeMembers: number;
-}
-
-const STATUS_BADGE: Record<string, BadgeProps['variant']> = {
-  active: 'default',
-  trial: 'info',
-  suspended: 'warning',
-  deactivated: 'destructive',
-};
-
-const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
-
 export default function PlatformDashboardPage() {
   const { client } = useAuth();
   const profile = useProfile();
@@ -42,52 +25,74 @@ export default function PlatformDashboardPage() {
     queryKey: ['platform', 'dashboard'],
     queryFn: () => client.request<PlatformDashboard>('/platform/dashboard'),
   });
-  const tenants = useQuery({
-    queryKey: ['platform', 'tenants'],
-    queryFn: () => client.request<TenantRow[]>('/platform/tenants'),
-  });
   const d = dashboard.data;
 
   return (
-    <div className="space-y-8">
-      <div className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Platform overview</h1>
-        <p className="text-sm text-muted-foreground">
-          Signed in as {profile.user.fullName}. Figures are live from the platform database.
-        </p>
-      </div>
+    <div className="mx-auto max-w-[90rem] space-y-6">
+      <Hero name={profile.user.fullName} />
 
       {dashboard.isError ? (
-        <Card className="border-destructive/30 text-sm text-destructive">
+        <div className={cn(card, 'p-5 text-sm text-red-600')}>
           {authErrorMessage(dashboard.error)}
-        </Card>
+        </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {d ? (
             <>
               <StatCard
+                index={0}
+                tone="emerald"
+                icon={<Store />}
                 label="Restaurants"
                 value={d.tenants.total}
+                delta={d.tenants.newLast7Days}
                 hint={`${d.tenants.newLast7Days} new in the last 7 days`}
-                icon={<Building2 />}
+                footer={{
+                  kind: 'meter',
+                  value: d.tenants.newLast7Days,
+                  max: d.tenants.total,
+                  label: 'Joined this week',
+                }}
               />
               <StatCard
+                index={1}
+                tone="violet"
+                icon={<AlarmClock />}
                 label="Active or in trial"
                 value={(d.tenants.byStatus.active ?? 0) + (d.tenants.byStatus.trial ?? 0)}
-                hint={`${d.tenants.byStatus.suspended ?? 0} suspended`}
-                icon={<Activity />}
+                hint={`${d.tenants.byStatus.trial ?? 0} in trial · ${d.tenants.byStatus.suspended ?? 0} suspended`}
+                footer={{
+                  kind: 'meter',
+                  value: (d.tenants.byStatus.active ?? 0) + (d.tenants.byStatus.trial ?? 0),
+                  max: d.tenants.total,
+                  label: 'Of all restaurants',
+                }}
               />
               <StatCard
+                index={2}
+                tone="orange"
+                icon={<UsersRound />}
                 label="Users"
                 value={d.users}
-                hint={`${d.activeSessions} active sessions`}
-                icon={<UserRound />}
+                hint="Across the platform and restaurants"
+                footer={{
+                  kind: 'badge',
+                  text: `${d.activeSessions} active session${d.activeSessions === 1 ? '' : 's'}`,
+                  status: d.activeSessions > 0 ? 'good' : 'neutral',
+                }}
               />
               <StatCard
+                index={3}
+                tone="blue"
+                icon={<ShieldCheck />}
                 label="Failed sign-ins"
                 value={d.failedLoginsLast24h}
                 hint="Last 24 hours"
-                icon={<ShieldAlert />}
+                footer={
+                  d.failedLoginsLast24h > 0
+                    ? { kind: 'badge', text: 'Worth a look', status: 'warn' }
+                    : { kind: 'badge', text: 'All clear', status: 'good' }
+                }
               />
             </>
           ) : (
@@ -96,61 +101,82 @@ export default function PlatformDashboardPage() {
         </div>
       )}
 
-      <Card id="restaurants" className="scroll-mt-24 gap-0 p-0">
-        <CardHeader className="border-b p-5">
-          <CardTitle>Restaurant accounts</CardTitle>
-          <CardDescription>Every registered restaurant, newest first.</CardDescription>
-        </CardHeader>
-        {tenants.isPending ? (
-          <div className="space-y-3 p-5" aria-hidden>
-            {Array.from({ length: 3 }, (_, i) => (
-              <div key={i} className="h-10 animate-pulse rounded bg-muted" />
-            ))}
-          </div>
-        ) : tenants.isError ? (
-          <p className="p-5 text-sm text-destructive">{authErrorMessage(tenants.error)}</p>
-        ) : tenants.data.length === 0 ? (
-          <div className="p-5">
-            <EmptyState
-              icon={<Building2 className="size-5" />}
-              title="No restaurants yet"
-              description="Restaurants appear here as soon as they are registered."
-            />
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[36rem] text-sm">
-              <thead className="bg-muted/50 text-left text-xs tracking-wide text-muted-foreground uppercase">
-                <tr>
-                  <th className="px-5 py-3 font-medium">Restaurant</th>
-                  <th className="px-5 py-3 font-medium">Status</th>
-                  <th className="px-5 py-3 text-right font-medium">Team</th>
-                  <th className="px-5 py-3 font-medium">Created</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {tenants.data.map((t) => (
-                  <tr key={t.id} className="hover:bg-muted/30">
-                    <td className="px-5 py-3">
-                      <p className="font-medium">{t.name}</p>
-                      <p className="text-xs text-muted-foreground">{t.slug}</p>
-                    </td>
-                    <td className="px-5 py-3">
-                      <Badge variant={STATUS_BADGE[t.status] ?? 'outline'} className="capitalize">
-                        {t.status}
-                      </Badge>
-                    </td>
-                    <td className="px-5 py-3 text-right tabular-nums">{t.activeMembers}</td>
-                    <td className="px-5 py-3 text-muted-foreground">
-                      {dateFormat.format(new Date(t.createdAt))}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+      <RestaurantsPanel preview />
     </div>
+  );
+}
+
+function Hero({ name }: { name: string }) {
+  return (
+    <motion.section
+      initial={{ opacity: 0, y: 18 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.6, ease }}
+      className="relative overflow-hidden rounded-[20px] border border-emerald-100/70 bg-gradient-to-br from-white via-white to-emerald-50/70 dark:border-white/10 dark:from-[#0f1d18] dark:via-[#0f1d18] dark:to-emerald-950/40"
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 1.08 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 1.2, ease }}
+        className="absolute inset-y-0 right-0 hidden w-[52%] md:block"
+      >
+        <Image
+          src={heroImage}
+          alt=""
+          priority
+          placeholder="blur"
+          sizes="(min-width: 768px) 50vw, 0px"
+          className="origin-top-left scale-110 object-cover object-[85%_40%]"
+          fill
+        />
+        <div className="absolute inset-0 bg-gradient-to-r from-white via-white/30 to-transparent dark:from-[#0f1d18] dark:via-[#0f1d18]/40" />
+      </motion.div>
+      <motion.span
+        initial={{ opacity: 0, scale: 0.6, y: 10 }}
+        animate={{ opacity: 1, scale: 1, y: [0, -8, 0] }}
+        transition={{
+          opacity: { duration: 0.5, delay: 0.5 },
+          scale: { type: 'spring', stiffness: 260, damping: 16, delay: 0.5 },
+          y: { duration: 4, repeat: Infinity, ease: 'easeInOut', delay: 1 },
+        }}
+        className="absolute top-6 right-8 hidden size-16 items-center justify-center rounded-[16px] border border-white/60 bg-white/80 text-emerald-600 shadow-xl backdrop-blur md:flex dark:border-white/10 dark:bg-white/10 dark:text-emerald-400"
+      >
+        <BarChart3 className="size-8" strokeWidth={2.4} />
+      </motion.span>
+      <div className="relative max-w-xl px-6 md:max-w-[50%] py-8 sm:px-8 sm:py-10">
+        <h1 className="text-3xl leading-tight font-bold tracking-tight sm:text-4xl xl:text-[2.75rem]">
+          <motion.span
+            className="block"
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.55, delay: 0.1, ease }}
+          >
+            Welcome back,
+          </motion.span>
+          <motion.span
+            className="block bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-500 bg-clip-text text-transparent dark:from-emerald-400 dark:via-emerald-300 dark:to-teal-300"
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.55, delay: 0.22, ease }}
+          >
+            {name}!
+          </motion.span>
+        </h1>
+        <motion.p
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.34, ease }}
+          className="mt-3 text-base text-muted-foreground sm:text-lg"
+        >
+          Here&apos;s what&apos;s happening with your FoodStack platform today.
+        </motion.p>
+        <motion.span
+          initial={{ width: 0 }}
+          animate={{ width: 56 }}
+          transition={{ duration: 0.7, delay: 0.5, ease }}
+          className="mt-5 block h-1 rounded-full bg-emerald-500"
+        />
+      </div>
+    </motion.section>
   );
 }

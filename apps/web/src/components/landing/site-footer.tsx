@@ -51,7 +51,7 @@ const columns = [
       { label: 'About', href: '#' },
       { label: 'Pricing', href: '#pricing' },
       { label: 'Careers', href: '#' },
-      { label: 'Contact', href: '#' },
+      { label: 'Contact', href: '/get-started' },
     ],
   },
 ];
@@ -95,7 +95,7 @@ export function SiteFooter() {
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <Link
-                href="/login"
+                href="/get-started"
                 className={cn(
                   buttonVariants(),
                   'h-10 rounded-lg bg-emerald-500 px-5 font-semibold text-white hover:bg-emerald-400',

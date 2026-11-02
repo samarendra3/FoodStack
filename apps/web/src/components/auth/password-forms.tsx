@@ -8,8 +8,9 @@ import {
 } from '@foodstack/validators';
 import { ArrowLeft, Loader2, Lock, Mail, MailCheck } from 'lucide-react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { type FormEvent, useState } from 'react';
+import { destinationAfterLogin } from '@/lib/auth/access';
 import { authErrorMessage, errorCode } from '@/lib/auth/errors';
 import { AuthHeading } from './auth-layout';
 import { useAuth } from './auth-provider';
@@ -118,15 +119,31 @@ export function ForgotPasswordForm() {
 }
 
 /** Also used for the "set your password" link that new accounts receive. */
+/** Reset link from "Forgot password?". */
 export function ResetPasswordForm() {
-  const { client } = useAuth();
+  return <SetPasswordForm welcome={false} />;
+}
+
+/** First-time link from an approval or a team invitation. */
+export function WelcomePasswordForm() {
+  return <SetPasswordForm welcome />;
+}
+
+/**
+ * Sets the password from an emailed one-time link, then signs the person straight in and sends
+ * them to their workspace. Super Admins still finish with two-step verification on sign-in.
+ */
+function SetPasswordForm({ welcome }: { welcome: boolean }) {
+  const { client, signedIn } = useAuth();
+  const router = useRouter();
   const token = useSearchParams().get('token') ?? '';
   const [values, setValues] = useState({ password: '', confirmPassword: '' });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [invalidLink, setInvalidLink] = useState(!/^[A-Za-z0-9_-]{32,64}$/.test(token));
   const [submitting, setSubmitting] = useState(false);
-  const [done, setDone] = useState(false);
+  const [needsSignIn, setNeedsSignIn] = useState(false);
+  const [redirecting, setRedirecting] = useState(false);
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
@@ -139,8 +156,14 @@ export function ResetPasswordForm() {
     setErrors({});
     setSubmitting(true);
     try {
-      await client.resetPassword(token, parsed.data.password);
-      setDone(true);
+      const result = await client.resetPassword(token, parsed.data.password);
+      if (result.kind === 'session') {
+        setRedirecting(true);
+        signedIn(result.session);
+        router.replace(destinationAfterLogin(result.session.profile, null));
+        return;
+      }
+      setNeedsSignIn(true); // two-step verification is completed on the sign-in page
     } catch (err) {
       if (errorCode(err) === 'AUTH_RESET_TOKEN_INVALID') setInvalidLink(true);
       else setError(authErrorMessage(err));
@@ -154,28 +177,43 @@ export function ResetPasswordForm() {
       <>
         <AuthHeading
           title="This link has expired"
-          description="Reset links work once and expire after 30 minutes. Request a new one to continue."
+          description={
+            welcome
+              ? 'Welcome links work once and expire after 72 hours. Ask for a new one below, using the email address your invitation was sent to.'
+              : 'Reset links work once and expire after 30 minutes. Request a new one to continue.'
+          }
         />
         <Link
           href="/forgot-password"
           className={buttonVariants({ size: 'lg', className: 'w-full' })}
         >
-          Request a new link
+          {welcome ? 'Send me a new link' : 'Request a new link'}
         </Link>
         <BackToSignIn />
       </>
     );
   }
 
-  if (done) {
+  if (redirecting) {
+    return (
+      <div className="flex flex-col items-center py-10 text-center" role="status">
+        <Loader2 className="size-7 animate-spin text-primary" aria-hidden />
+        <p className="mt-4 font-medium">
+          {welcome ? 'All set! Opening your workspace…' : 'Password saved. Signing you in…'}
+        </p>
+      </div>
+    );
+  }
+
+  if (needsSignIn) {
     return (
       <>
         <AuthHeading
-          title="Password updated"
-          description="Your new password is set and you have been signed out of every other device."
+          title="Password saved"
+          description="Sign in with your new password to finish with two-step verification."
         />
         <Link href="/login" className={buttonVariants({ size: 'lg', className: 'w-full' })}>
-          Sign in
+          Continue to sign in
         </Link>
       </>
     );
@@ -184,13 +222,17 @@ export function ResetPasswordForm() {
   return (
     <>
       <AuthHeading
-        title="Choose a new password"
-        description="You will use it to sign in from now on."
+        title={welcome ? 'Welcome to FoodStack!' : 'Choose a new password'}
+        description={
+          welcome
+            ? 'Create a password to finish setting up your account. You will be signed in straight away.'
+            : 'You will be signed in with it straight away, and signed out everywhere else.'
+        }
       />
       <form noValidate onSubmit={onSubmit} className="space-y-5">
         {error ? <FormAlert>{error}</FormAlert> : null}
         <PasswordField
-          label="New password"
+          label={welcome ? 'Create a password' : 'New password'}
           autoComplete="new-password"
           icon={<Lock />}
           value={values.password}
@@ -201,7 +243,7 @@ export function ResetPasswordForm() {
           onChange={(e) => setValues((v) => ({ ...v, password: e.target.value }))}
         />
         <PasswordField
-          label="Confirm new password"
+          label="Confirm password"
           autoComplete="new-password"
           icon={<Lock />}
           value={values.confirmPassword}
@@ -211,10 +253,14 @@ export function ResetPasswordForm() {
         />
         <Button type="submit" size="lg" className="w-full" disabled={submitting}>
           {submitting ? <Loader2 className="animate-spin" aria-hidden /> : null}
-          {submitting ? 'Saving…' : 'Set new password'}
+          {submitting
+            ? 'Saving…'
+            : welcome
+              ? 'Create password & sign in'
+              : 'Save password & sign in'}
         </Button>
       </form>
-      <BackToSignIn />
+      {welcome ? null : <BackToSignIn />}
     </>
   );
 }

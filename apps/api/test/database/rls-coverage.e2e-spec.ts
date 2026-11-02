@@ -9,6 +9,7 @@ import { openTestDatabase, type TestDatabase } from '../support/db';
  * is deliberately added to NON_TENANT_TABLES.
  */
 const NON_TENANT_TABLES = [
+  'access_requests',
   'login_attempts',
   'mfa_recovery_codes',
   'permissions',
@@ -78,6 +79,8 @@ describe('database structure', () => {
     ['permissions', 'INSERT', false],
     ['permissions', 'UPDATE', false],
     ['typeorm_migrations', 'SELECT', false],
+    ['access_requests', 'INSERT', true],
+    ['access_requests', 'DELETE', false],
     ['tenants', 'DELETE', true], // granted, but no DELETE policy exists (checked in isolation tests)
   ])('app role privilege on %s %s is %s', async (table, privilege, expected) => {
     const { rows } = await db.owner.query<{ ok: boolean }>(

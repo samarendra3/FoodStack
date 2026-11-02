@@ -716,7 +716,8 @@ export class AuthService {
   }
 
   /** Sets the password, signs the user out everywhere and clears any lockout. */
-  async resetPassword(token: string, password: string, meta: RequestMeta): Promise<void> {
+  /** Returns the account email, so the caller can sign the person straight in. */
+  async resetPassword(token: string, password: string, meta: RequestMeta): Promise<string> {
     const hash = await this.hasher.hash(password);
     const reset = await this.db.run({}, async (db) => {
       const row = await findUserToken(db, token, 'password_reset');
@@ -742,7 +743,11 @@ export class AuthService {
         entityId: row.user_id,
         ...meta,
       });
-      return row.user_id;
+      const user = await db.one<{ email: string }>(
+        'SELECT email::text AS email FROM users WHERE id = $1',
+        [row.user_id],
+      );
+      return user!.email;
     });
     if (!reset) {
       throw fail(
@@ -751,6 +756,7 @@ export class AuthService {
         'This reset link is invalid or has expired. Request a new one.',
       );
     }
+    return reset;
   }
 }
 

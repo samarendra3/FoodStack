@@ -31,7 +31,7 @@ const plans: Plan[] = [
     icon: Rocket,
     monthly: 999,
     yearly: 799,
-    cta: { label: 'Get started', href: '/login' },
+    cta: { label: 'Get started', href: '/get-started' },
     featuresTitle: 'Includes',
     features: [
       '1 branch',
@@ -48,7 +48,7 @@ const plans: Plan[] = [
     icon: Sparkles,
     monthly: 2499,
     yearly: 1999,
-    cta: { label: 'Get started', href: '/login' },
+    cta: { label: 'Get started', href: '/get-started' },
     featuresTitle: 'Everything in Starter, plus',
     features: [
       'Up to 5 branches',
@@ -66,7 +66,7 @@ const plans: Plan[] = [
     icon: Building2,
     monthly: null,
     yearly: null,
-    cta: { label: 'Contact sales', href: '#' },
+    cta: { label: 'Contact sales', href: '/get-started' },
     featuresTitle: 'Everything in Growth, plus',
     features: [
       'Unlimited branches',

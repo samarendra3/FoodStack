@@ -541,5 +541,37 @@ describe('Authentication (integration)', () => {
         .expect(400);
       expect(reused.body.code).toBe('AUTH_RESET_TOKEN_INVALID');
     });
+
+    it('signs straight in after a reset when asked, but a Super Admin still needs TOTP', async () => {
+      const resetFor = async (email: string) => {
+        await http()
+          .post(`${API}/auth/password/forgot`)
+          .set('X-Forwarded-For', freshIp())
+          .send({ email })
+          .expect(202);
+        const message = mail.outbox.findLast((m) => m.to === email.toLowerCase())!;
+        return /token=([A-Za-z0-9_-]+)/.exec(message.text)![1]!;
+      };
+
+      const staffToken = await resetFor(emails.waiterA!);
+      const staff = await http()
+        .post(`${API}/auth/password/reset`)
+        .set('X-Forwarded-For', freshIp())
+        .send({ token: staffToken, password: PASSWORD, signIn: true })
+        .expect(200);
+      expect(staff.headers['cache-control']).toBe('no-store');
+      expect(staff.body.data.profile).toMatchObject({ homePath: '/waiter' });
+      expect(cookie(staff, 'fs_rt')).toBeDefined();
+
+      const adminToken = await resetFor(emails.superAdmin!);
+      const admin = await http()
+        .post(`${API}/auth/password/reset`)
+        .set('X-Forwarded-For', freshIp())
+        .send({ token: adminToken, password: PASSWORD, signIn: true })
+        .expect(202);
+      expect(admin.body.data).toMatchObject({ mfaRequired: true });
+      expect(admin.body.data.accessToken).toBeUndefined();
+      expect(cookie(admin, 'fs_rt')).toBeUndefined();
+    });
   });
 });

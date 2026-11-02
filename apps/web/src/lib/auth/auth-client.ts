@@ -115,8 +115,15 @@ export class AuthClient {
     return this.api.request('/auth/password/forgot', { method: 'POST', body: { email } });
   }
 
-  resetPassword(token: string, password: string): Promise<unknown> {
-    return this.api.request('/auth/password/reset', { method: 'POST', body: { token, password } });
+  /** Sets the password from an emailed link and signs straight in (TOTP may still follow). */
+  async resetPassword(token: string, password: string): Promise<LoginResult> {
+    const data = await this.api.request<AuthSession | MfaChallenge>('/auth/password/reset', {
+      method: 'POST',
+      body: { token, password, signIn: true },
+    });
+    if ('mfaRequired' in data) return { kind: 'mfa', challenge: data };
+    this.accept(data);
+    return { kind: 'session', session: data };
   }
 
   /** Authorized API call; refreshes once and retries if the access token has expired. */

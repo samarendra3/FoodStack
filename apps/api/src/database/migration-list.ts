@@ -6,6 +6,7 @@ import { AccessControl1798000004000 } from './migrations/1798000004000-AccessCon
 import { AuditLogs1798000005000 } from './migrations/1798000005000-AuditLogs';
 import { SeedPermissionsAndSystemRoles1798000006000 } from './migrations/1798000006000-SeedPermissionsAndSystemRoles';
 import { SessionPersistence1798000007000 } from './migrations/1798000007000-SessionPersistence';
+import { AccessRequests1798000008000 } from './migrations/1798000008000-AccessRequests';
 
 /**
  * All migrations in order, for code that cannot load them by file glob (the e2e test setup).
@@ -20,4 +21,5 @@ export const ALL_MIGRATIONS = [
   AuditLogs1798000005000,
   SeedPermissionsAndSystemRoles1798000006000,
   SessionPersistence1798000007000,
+  AccessRequests1798000008000,
 ];

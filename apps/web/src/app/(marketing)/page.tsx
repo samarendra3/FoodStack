@@ -263,7 +263,7 @@ export default function LandingPage() {
                 </StaggerItem>
                 <StaggerItem className="mt-10 flex flex-wrap items-center gap-6">
                   <Link
-                    href="/login"
+                    href="/get-started"
                     className={cn(
                       buttonVariants({ size: 'lg' }),
                       pill,
@@ -431,7 +431,7 @@ export default function LandingPage() {
                   Sign in to set up your restaurant, menu and first branch.
                 </p>
                 <Link
-                  href="/login"
+                  href="/get-started"
                   className={cn(
                     buttonVariants({ size: 'lg' }),
                     pill,
