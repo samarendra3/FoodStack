@@ -2,7 +2,7 @@
   "name": "@foodstack/ui",
   "version": "0.0.0",
   "private": true,
-  "description": "FoodStack design system: tokens, shadcn/ui components and shared layouts",
+  "description": "FoodStack design system: tokens and shadcn/ui components",
   "type": "module",
   "sideEffects": [
     "**/*.css"
@@ -10,8 +10,7 @@
   "exports": {
     "./styles.css": "./src/styles/globals.css",
     "./lib/utils": "./src/lib/utils.ts",
-    "./components/*": "./src/components/*.tsx",
-    "./layouts/*": "./src/layouts/*.tsx"
+    "./components/*": "./src/components/*.tsx"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

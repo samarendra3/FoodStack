@@ -81,6 +81,11 @@ jobs:
       - name: Integration tests (migrations up/down, roles, RLS, Redis, app boot)
         run: pnpm --filter @foodstack/api test:integration
 
+      - name: Row-level security e2e tests (migrations round trip, tenant isolation)
+        env:
+          DATABASE_NAME: foodstack_test
+        run: pnpm --filter @foodstack/api test:e2e
+
       - name: Service logs
         if: failure()
         run: docker compose logs postgres redis

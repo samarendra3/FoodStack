@@ -1,7 +1,7 @@
 # Local development stack. Ports bind to 127.0.0.1 only; production uses managed AWS
 # services (RDS, ElastiCache) in private subnets - see docs/deployment.md.
 #
-#   docker compose up -d postgres redis          # infrastructure only (run apps with pnpm dev)
+#   docker compose up -d postgres redis mailpit  # infrastructure only (run apps with pnpm dev)
 #   docker compose --profile apps up -d --build  # everything in containers
 
 name: foodstack
@@ -51,6 +51,17 @@ services:
       retries: 10
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
+
+  # Local SMTP sink for development email (web UI on http://localhost:8025).
+  mailpit:
+    image: axllent/mailpit:v1.31.6
+    restart: unless-stopped
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+    ports:
+      - '127.0.0.1:1025:1025'
+      - '127.0.0.1:8025:8025'
 
   # One-shot: applies pending migrations as the schema owner, then exits. The api waits for it.
   migrate:

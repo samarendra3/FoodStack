@@ -28,7 +28,7 @@ Node.js 26 (see `.nvmrc`; ≥ 24.11 works), pnpm 12 (`npm i -g pnpm@12.16.1`; No
 ```bash
 cp .env.example .env            # then set the DATABASE_*, DATABASE_MIGRATION_* and REDIS passwords
 pnpm install
-pnpm docker:up                  # PostgreSQL 18 + Redis on 127.0.0.1
+pnpm docker:up                  # PostgreSQL 18 + Redis + Mailpit on 127.0.0.1
 pnpm db:migrate                 # runs as DATABASE_MIGRATION_USER (schema owner)
 pnpm dev                        # all apps + API in watch mode
 ```
@@ -44,12 +44,38 @@ API integration tests run against real PostgreSQL and Redis (`pnpm docker:up` fi
 use the separate `foodstack_test` database: `pnpm --filter @foodstack/api test:integration`.
 Optional overrides go in `apps/api/.env.test` (see `apps/api/.env.test.example`).
 
+Mailpit catches all development email: http://localhost:8025.
+
+Row-level security e2e tests (`pnpm --filter @foodstack/api test:e2e`) also use `foodstack_test`: they drop and rebuild its schema (migrations up, down and up again), then check tenant isolation as the runtime role.
+
+### Signing in
+
+Sign in at http://localhost:3000/login. Each role lands on its own page: Super Admin on
+`/platform/dashboard`; Owner, Restaurant Admin and Branch Manager on `/restaurant/dashboard`;
+Cashier on `/pos`; Kitchen Staff on `/kitchen`; Waiter on `/waiter`. No credentials are seeded.
+Create accounts with the CLI; each command prints a one-time link where the person sets a password:
+
+```bash
+pnpm --filter @foodstack/api cli platform:create-admin --email admin@example.com --name "Ada Admin"
+pnpm --filter @foodstack/api cli tenant:create --name "Spice Hub" --slug spice-hub   --owner-email owner@example.com --owner-name "Olu Owner"
+pnpm --filter @foodstack/api cli tenant:add-member --tenant spice-hub --email cashier@example.com   --name "Cara Cashier" --role cashier            # also: waiter, kitchen_staff, branch_manager, restaurant_admin
+```
+
+Super Admins set up an authenticator app (TOTP) at their first sign-in. Password-reset emails
+arrive in Mailpit. `MFA_ENCRYPTION_KEY` must be set (`.env.example` has a local-only value).
+
+New restaurants usually arrive through the website: **Get started** (`/get-started`) stores a
+request, and Super Admins are emailed about it. In **Requests** (`/platform/requests`) a Super Admin
+approves it, which creates the restaurant on a 14-day trial and emails the owner a set-password
+link, or rejects it. `tenant:create` above does the same without a request.
+
 ## Commands
 
 | Command                                                                      | Does                                                                          |
 | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | `pnpm dev`                                                                   | Run everything in watch mode (`pnpm --filter @foodstack/pos dev` for one app) |
 | `pnpm build` · `lint` · `typecheck` · `test`                                 | Turborepo tasks across the workspace                                          |
+| `pnpm test:e2e`                                                              | Database and API end-to-end tests (needs Postgres from `pnpm docker:up`)      |
 | `pnpm format` / `format:check`                                               | Prettier                                                                      |
 | `pnpm db:migrate` / `db:migrate:revert`                                      | Run / revert TypeORM migrations                                               |
 | `pnpm --filter @foodstack/api migration:create src/database/migrations/Name` | New empty migration                                                           |

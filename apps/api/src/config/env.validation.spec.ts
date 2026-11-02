@@ -1,5 +1,5 @@
 import { generateKeyPairSync } from 'node:crypto';
-import { validateEnv } from './env.validation';
+import { EXAMPLE_MFA_ENCRYPTION_KEY, validateEnv } from './env.validation';
 
 const base = {
   DATABASE_HOST: 'localhost',
@@ -24,6 +24,8 @@ describe('validateEnv', () => {
     CORS_ORIGINS: 'https://admin.example.com',
     JWT_PRIVATE_KEY: b64(keys.privateKey),
     JWT_PUBLIC_KEY: b64(keys.publicKey),
+    COOKIE_SECURE: 'true',
+    MFA_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'),
   };
 
   it('applies defaults and parses lists', () => {
@@ -110,6 +112,29 @@ describe('validateEnv', () => {
         .DATABASE_MIGRATION_USER,
     ).toBeUndefined();
   });
+
+  it('validates auth durations, tolerating trailing whitespace from CRLF files', () => {
+    const env = validateEnv({
+      ...base,
+      JWT_ACCESS_TTL: `10m${String.fromCharCode(13)}`, // value as read from a CRLF .env file
+      JWT_REFRESH_TTL: '7d',
+    });
+    expect(env.JWT_ACCESS_TTL).toBe('10m');
+    expect(() => validateEnv({ ...base, JWT_ACCESS_TTL: '15 minutes' })).toThrow(/JWT_ACCESS_TTL/);
+  });
+
+  it.each(['staging', 'production'])(
+    'requires secure cookies and a real MFA key in %s',
+    (NODE_ENV) => {
+      expect(() => validateEnv({ ...deployedBase, NODE_ENV, COOKIE_SECURE: 'false' })).toThrow(
+        /COOKIE_SECURE/,
+      );
+      expect(() =>
+        validateEnv({ ...deployedBase, NODE_ENV, MFA_ENCRYPTION_KEY: EXAMPLE_MFA_ENCRYPTION_KEY }),
+      ).toThrow(/MFA_ENCRYPTION_KEY/);
+      expect(() => validateEnv({ ...base, MFA_ENCRYPTION_KEY: 'c2hvcnQ=' })).toThrow(/32 bytes/);
+    },
+  );
 
   it('checks that the database CA bundle exists', () => {
     expect(() => validateEnv({ ...base, DATABASE_SSL_CA_PATH: '/nope/rds-ca.pem' })).toThrow(

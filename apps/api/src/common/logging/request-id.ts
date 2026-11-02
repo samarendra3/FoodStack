@@ -26,5 +26,8 @@ export const REDACTED_LOG_PATHS = [
     'refreshToken',
     'token',
     'mfaCode',
+    'code',
+    'recoveryCode',
+    'challengeToken',
   ].map((field) => `req.body.${field}`),
 ];

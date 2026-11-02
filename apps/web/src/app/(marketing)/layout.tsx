@@ -8,14 +8,7 @@ const jakarta = Plus_Jakarta_Sans({
   display: 'swap',
 });
 
-// Applies the saved theme before paint so the page does not flash light → dark.
-const themeScript = `try{if(localStorage.getItem('fs-theme')==='dark')document.documentElement.classList.add('dark')}catch(e){}`;
-
+// The saved landing-page theme is applied before paint by the script in the root layout.
 export default function MarketingLayout({ children }: { children: ReactNode }) {
-  return (
-    <div className={jakarta.variable}>
-      <script dangerouslySetInnerHTML={{ __html: themeScript }} />
-      {children}
-    </div>
-  );
+  return <div className={jakarta.variable}>{children}</div>;
 }

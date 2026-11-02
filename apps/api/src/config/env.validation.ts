@@ -38,6 +38,24 @@ const pemKey = z.preprocess(
     .optional(),
 );
 
+/** Durations such as 30s, 15m, 12h, 30d. */
+const duration = z
+  .string()
+  .trim()
+  .regex(/^\d+[smhd]$/, 'Use a number followed by s, m, h or d');
+
+/** 32 random bytes, base64-encoded (AES-256 key). */
+const aesKey = z.preprocess(
+  emptyAsUndefined,
+  z
+    .string()
+    .refine((value) => Buffer.from(value, 'base64').length === 32, 'Must be 32 bytes, base64')
+    .optional(),
+);
+
+/** Development-only value shipped in .env.example; rejected in staging/production. */
+export const EXAMPLE_MFA_ENCRYPTION_KEY = 'ZGV2LW9ubHktbWZhLWtleS1kby1ub3QtdXNlLTMyYiE=';
+
 export const DEPLOYED_ENVIRONMENTS = ['staging', 'production'] as const;
 
 /** Every environment variable the API reads. Startup fails fast if this does not parse. */
@@ -82,8 +100,29 @@ export const envSchema = z
     JWT_PRIVATE_KEY: pemKey,
     JWT_PUBLIC_KEY: pemKey,
     JWT_KEY_ID: z.string().min(1).default('local'),
-    JWT_ACCESS_TTL: z.string().default('15m'),
-    JWT_REFRESH_TTL: z.string().default('30d'),
+    JWT_ISSUER: z.string().min(1).default('foodstack-api'),
+    JWT_ACCESS_TTL: duration.default('15m'),
+    /** Sliding refresh-session lifetime (extended on every refresh). */
+    JWT_REFRESH_TTL: duration.default('30d'),
+    /** Hard cap on a session, however active it is. */
+    JWT_REFRESH_ABSOLUTE_TTL: duration.default('90d'),
+    /** Unset = host-only cookies (local). In AWS: the shared parent domain, e.g. .foodstack.app */
+    COOKIE_DOMAIN: optionalString,
+    /** Must be true outside local development (HTTPS only). */
+    COOKIE_SECURE: booleanString,
+
+    /** AES-256-GCM key for TOTP secrets at rest. Generate with keys:generate. */
+    MFA_ENCRYPTION_KEY: aesKey,
+    /** Name shown in authenticator apps. */
+    MFA_ISSUER: z.string().min(1).default('FoodStack'),
+
+    /** Outgoing email (local: Mailpit on 1025, UI on http://localhost:8025). */
+    SMTP_HOST: z.string().min(1).default('localhost'),
+    SMTP_PORT: z.coerce.number().int().positive().default(1025),
+    SMTP_USER: optionalString,
+    SMTP_PASSWORD: optionalString,
+    SMTP_SECURE: booleanString,
+    MAIL_FROM: z.string().min(3).default('FoodStack <no-reply@foodstack.local>'),
 
     AWS_REGION: z.string().default('ap-south-1'),
     AWS_S3_BUCKET: z.string().optional(),
@@ -102,6 +141,20 @@ export const envSchema = z
           code: 'custom',
           path: ['CORS_ORIGINS'],
           message: `Wildcard not allowed in ${env.NODE_ENV}`,
+        });
+      }
+      if (!env.COOKIE_SECURE) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['COOKIE_SECURE'],
+          message: `Must be true in ${env.NODE_ENV}`,
+        });
+      }
+      if (!env.MFA_ENCRYPTION_KEY || env.MFA_ENCRYPTION_KEY === EXAMPLE_MFA_ENCRYPTION_KEY) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['MFA_ENCRYPTION_KEY'],
+          message: `Required in ${env.NODE_ENV} (and must not be the example value)`,
         });
       }
       for (const key of ['JWT_PRIVATE_KEY', 'JWT_PUBLIC_KEY'] as const) {
