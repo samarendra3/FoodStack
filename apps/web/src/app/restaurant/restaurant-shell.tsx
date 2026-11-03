@@ -1,29 +1,48 @@
 'use client';
 
 import { cn } from '@foodstack/ui/lib/utils';
+import { useQuery } from '@tanstack/react-query';
 import {
-  ChevronDown,
-  ChevronRight,
-  ChevronsLeft,
-  ChevronsRight,
+  ChevronsUpDown,
+  CircleHelp,
   Loader2,
   LogOut,
   MapPin,
   Menu,
+  Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Search,
+  Settings2,
+  Sparkles,
+  Sun,
+  UserRound,
   X,
 } from 'lucide-react';
 import { AnimatePresence, MotionConfig, motion } from 'motion/react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { type ReactNode, useEffect, useState } from 'react';
-import { BrandMark, BrandName } from '@/components/auth/auth-layout';
-import { useProfile } from '@/components/auth/auth-provider';
-import { NotificationsButton, UserMenu, useSignOut } from '@/components/shell/header-widgets';
+import { usePathname, useRouter } from 'next/navigation';
+import {
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
+import { BrandMark } from '@/components/auth/auth-layout';
+import { useAuth, useProfile } from '@/components/auth/auth-provider';
+import {
+  NotificationsButton,
+  UserMenu,
+  usePopover,
+  useSignOut,
+} from '@/components/shell/header-widgets';
+import { hasPermissionAnywhere } from '@/lib/auth/access';
 import { initials, roleLabel } from '@/lib/auth/roles';
-import { navFor, pageLabel, type RestaurantNavGroup, type RestaurantNavItem } from './nav';
+import { isActive, liveItemsFor, type NavItem, navFor, upcomingFor } from './nav';
 
+const THEME_KEY = 'fs-app-theme';
 const COLLAPSED_KEY = 'fs-restaurant-sidebar-collapsed';
-const GROUPS_KEY = 'fs-restaurant-nav-closed';
 
 function readStorage<T>(key: string, fallback: T): T {
   try {
@@ -37,24 +56,42 @@ function writeStorage(key: string, value: unknown) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
   } catch {
-    // Storage blocked (private mode): the choice lasts for this visit only.
+    // Storage blocked (private mode): the choice lasts for this visit.
   }
+}
+
+/** Live counts for nav badges (real data only; absent when the user cannot see it). */
+function useBadges(): Partial<Record<NonNullable<NavItem['badge']>, number>> {
+  const { client } = useAuth();
+  const profile = useProfile();
+  const team = useQuery({
+    queryKey: ['restaurant', 'team', profile.activeTenant?.id],
+    queryFn: () => client.request<{ members: { status: string }[] }>('/team'),
+    enabled: hasPermissionAnywhere(profile, 'member:read'),
+    staleTime: 60_000,
+  });
+  const invited = team.data?.members.filter((m) => m.status === 'invited').length;
+  return invited ? { pendingInvites: invited } : {};
 }
 
 /** Restaurant workspace layout: navy sidebar (drawer on small screens) and a light header. */
 export function RestaurantShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const profile = useProfile();
-  const groups = navFor(profile);
-  const [collapsed, setCollapsed] = useState(false);
-  const [closedGroups, setClosedGroups] = useState<string[]>([]);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
 
-  // Remembered layout choices (read after mount so server and client render the same).
+  // Saved theme and sidebar state (read after mount so server and client render the same).
   useEffect(() => {
+    try {
+      if (localStorage.getItem(THEME_KEY) === 'dark') {
+        document.documentElement.classList.add('dark');
+      }
+    } catch {
+      // Storage blocked: stay light.
+    }
     // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time hydration from storage
     setCollapsed(readStorage(COLLAPSED_KEY, false));
-    setClosedGroups(readStorage<string[]>(GROUPS_KEY, []));
+    return () => document.documentElement.classList.remove('dark');
   }, []);
 
   useEffect(() => {
@@ -68,24 +105,19 @@ export function RestaurantShell({ children }: { children: ReactNode }) {
       writeStorage(COLLAPSED_KEY, !c);
       return !c;
     });
-  const toggleGroup = (id: string) =>
-    setClosedGroups((prev) => {
-      const next = prev.includes(id) ? prev.filter((g) => g !== id) : [...prev, id];
-      writeStorage(GROUPS_KEY, next);
-      return next;
-    });
 
-  const sidebarProps = { groups, pathname, closedGroups, toggleGroup };
+  const sidebar = { pathname };
 
   return (
     <MotionConfig reducedMotion="user">
-      <div className="flex min-h-dvh bg-[#F8FAFC] text-[#0F172A]">
+      <div className="flex min-h-dvh bg-[#F8FAFC] text-[#0F172A] dark:bg-[#0B1120] dark:text-slate-100">
         <motion.aside
-          animate={{ width: collapsed ? 76 : 264 }}
+          initial={false}
+          animate={{ width: collapsed ? 76 : 260 }}
           transition={{ type: 'spring', stiffness: 380, damping: 38 }}
           className="sticky top-0 hidden h-dvh shrink-0 lg:block"
         >
-          <Sidebar {...sidebarProps} collapsed={collapsed} onToggleCollapsed={toggleCollapsed} />
+          <Sidebar {...sidebar} collapsed={collapsed} onToggleCollapsed={toggleCollapsed} />
         </motion.aside>
 
         <AnimatePresence>
@@ -99,7 +131,7 @@ export function RestaurantShell({ children }: { children: ReactNode }) {
                 onClick={() => setDrawerOpen(false)}
               />
               <motion.div
-                className="absolute inset-y-0 left-0 w-[17rem] max-w-[85vw] shadow-2xl"
+                className="absolute inset-y-0 left-0 w-[260px] max-w-[85vw] shadow-2xl"
                 initial={{ x: '-100%' }}
                 animate={{ x: 0 }}
                 exit={{ x: '-100%' }}
@@ -108,41 +140,30 @@ export function RestaurantShell({ children }: { children: ReactNode }) {
                   if ((e.target as HTMLElement).closest('a')) setDrawerOpen(false);
                 }}
               >
-                <Sidebar {...sidebarProps} collapsed={false} onClose={() => setDrawerOpen(false)} />
+                <Sidebar {...sidebar} collapsed={false} onClose={() => setDrawerOpen(false)} />
               </motion.div>
             </div>
           ) : null}
         </AnimatePresence>
 
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-[#E2E8F0] bg-white/90 px-4 backdrop-blur sm:px-6">
+          <header className="sticky top-0 z-30 flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-[#E2E8F0] bg-white/90 px-4 py-3 backdrop-blur-md sm:h-16 sm:flex-nowrap sm:px-6 sm:py-0 dark:border-white/10 dark:bg-[#0B1120]/90">
             <button
               type="button"
               onClick={() => setDrawerOpen(true)}
               aria-label="Open menu"
-              className="flex size-9 items-center justify-center rounded-lg text-[#64748B] hover:bg-slate-100 lg:hidden"
+              className="flex size-10 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 lg:hidden dark:hover:bg-white/5"
             >
               <Menu className="size-5" />
             </button>
-            <nav aria-label="Breadcrumb" className="min-w-0 flex-1">
-              <ol className="flex items-center gap-1.5 text-sm text-[#64748B]">
-                <li className="hidden truncate sm:block">
-                  <Link href="/restaurant/dashboard" className="hover:text-[#0F172A]">
-                    {profile.activeTenant?.name ?? 'Restaurant'}
-                  </Link>
-                </li>
-                <ChevronRight className="hidden size-4 shrink-0 sm:block" aria-hidden />
-                <li className="truncate font-medium text-[#0F172A]" aria-current="page">
-                  {pageLabel(pathname)}
-                </li>
-              </ol>
-            </nav>
-            <div className="flex items-center gap-1 sm:gap-2">
+            <CommandSearch />
+            <div className="ml-auto flex items-center gap-0.5 sm:gap-1.5">
+              <ThemeButton />
               <NotificationsButton />
               <UserMenu />
             </div>
           </header>
-          <main className="min-w-0 flex-1 p-4 sm:p-6 lg:p-8">{children}</main>
+          <main className="min-w-0 flex-1 px-4 py-5 sm:px-6">{children}</main>
         </div>
       </div>
     </MotionConfig>
@@ -150,295 +171,500 @@ export function RestaurantShell({ children }: { children: ReactNode }) {
 }
 
 function Sidebar({
-  groups,
   pathname,
   collapsed,
-  closedGroups,
-  toggleGroup,
   onToggleCollapsed,
   onClose,
 }: {
-  groups: RestaurantNavGroup[];
   pathname: string;
   collapsed: boolean;
-  closedGroups: string[];
-  toggleGroup: (id: string) => void;
   onToggleCollapsed?: () => void;
   onClose?: () => void;
 }) {
+  const profile = useProfile();
+  const groups = navFor(profile);
+  const upcoming = upcomingFor(profile).length;
+  const badges = useBadges();
+  const navRef = useRef<HTMLElement>(null);
+
+  // Arrow keys move between items; Home/End jump to the ends.
+  const onNavKey = (e: ReactKeyboardEvent<HTMLElement>) => {
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
+    const items = [...(navRef.current?.querySelectorAll<HTMLElement>('a') ?? [])];
+    if (items.length === 0) return;
+    e.preventDefault();
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    const next =
+      e.key === 'Home'
+        ? 0
+        : e.key === 'End'
+          ? items.length - 1
+          : e.key === 'ArrowDown'
+            ? Math.min(items.length - 1, at + 1)
+            : Math.max(0, at - 1);
+    items[next]?.focus();
+  };
+
   return (
-    <div className="flex h-full flex-col bg-[#0F172A] text-slate-300">
+    <div className="flex h-full flex-col border-r border-white/[0.06] bg-[#0F172A] text-slate-300">
+      {/* Brand */}
       <div
         className={cn(
-          'flex h-16 shrink-0 items-center border-b border-white/5',
-          collapsed ? 'justify-center px-2' : 'justify-between px-5',
+          'flex h-16 shrink-0 items-center',
+          collapsed ? 'justify-center' : 'justify-between px-4',
         )}
       >
         <Link
           href="/restaurant/dashboard"
-          className="flex items-center gap-2.5"
-          aria-label="FoodStack home"
+          className="flex items-center gap-2.5 rounded-md focus-visible:ring-2 focus-visible:ring-emerald-500/60 focus-visible:outline-none"
+          aria-label="FoodStack dashboard"
         >
-          <BrandMark className="size-9 shadow-none" />
-          {collapsed ? null : <BrandName className="text-xl text-white" />}
+          <BrandMark className="size-8 rounded-lg shadow-none" />
+          {collapsed ? null : (
+            <span className="text-[17px] font-semibold tracking-tight text-white">FoodStack</span>
+          )}
         </Link>
         {onClose ? (
           <button
             type="button"
             onClick={onClose}
             aria-label="Close menu"
-            className="flex size-8 items-center justify-center rounded-lg hover:bg-white/10"
+            className="flex size-8 items-center justify-center rounded-md hover:bg-white/[0.06]"
           >
-            <X className="size-5" />
+            <X className="size-4" />
           </button>
         ) : null}
       </div>
 
-      <ContextCard collapsed={collapsed} />
+      <Workspace collapsed={collapsed} />
 
       <nav
+        ref={navRef}
         aria-label="Restaurant"
-        className="flex-1 space-y-1 overflow-x-hidden overflow-y-auto px-3 pb-4 [scrollbar-width:thin] [scrollbar-color:rgb(255_255_255/0.1)_transparent]"
+        onKeyDown={onNavKey}
+        className="mt-2 flex-1 space-y-5 overflow-x-hidden overflow-y-auto px-3 py-2 [scrollbar-width:none]"
       >
-        {groups.map((group) => {
-          const open = collapsed || !closedGroups.includes(group.id);
-          return (
-            <div key={group.id} className="pt-3">
-              {collapsed ? (
-                <div className="mx-3 mb-2 h-px bg-white/5" aria-hidden />
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => toggleGroup(group.id)}
-                  aria-expanded={open}
-                  className="flex w-full items-center justify-between rounded-md px-3 py-1.5 text-[11px] font-semibold tracking-wider text-slate-500 uppercase transition-colors hover:text-slate-300"
-                >
-                  {group.title}
-                  <ChevronDown
-                    className={cn(
-                      'size-3.5 transition-transform duration-200',
-                      !open && '-rotate-90',
-                    )}
-                    aria-hidden
+        {groups.map((group) => (
+          <div key={group.id}>
+            {collapsed ? (
+              <div className="mx-auto mb-2 h-px w-6 bg-white/[0.08]" aria-hidden />
+            ) : (
+              <p className="mb-1 px-2.5 text-[11px] font-medium text-slate-500">{group.title}</p>
+            )}
+            <ul className="space-y-px">
+              {group.items.map((item) => (
+                <li key={item.id}>
+                  <Item
+                    item={item}
+                    active={isActive(item, pathname)}
+                    collapsed={collapsed}
+                    badge={item.badge ? badges[item.badge] : undefined}
                   />
-                </button>
-              )}
-              <AnimatePresence initial={false}>
-                {open ? (
-                  <motion.ul
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: 'auto', opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-                    className="space-y-0.5 overflow-hidden"
-                  >
-                    {group.items.map((item) => (
-                      <li key={item.label}>
-                        <NavLink item={item} pathname={pathname} collapsed={collapsed} />
-                      </li>
-                    ))}
-                  </motion.ul>
-                ) : null}
-              </AnimatePresence>
-            </div>
-          );
-        })}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+        {!collapsed && upcoming > 0 ? (
+          <p className="flex items-center gap-2 px-2.5 pt-1 text-[12px] text-slate-500">
+            <Sparkles className="size-3.5 shrink-0" aria-hidden />
+            {upcoming} more modules coming soon
+          </p>
+        ) : null}
       </nav>
 
-      <ProfileFooter collapsed={collapsed} onToggleCollapsed={onToggleCollapsed} />
+      <div className="shrink-0 space-y-1 p-3">
+        {onToggleCollapsed ? (
+          <button
+            type="button"
+            onClick={onToggleCollapsed}
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            className={cn(
+              'group relative flex h-9 w-full items-center gap-2.5 rounded-md px-2.5 text-[13px] text-slate-500 transition-colors hover:bg-white/[0.04] hover:text-slate-300',
+              collapsed && 'justify-center px-0',
+            )}
+          >
+            {collapsed ? (
+              <>
+                <PanelLeftOpen className="size-4" aria-hidden />
+                <Tooltip label="Expand sidebar" />
+              </>
+            ) : (
+              <>
+                <PanelLeftClose className="size-4" aria-hidden />
+                Collapse
+              </>
+            )}
+          </button>
+        ) : null}
+        <AccountRow collapsed={collapsed} />
+      </div>
     </div>
   );
 }
 
-function NavLink({
+function Item({
   item,
-  pathname,
+  active,
   collapsed,
+  badge,
 }: {
-  item: RestaurantNavItem;
-  pathname: string;
+  item: NavItem;
+  active: boolean;
   collapsed: boolean;
+  badge?: number;
 }) {
   const Icon = item.icon;
-  const active = Boolean(
-    item.href && (pathname === item.href || pathname.startsWith(`${item.href}/`)),
-  );
-  const base = cn(
-    'group relative flex items-center gap-3 rounded-lg text-sm transition-colors',
-    collapsed ? 'size-11 justify-center' : 'px-3 py-2',
-  );
-  const content = (
-    <>
-      {active ? (
-        <motion.span
-          layoutId="restaurant-nav-active"
-          className="absolute inset-0 rounded-lg bg-emerald-500/10"
-          transition={{ type: 'spring', stiffness: 420, damping: 36 }}
-          aria-hidden
-        >
-          <span className="absolute top-1.5 bottom-1.5 left-0 w-[3px] rounded-full bg-[#059669]" />
-        </motion.span>
-      ) : null}
+  return (
+    <Link
+      href={item.href!}
+      aria-current={active ? 'page' : undefined}
+      className={cn(
+        'group relative flex h-9 items-center gap-2.5 rounded-md text-sm transition-colors focus-visible:ring-2 focus-visible:ring-emerald-500/60 focus-visible:outline-none',
+        collapsed ? 'mx-auto w-10 justify-center' : 'px-2.5',
+        active
+          ? 'bg-white/[0.08] font-medium text-white'
+          : 'text-slate-400 hover:bg-white/[0.04] hover:text-slate-100',
+      )}
+    >
       <Icon
         className={cn(
-          'relative size-[18px] shrink-0',
-          active ? 'text-emerald-400' : 'text-slate-400 group-hover:text-slate-200',
+          'size-[18px] shrink-0',
+          active ? 'text-emerald-400' : 'text-slate-500 group-hover:text-slate-300',
         )}
+        strokeWidth={active ? 2.2 : 1.9}
         aria-hidden
       />
       {collapsed ? (
-        <span className="sr-only">{item.label}</span>
+        <>
+          <span className="sr-only">{item.label}</span>
+          {badge ? (
+            <span className="absolute top-1.5 right-1.5 size-1.5 rounded-full bg-emerald-400" />
+          ) : null}
+          <Tooltip label={item.label} />
+        </>
       ) : (
         <>
-          <span className={cn('relative flex-1 truncate', active && 'font-medium text-white')}>
-            {item.label}
-          </span>
-          {!item.href ? (
-            <span className="relative rounded-full bg-white/5 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
-              Soon
+          <span className="flex-1 truncate">{item.label}</span>
+          {badge ? (
+            <span
+              className="rounded bg-emerald-500/15 px-1.5 text-[11px] leading-5 font-medium text-emerald-300 tabular-nums"
+              aria-label={`${badge} pending`}
+            >
+              {badge > 99 ? '99+' : badge}
             </span>
           ) : null}
         </>
       )}
-      {collapsed ? <Tooltip label={item.href ? item.label : `${item.label} · Soon`} /> : null}
-    </>
-  );
-
-  if (!item.href) {
-    return (
-      <span
-        aria-disabled="true"
-        title={collapsed ? undefined : 'Coming soon'}
-        className={cn(base, 'cursor-not-allowed opacity-50')}
-      >
-        {content}
-      </span>
-    );
-  }
-  return (
-    <Link
-      href={item.href}
-      aria-current={active ? 'page' : undefined}
-      className={cn(
-        base,
-        'focus-visible:ring-2 focus-visible:ring-emerald-500/60 focus-visible:outline-none',
-        active ? 'text-white' : 'hover:bg-white/5 hover:text-white',
-      )}
-    >
-      {content}
     </Link>
   );
 }
 
-/** Label shown beside an icon in the collapsed sidebar (on hover and keyboard focus). */
+/** Label beside an icon in the collapsed sidebar (hover and keyboard focus). */
 function Tooltip({ label }: { label: string }) {
   return (
     <span
       role="tooltip"
-      className="pointer-events-none fixed z-50 ml-14 rounded-md bg-slate-800 px-2.5 py-1.5 text-xs font-medium whitespace-nowrap text-white opacity-0 shadow-lg ring-1 ring-white/10 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+      className="pointer-events-none fixed z-50 ml-14 rounded-md bg-slate-800 px-2 py-1 text-xs font-medium whitespace-nowrap text-white opacity-0 shadow-lg ring-1 ring-white/10 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
     >
       {label}
     </span>
   );
 }
 
-/** Which restaurant and branch the person is working in. */
-function ContextCard({ collapsed }: { collapsed: boolean }) {
+/** Restaurant in context; the menu lists the branches this person works in. */
+function Workspace({ collapsed }: { collapsed: boolean }) {
   const profile = useProfile();
-  const tenant = profile.activeTenant;
+  const { open, setOpen, ref } = usePopover();
   const branches = profile.branches;
-  const allAccess = profile.permissions.tenant.length > 0;
-  const branchLabel =
+  const name = profile.activeTenant?.name ?? 'Restaurant';
+  const subtitle =
     branches.length === 1
       ? branches[0]!.name
-      : allAccess
-        ? `All branches (${branches.length})`
+      : profile.permissions.tenant.length > 0
+        ? `All branches · ${branches.length}`
         : `${branches.length} branches`;
+  const mark = (
+    <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-emerald-500/15 text-xs font-semibold text-emerald-300">
+      {name.charAt(0).toUpperCase()}
+    </span>
+  );
 
   if (collapsed) {
     return (
-      <div className="group relative mx-auto mt-3 flex size-11 items-center justify-center rounded-lg bg-white/5 text-sm font-semibold text-white">
-        {(tenant?.name ?? 'R').charAt(0).toUpperCase()}
-        <Tooltip label={`${tenant?.name ?? 'Restaurant'} · ${branchLabel}`} />
+      <div className="group relative mx-auto flex size-10 items-center justify-center">
+        {mark}
+        <Tooltip label={`${name} · ${subtitle}`} />
       </div>
     );
   }
   return (
-    <div className="mx-3 mt-3 rounded-xl border border-white/5 bg-white/[0.03] p-3">
-      <div className="flex items-center gap-3">
-        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-[#059669]/20 text-sm font-semibold text-emerald-300">
-          {(tenant?.name ?? 'R').charAt(0).toUpperCase()}
+    <div ref={ref} className="relative px-3">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-white/[0.04] focus-visible:ring-2 focus-visible:ring-emerald-500/60 focus-visible:outline-none"
+      >
+        {mark}
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium text-white">{name}</span>
+          <span className="block truncate text-xs text-slate-500">{subtitle}</span>
         </span>
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-white">
-            {tenant?.name ?? 'Restaurant'}
-          </p>
-          <p className="flex items-center gap-1 truncate text-xs text-slate-400">
-            <MapPin className="size-3 shrink-0" aria-hidden />
-            {branchLabel}
-          </p>
-        </div>
-      </div>
+        <ChevronsUpDown className="size-4 shrink-0 text-slate-500" aria-hidden />
+      </button>
+      <AnimatePresence>
+        {open ? (
+          <motion.div
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.12 }}
+            className="absolute inset-x-3 top-full z-20 mt-1 rounded-lg border border-white/10 bg-[#1E293B] p-1 shadow-xl"
+          >
+            <p className="px-2 pt-1.5 pb-1 text-[11px] font-medium text-slate-500">Branches</p>
+            {branches.map((b) => (
+              <div key={b.id} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm">
+                <MapPin className="size-3.5 text-slate-500" aria-hidden />
+                <span className="truncate text-slate-200">{b.name}</span>
+                <span className="ml-auto text-[11px] text-slate-500">{b.code}</span>
+              </div>
+            ))}
+            <div className="my-1 h-px bg-white/[0.06]" />
+            <Link
+              href="/restaurant/branches"
+              onClick={() => setOpen(false)}
+              className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-300 hover:bg-white/[0.06]"
+            >
+              <Settings2 className="size-3.5" aria-hidden />
+              Manage branches
+            </Link>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
     </div>
   );
 }
 
-function ProfileFooter({
-  collapsed,
-  onToggleCollapsed,
-}: {
-  collapsed: boolean;
-  onToggleCollapsed?: () => void;
-}) {
+/** Bottom account row: opens a small menu with profile, help and log out. */
+function AccountRow({ collapsed }: { collapsed: boolean }) {
   const profile = useProfile();
   const { leaving, leave } = useSignOut();
+  const { open, setOpen, ref } = usePopover();
+  const [showHelp, setShowHelp] = useState(false);
   const role = profile.roles[0] ? roleLabel(profile.roles[0]) : '';
+  const menuItem =
+    'flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm text-slate-300 hover:bg-white/[0.06]';
 
   return (
-    <div className="shrink-0 border-t border-white/5 p-3">
-      <div className={cn('flex items-center gap-3', collapsed && 'flex-col')}>
-        <span
-          className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[#059669] text-xs font-semibold text-white"
-          aria-hidden
-        >
+    <div ref={ref} className="relative">
+      <AnimatePresence>
+        {open ? (
+          <motion.div
+            role="menu"
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 4 }}
+            transition={{ duration: 0.12 }}
+            className={cn(
+              'absolute bottom-full z-30 mb-1 w-56 rounded-lg border border-white/10 bg-[#1E293B] p-1 shadow-xl',
+              collapsed ? 'left-0' : 'inset-x-0 w-auto',
+            )}
+          >
+            <div className="px-2 py-1.5">
+              <p className="truncate text-sm font-medium text-white">{profile.user.fullName}</p>
+              <p className="truncate text-xs text-slate-400">{profile.user.email}</p>
+            </div>
+            <div className="my-1 h-px bg-white/[0.06]" />
+            <span
+              role="menuitem"
+              aria-disabled="true"
+              className={cn(menuItem, 'cursor-not-allowed text-slate-500 hover:bg-transparent')}
+            >
+              <UserRound className="size-4" aria-hidden /> My Profile
+              <span className="ml-auto text-[10px]">Soon</span>
+            </span>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => setShowHelp((s) => !s)}
+              className={menuItem}
+            >
+              <CircleHelp className="size-4" aria-hidden /> Help &amp; Support
+            </button>
+            {showHelp ? (
+              <p className="px-2 pb-1.5 text-xs leading-relaxed text-slate-400">
+                Press <kbd className="rounded border border-white/15 px-1">Ctrl K</kbd> to jump to
+                any page. For account questions, contact your restaurant owner.
+              </p>
+            ) : null}
+            <div className="my-1 h-px bg-white/[0.06]" />
+            <button
+              type="button"
+              role="menuitem"
+              onClick={leave}
+              disabled={leaving}
+              className={cn(menuItem, 'hover:bg-red-500/10 hover:text-red-300')}
+            >
+              {leaving ? (
+                <Loader2 className="size-4 animate-spin" aria-hidden />
+              ) : (
+                <LogOut className="size-4" aria-hidden />
+              )}
+              Log out
+            </button>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        aria-label="Account menu"
+        className={cn(
+          'group relative flex w-full items-center gap-2.5 rounded-md text-left transition-colors hover:bg-white/[0.04] focus-visible:ring-2 focus-visible:ring-emerald-500/60 focus-visible:outline-none',
+          collapsed ? 'justify-center py-1.5' : 'px-2 py-1.5',
+        )}
+      >
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-xs font-semibold text-white">
           {initials(profile.user.fullName)}
         </span>
-        {collapsed ? null : (
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium text-white">{profile.user.fullName}</p>
-            <p className="truncate text-xs text-slate-400">{role}</p>
-          </div>
+        {collapsed ? (
+          <Tooltip label={profile.user.fullName} />
+        ) : (
+          <>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium text-white">
+                {profile.user.fullName}
+              </span>
+              <span className="block truncate text-xs text-slate-500">{role}</span>
+            </span>
+            <ChevronsUpDown className="size-4 shrink-0 text-slate-500" aria-hidden />
+          </>
         )}
-        <button
-          type="button"
-          onClick={leave}
-          disabled={leaving}
-          aria-label="Sign out"
-          className="group relative flex size-9 shrink-0 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-white/5 hover:text-red-400"
-        >
-          {leaving ? <Loader2 className="size-4 animate-spin" /> : <LogOut className="size-4" />}
-          {collapsed ? <Tooltip label="Sign out" /> : null}
-        </button>
-      </div>
-      {onToggleCollapsed ? (
-        <button
-          type="button"
-          onClick={onToggleCollapsed}
-          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          className={cn(
-            'mt-2 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-slate-500 transition-colors hover:bg-white/5 hover:text-slate-300',
-            collapsed && 'justify-center px-0',
-          )}
-        >
-          {collapsed ? (
-            <ChevronsRight className="size-4" />
-          ) : (
-            <>
-              <ChevronsLeft className="size-4" /> Collapse
-            </>
-          )}
-        </button>
-      ) : null}
+      </button>
     </div>
+  );
+}
+
+/** Ctrl/⌘+K search over pages this person can open. */
+function CommandSearch() {
+  const profile = useProfile();
+  const router = useRouter();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const [cursor, setCursor] = useState(0);
+
+  const q = query.trim().toLowerCase();
+  const results = liveItemsFor(profile)
+    .filter((t) => !q || t.label.toLowerCase().includes(q) || t.group.toLowerCase().includes(q))
+    .slice(0, 8);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        inputRef.current?.focus();
+        setOpen(true);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const go = (href: string) => {
+    setOpen(false);
+    setQuery('');
+    inputRef.current?.blur();
+    router.push(href);
+  };
+
+  return (
+    <div className="relative order-last w-full sm:order-none sm:w-auto sm:max-w-md sm:flex-1">
+      <Search className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-slate-400" />
+      <input
+        ref={inputRef}
+        type="search"
+        role="combobox"
+        aria-expanded={open}
+        aria-controls="restaurant-search-results"
+        aria-label="Search pages"
+        placeholder="Search pages…"
+        value={query}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setCursor(0);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 120)}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowDown') setCursor((c) => Math.min(c + 1, results.length - 1));
+          if (e.key === 'ArrowUp') setCursor((c) => Math.max(c - 1, 0));
+          if (e.key === 'Enter' && results[cursor]) go(results[cursor].href);
+          if (e.key === 'Escape') inputRef.current?.blur();
+        }}
+        className="h-10 w-full rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] pr-16 pl-10 text-sm outline-none placeholder:text-slate-400 focus:border-[#059669] focus:bg-white focus:ring-4 focus:ring-[#059669]/15 dark:border-white/10 dark:bg-white/5"
+      />
+      <kbd className="pointer-events-none absolute top-1/2 right-3 hidden -translate-y-1/2 rounded border border-[#E2E8F0] bg-white px-1.5 py-0.5 text-[11px] text-slate-500 sm:block dark:border-white/10 dark:bg-white/5">
+        Ctrl K
+      </kbd>
+      <AnimatePresence>
+        {open && results.length > 0 ? (
+          <motion.ul
+            id="restaurant-search-results"
+            role="listbox"
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.12 }}
+            className="absolute inset-x-0 top-full z-50 mt-2 overflow-hidden rounded-xl border border-[#E2E8F0] bg-white p-1.5 shadow-xl dark:border-white/10 dark:bg-[#1E293B]"
+          >
+            {results.map((r, i) => (
+              <li key={r.id} role="option" aria-selected={i === cursor}>
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => go(r.href)}
+                  onMouseEnter={() => setCursor(i)}
+                  className={cn(
+                    'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm',
+                    i === cursor && 'bg-emerald-50 dark:bg-emerald-500/10',
+                  )}
+                >
+                  <r.icon className="size-4 text-[#059669]" aria-hidden />
+                  <span className="flex-1">{r.label}</span>
+                  <span className="text-xs text-slate-400">{r.group}</span>
+                </button>
+              </li>
+            ))}
+          </motion.ul>
+        ) : null}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function ThemeButton() {
+  const toggle = () => {
+    const dark = document.documentElement.classList.toggle('dark');
+    try {
+      localStorage.setItem(THEME_KEY, dark ? 'dark' : 'light');
+    } catch {
+      // Storage blocked: the change still applies for this visit.
+    }
+  };
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      aria-label="Toggle dark mode"
+      className="flex size-10 items-center justify-center rounded-full text-slate-600 transition-colors hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-white/5"
+    >
+      <Moon className="size-5 dark:hidden" />
+      <Sun className="hidden size-5 dark:block" />
+    </button>
   );
 }

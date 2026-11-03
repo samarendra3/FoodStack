@@ -7,6 +7,10 @@ import { AuditLogs1798000005000 } from './migrations/1798000005000-AuditLogs';
 import { SeedPermissionsAndSystemRoles1798000006000 } from './migrations/1798000006000-SeedPermissionsAndSystemRoles';
 import { SessionPersistence1798000007000 } from './migrations/1798000007000-SessionPersistence';
 import { AccessRequests1798000008000 } from './migrations/1798000008000-AccessRequests';
+import { Menu1798000009000 } from './migrations/1798000009000-Menu';
+import { Inventory1798000010000 } from './migrations/1798000010000-Inventory';
+import { Reports1798000011000 } from './migrations/1798000011000-Reports';
+import { Promotions1798000012000 } from './migrations/1798000012000-Promotions';
 
 /**
  * All migrations in order, for code that cannot load them by file glob (the e2e test setup).
@@ -22,4 +26,8 @@ export const ALL_MIGRATIONS = [
   SeedPermissionsAndSystemRoles1798000006000,
   SessionPersistence1798000007000,
   AccessRequests1798000008000,
+  Menu1798000009000,
+  Inventory1798000010000,
+  Reports1798000011000,
+  Promotions1798000012000,
 ];
