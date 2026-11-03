@@ -27,6 +27,14 @@ export interface MenuItem {
   isAvailable: boolean;
   sortOrder: number;
   updatedAt: string;
+  /** Portions such as Full / Half; empty when the item has a single price. */
+  variants: MenuVariant[];
+}
+
+export interface MenuVariant {
+  id: string;
+  name: string;
+  priceMinor: number;
 }
 
 export interface MenuData {
@@ -44,6 +52,7 @@ export interface ItemInput {
   diet: Diet;
   imageUrl: string | null;
   isAvailable: boolean;
+  variants?: { id?: string; name: string; priceMinor: number }[];
 }
 
 export interface ImportRow {
@@ -54,6 +63,7 @@ export interface ImportRow {
   description: string | null;
   imageUrl: string | null;
   isAvailable: boolean;
+  halfPriceMinor?: number | null;
 }
 
 export interface ImportResult {

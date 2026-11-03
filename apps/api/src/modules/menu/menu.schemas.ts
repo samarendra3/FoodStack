@@ -30,7 +30,17 @@ export const updateCategorySchema = z
   .refine((v) => Object.keys(v).length > 0, { message: 'Nothing to update' });
 export type UpdateCategoryInput = z.infer<typeof updateCategorySchema>;
 
+/** Portions such as Full / Half. The first one is the default price shown on the menu. */
+const variants = z
+  .array(z.strictObject({ id: z.uuid().optional(), name: name(30), priceMinor }))
+  .max(6)
+  .refine((v) => new Set(v.map((x) => x.name.toLowerCase())).size === v.length, {
+    message: 'Portion names must be different',
+  })
+  .refine((v) => v.length !== 1, { message: 'Add at least two portions, or none' });
+
 export const createItemSchema = z.strictObject({
+  variants: variants.optional(),
   categoryId: z.uuid(),
   name: name(80),
   description: z.string().trim().max(300).nullish(),
@@ -52,6 +62,7 @@ export const updateItemSchema = z
     imageUrl: imageUrl.nullable(),
     isAvailable: z.boolean(),
     sortOrder,
+    variants,
   })
   .partial()
   .refine((v) => Object.keys(v).length > 0, { message: 'Nothing to update' });
@@ -67,6 +78,8 @@ export const importRowSchema = z.strictObject({
   description: z.string().trim().max(300).nullish(),
   imageUrl: imageUrl.nullish(),
   isAvailable: z.boolean().optional(),
+  /** When set, the item gets Full (priceMinor) and Half (this price) portions. */
+  halfPriceMinor: priceMinor.nullish(),
 });
 export type ImportRow = z.infer<typeof importRowSchema>;
 

@@ -7,10 +7,14 @@ import { type Diet, usePosCatalog } from './catalog';
 import { useWorkspaceBranch } from '@/components/workspace/workspace-page';
 import { authErrorMessage } from '@/lib/auth/errors';
 import { useQuote } from '@/lib/promotions';
-import { inr, orderTotals } from './order-math';
+import { type Order, useOrderMutations } from '@/lib/orders';
+import { inr, lineKey, type OrderLine, orderTotals } from './order-math';
+import { PaymentDialog } from './payment-dialog';
 import { OrderPanel, type OrderType } from './order-panel';
 import type { PaymentMethod } from './payment-section';
 import { ProductSection } from './product-grid';
+
+const newRequestId = () => `pos-${crypto.randomUUID()}`;
 
 const CHANNEL = { 'dine-in': 'dine_in', takeaway: 'takeaway', delivery: 'delivery' } as const;
 
@@ -28,15 +32,32 @@ export function PosTerminal() {
   const [payment, setPayment] = useState<PaymentMethod | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
 
-  const lines = catalog.items
-    .filter((i) => cart[i.id])
-    .map((item) => ({ item, qty: cart[item.id]! }));
+  const { create } = useOrderMutations();
+  const [placed, setPlaced] = useState<Order | null>(null);
+  const [placeError, setPlaceError] = useState<string | null>(null);
+  // One key per attempt: a retried click after a network error cannot create a second order.
+  const [requestId, setRequestId] = useState(newRequestId);
+
+  const lines: OrderLine[] = Object.entries(cart).flatMap(([key, qty]) => {
+    const [itemId, variantId] = key.split(':');
+    const item = catalog.items.find((i) => i.id === itemId);
+    if (!item) return [];
+    const variant = variantId ? (item.variants.find((v) => v.id === variantId) ?? null) : null;
+    if (variantId && !variant) return [];
+    return [{ key, item, variant, qty }];
+  });
+  const qtyByItem: Record<string, number> = {};
+  for (const l of lines) qtyByItem[l.item.id] = (qtyByItem[l.item.id] ?? 0) + l.qty;
   const count = lines.reduce((n, l) => n + l.qty, 0);
   const quote = useQuote({
     branchId,
     channel: CHANNEL[orderType],
     couponCode,
-    lines: lines.map((l) => ({ menuItemId: l.item.id, quantity: l.qty })),
+    lines: lines.map((l) => ({
+      menuItemId: l.item.id,
+      variantId: l.variant?.id ?? null,
+      quantity: l.qty,
+    })),
   });
   const currentQuote = lines.length > 0 ? (quote.data ?? null) : null;
   const { total } = orderTotals(lines, currentQuote?.discountMinor ?? 0);
@@ -49,6 +70,42 @@ export function PosTerminal() {
       else next[id] = qty;
       return next;
     });
+
+  const reset = () => {
+    setCart({});
+    setNote('');
+    setCouponCode(null);
+    setPayment(null);
+    setPlaceError(null);
+    setRequestId(newRequestId());
+  };
+
+  const placeOrder = async () => {
+    setPlaceError(null);
+    try {
+      const order = await create.mutateAsync({
+        requestId,
+        branchId,
+        channel: CHANNEL[orderType],
+        tableLabel:
+          orderType === 'dine-in'
+            ? (catalog.tables.find((t) => t.id === tableId)?.label ?? null)
+            : null,
+        note: note.trim() || null,
+        couponCode: currentQuote?.coupon?.status === 'applied' ? couponCode : null,
+        customer: null,
+        lines: lines.map((l) => ({
+          menuItemId: l.item.id,
+          variantId: l.variant?.id ?? null,
+          quantity: l.qty,
+        })),
+      });
+      setPlaced(order);
+      setSheetOpen(false);
+    } catch (e) {
+      setPlaceError(authErrorMessage(e));
+    }
+  };
 
   const remove = (id: string) =>
     setCart((c) => {
@@ -76,12 +133,10 @@ export function PosTerminal() {
       onPayment={setPayment}
       onChange={change}
       onRemove={remove}
-      onClear={() => {
-        setCart({});
-        setNote('');
-        setCouponCode(null);
-        setPayment(null);
-      }}
+      onClear={reset}
+      onPlaceOrder={placeOrder}
+      placing={create.isPending}
+      placeError={placeError}
     />
   );
 
@@ -90,8 +145,7 @@ export function PosTerminal() {
       {catalog.tablesAreSample ? (
         <p className="flex items-center justify-center gap-2 border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-center text-xs text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">
           <Info className="size-3.5 shrink-0" />
-          Live menu. Tables are placeholders, and orders aren&apos;t saved or charged until the
-          tables, orders and payments modules go live.
+          Live menu and orders. Table numbers are placeholders until floors &amp; tables are set up.
         </p>
       ) : null}
       {catalog.error ? (
@@ -115,8 +169,8 @@ export function PosTerminal() {
           onQuery={setQuery}
           diet={diet}
           onDiet={setDiet}
-          cart={cart}
-          onAdd={(id) => change(id, 1)}
+          cart={qtyByItem}
+          onAdd={(id, variantId) => change(lineKey(id, variantId), 1)}
         />
 
         <aside className="hidden w-[24rem] shrink-0 border-l border-slate-200 lg:flex dark:border-white/10">
@@ -145,6 +199,17 @@ export function PosTerminal() {
           <span className="tabular-nums">{inr.format(total)}</span>
         </button>
       </div>
+
+      {placed ? (
+        <PaymentDialog
+          order={placed}
+          defaultMethod={payment === 'split' ? null : payment}
+          onClose={() => {
+            setPlaced(null);
+            reset();
+          }}
+        />
+      ) : null}
 
       <AnimatePresence>
         {sheetOpen ? (

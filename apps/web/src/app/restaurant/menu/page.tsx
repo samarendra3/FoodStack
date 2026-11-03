@@ -218,9 +218,22 @@ export default function MenuPage() {
                           {item.description ? ` · ${item.description}` : ''}
                         </p>
                       </div>
-                      <p className="w-24 text-right font-semibold tabular-nums">
-                        {formatMoney(item.priceMinor, item.currencyCode)}
-                      </p>
+                      {item.variants.length ? (
+                        <div className="w-36 text-right text-xs tabular-nums">
+                          {item.variants.map((v) => (
+                            <p key={v.id}>
+                              <span className="text-muted-foreground">{v.name}</span>{' '}
+                              <span className="font-semibold">
+                                {formatMoney(v.priceMinor, item.currencyCode)}
+                              </span>
+                            </p>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="w-24 text-right font-semibold tabular-nums">
+                          {formatMoney(item.priceMinor, item.currencyCode)}
+                        </p>
+                      )}
                       <button
                         type="button"
                         role="switch"
@@ -549,6 +562,17 @@ function ItemForm(p: {
     imageUrl: p.item?.imageUrl ?? '',
     isAvailable: p.item?.isAvailable ?? true,
   });
+  const [portions, setPortions] = useState<{ id?: string; name: string; price: string }[]>(
+    () =>
+      p.item?.variants.map((v) => ({
+        id: v.id,
+        name: v.name,
+        price: String(v.priceMinor / 100),
+      })) ?? [],
+  );
+  const hasPortions = portions.length > 0;
+  const setPortion = (i: number, patch: Partial<{ name: string; price: string }>) =>
+    setPortions((list) => list.map((x, j) => (j === i ? { ...x, ...patch } : x)));
   const [errors, setErrors] = useState<Record<string, string>>({});
   const busy = m.createItem.isPending || m.updateItem.isPending;
   const set = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) =>
@@ -560,8 +584,17 @@ function ItemForm(p: {
     const price = Number(form.price);
     if (!form.name.trim()) next.name = 'Enter a name.';
     if (!form.categoryId) next.categoryId = 'Choose a category.';
-    if (form.price === '' || !Number.isFinite(price) || price < 0)
+    if (!hasPortions && (form.price === '' || !Number.isFinite(price) || price < 0))
       next.price = 'Enter a valid price.';
+    if (hasPortions) {
+      const names = portions.map((x) => x.name.trim().toLowerCase());
+      if (portions.length < 2) next.portions = 'Add at least two portions, or use a single price.';
+      else if (names.some((n) => !n)) next.portions = 'Name every portion.';
+      else if (new Set(names).size !== names.length)
+        next.portions = 'Portion names must be different.';
+      else if (portions.some((x) => x.price === '' || !(Number(x.price) >= 0)))
+        next.portions = 'Enter a price for every portion.';
+    }
     const img = form.imageUrl.trim();
     if (img && !/^https:\/\/\S+$/i.test(img) && !/^\/[\w\-./]+$/.test(img))
       next.imageUrl = 'Use an https:// link.';
@@ -571,11 +604,23 @@ function ItemForm(p: {
     const body: ItemInput = {
       name: form.name.trim(),
       categoryId: form.categoryId,
-      priceMinor: Math.round(price * 100),
+      priceMinor: hasPortions
+        ? Math.round(Number(portions[0]!.price) * 100)
+        : Math.round(price * 100),
       diet: form.diet,
       description: form.description.trim() || null,
       imageUrl: img || null,
       isAvailable: form.isAvailable,
+      // On edit, sending [] removes existing portions.
+      ...(hasPortions || p.item?.variants.length
+        ? {
+            variants: portions.map((x) => ({
+              ...(x.id ? { id: x.id } : {}),
+              name: x.name.trim(),
+              priceMinor: Math.round(Number(x.price) * 100),
+            })),
+          }
+        : {}),
     };
     try {
       if (p.item) await m.updateItem.mutateAsync({ id: p.item.id, ...body });
@@ -613,16 +658,97 @@ function ItemForm(p: {
             ))}
           </select>
         </Field>
-        <Field label={`Price (${p.currency})`} error={errors.price}>
-          <input
-            inputMode="decimal"
-            value={form.price}
-            onChange={(e) => set('price', e.target.value.replace(/[^\d.]/g, ''))}
-            placeholder="0.00"
-            className={cn(field, 'tabular-nums')}
-          />
-        </Field>
+        {hasPortions ? (
+          <p className="flex items-end pb-2 text-xs text-muted-foreground">
+            Priced per portion below
+          </p>
+        ) : (
+          <Field label={`Price (${p.currency})`} error={errors.price}>
+            <input
+              inputMode="decimal"
+              value={form.price}
+              onChange={(e) => set('price', e.target.value.replace(/[^\d.]/g, ''))}
+              placeholder="0.00"
+              className={cn(field, 'tabular-nums')}
+            />
+          </Field>
+        )}
       </div>
+      <fieldset className="space-y-2 rounded-xl border p-3">
+        <div className="flex items-center justify-between gap-2">
+          <legend className="text-sm font-medium">Portions (e.g. Full / Half)</legend>
+          {hasPortions ? (
+            <button
+              type="button"
+              onClick={() => {
+                set('price', portions[0]?.price ?? form.price);
+                setPortions([]);
+              }}
+              className="text-xs font-medium text-muted-foreground hover:text-foreground"
+            >
+              Use single price
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() =>
+                setPortions([
+                  { name: 'Full', price: form.price },
+                  { name: 'Half', price: '' },
+                ])
+              }
+              className="text-xs font-semibold text-primary hover:underline"
+            >
+              + Add Full / Half
+            </button>
+          )}
+        </div>
+        {hasPortions ? (
+          <div className="space-y-2">
+            {portions.map((x, i) => (
+              <div key={x.id ?? `new-${i}`} className="flex items-center gap-2">
+                <input
+                  value={x.name}
+                  maxLength={30}
+                  onChange={(e) => setPortion(i, { name: e.target.value })}
+                  aria-label={`Portion ${i + 1} name`}
+                  placeholder="e.g. Half"
+                  className={cn(field, 'flex-1')}
+                />
+                <input
+                  inputMode="decimal"
+                  value={x.price}
+                  onChange={(e) => setPortion(i, { price: e.target.value.replace(/[^\d.]/g, '') })}
+                  aria-label={`Portion ${i + 1} price`}
+                  placeholder={p.currency}
+                  className={cn(field, 'w-28 tabular-nums')}
+                />
+                <button
+                  type="button"
+                  aria-label={`Remove ${x.name || 'portion'}`}
+                  onClick={() => setPortions((list) => list.filter((_, j) => j !== i))}
+                  className="rounded-md p-2 text-muted-foreground hover:bg-muted"
+                >
+                  <X className="size-4" />
+                </button>
+              </div>
+            ))}
+            {portions.length < 6 ? (
+              <button
+                type="button"
+                onClick={() => setPortions((list) => [...list, { name: '', price: '' }])}
+                className="text-xs font-medium text-primary hover:underline"
+              >
+                + Add portion
+              </button>
+            ) : null}
+            <p className="text-xs text-muted-foreground">
+              The first portion is the default price shown on the menu.
+            </p>
+          </div>
+        ) : null}
+        {errors.portions ? <p className="text-xs text-red-600">{errors.portions}</p> : null}
+      </fieldset>
       <fieldset className="space-y-1.5">
         <legend className="text-sm font-medium">Type</legend>
         <div className="grid grid-cols-3 gap-2">
@@ -734,15 +860,22 @@ function ConfirmDelete(p: {
 function exportMenu(data: NonNullable<ReturnType<typeof useMenu>['data']>) {
   const category = (id: string) => data.categories.find((c) => c.id === id)?.name ?? '';
   downloadCsv(`menu-${new Date().toISOString().slice(0, 10)}.csv`, [
-    ['Category', 'Name', 'Price', 'Type', 'Description', 'Image URL', 'Available'],
+    ['Category', 'Name', 'Price', 'Half Price', 'Type', 'Description', 'Image URL', 'Available'],
     ...data.items.map((i) => [
       category(i.categoryId),
       i.name,
       (i.priceMinor / 100).toFixed(2),
+      halfOf(i),
       DIET_LABEL[i.diet],
       i.description ?? '',
       i.imageUrl ?? '',
       i.isAvailable ? 'Yes' : 'No',
     ]),
   ]);
+}
+
+/** "Half" portion price for the export, when the item has exactly Full + Half portions. */
+function halfOf(i: MenuItem): string {
+  const half = i.variants.find((v) => v.name.toLowerCase() === 'half');
+  return half ? (half.priceMinor / 100).toFixed(2) : '';
 }

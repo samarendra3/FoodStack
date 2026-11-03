@@ -13,6 +13,7 @@ import { HealthModule } from './modules/health/health.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
 import { MenuModule } from './modules/menu/menu.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { OrdersModule } from './modules/orders/orders.module';
 import { PlatformModule } from './modules/platform/platform.module';
 import { PromotionsModule } from './modules/promotions/promotions.module';
 import { ReportsModule } from './modules/reports/reports.module';
@@ -68,9 +69,10 @@ function isInstalled(pkg: string): boolean {
     InventoryModule,
     ReportsModule,
     PromotionsModule,
+    OrdersModule,
     // Feature modules (scaffolded under ./modules and ./websocket); register as each is implemented:
     // RestaurantsModule, BranchesModule, StaffModule, RolesModule,
-    // FloorsModule, TablesModule, DiningSessionsModule, OrdersModule, KitchenModule,
+    // FloorsModule, TablesModule, DiningSessionsModule, KitchenModule,
     // BillingModule, PaymentsModule, CustomersModule,
     // NotificationsModule, AuditLogsModule, WebsocketModule,
   ],

@@ -1,15 +1,15 @@
 'use client';
 
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useAuth, useProfile } from '@/components/auth/auth-provider';
+import { authErrorMessage } from '@/lib/auth/errors';
 
 /*
- * Kitchen ticket feed. The kitchen/orders REST endpoints and the Socket.IO gateway are not built
- * yet (apps/api/src/modules/kitchen and orders hold no controllers), so this hook reports
- * `connection: 'unavailable'` and serves no tickets — never invented ones. When the gateway ships:
- *   1. load the branch's open tickets via React Query,
- *   2. subscribe to `kitchen:ticket.created` / `kitchen:ticket.updated` for `branchId`,
- *   3. feed every payload through `mergeTickets` (dedupes by id, newest version wins),
- *   4. implement `advance` as the status-transition mutation.
+ * Kitchen ticket feed from GET /kitchen/tickets (open orders plus those served in the last
+ * 12 hours), refreshed every 5 seconds. The server list is authoritative on each refresh;
+ * `mergeTickets` only guards against duplicates. A Socket.IO push can replace polling later
+ * without changing the screens.
  */
 
 export type TicketStatus = 'new' | 'accepted' | 'preparing' | 'ready' | 'completed';
@@ -59,9 +59,86 @@ export interface KitchenFeed {
   advance?: (ticketId: string, to: TicketStatus) => Promise<void>;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- branch scoping applies once the API exists
+interface ServerTicket {
+  id: string;
+  orderNumber: string;
+  orderType: 'dine_in' | 'takeaway' | 'delivery' | 'qr';
+  tableLabel: string | null;
+  customerName: string | null;
+  createdAt: string;
+  updatedAt: string;
+  status: 'new' | 'accepted' | 'preparing' | 'ready' | 'served';
+  note: string | null;
+  items: { id: string; name: string; qty: number; note: string | null }[];
+}
+
+const TYPE: Record<ServerTicket['orderType'], TicketOrderType> = {
+  dine_in: 'dine-in',
+  qr: 'dine-in',
+  takeaway: 'takeaway',
+  delivery: 'delivery',
+};
+
+/** Live kitchen tickets for a branch. */
 export function useKitchenFeed(branchId: string): KitchenFeed {
-  return { tickets: [], connection: 'unavailable', isLoading: false, error: null };
+  const { client } = useAuth();
+  const profile = useProfile();
+  const qc = useQueryClient();
+  const key = ['kitchen', profile.activeTenant?.id, branchId];
+  const query = useQuery({
+    queryKey: key,
+    queryFn: async () => {
+      const rows = await client.request<ServerTicket[]>(
+        `/kitchen/tickets?branchId=${encodeURIComponent(branchId)}`,
+      );
+      return mergeTickets(
+        [],
+        rows.map((t): KitchenTicket => ({
+          id: t.id,
+          orderNumber: t.orderNumber,
+          orderType: TYPE[t.orderType],
+          tableLabel: t.tableLabel ?? undefined,
+          customerName: t.customerName ?? undefined,
+          createdAt: t.createdAt,
+          updatedAt: t.updatedAt,
+          status: t.status === 'served' ? 'completed' : t.status,
+          priority: 'normal',
+          note: t.note ?? undefined,
+          items: t.items.map((i) => ({
+            id: i.id,
+            name: i.name,
+            qty: i.qty,
+            note: i.note ?? undefined,
+          })),
+        })),
+      );
+    },
+    enabled: Boolean(branchId),
+    refetchInterval: 5_000,
+    refetchIntervalInBackground: true,
+  });
+
+  return {
+    tickets: query.data ?? [],
+    connection: !branchId
+      ? 'unavailable'
+      : query.isPending
+        ? 'connecting'
+        : query.isError
+          ? query.data
+            ? 'reconnecting'
+            : 'offline'
+          : 'online',
+    isLoading: query.isPending && Boolean(branchId),
+    error: query.isError && !query.data ? authErrorMessage(query.error) : null,
+    advance: async (ticketId, to) => {
+      await client.request(`/kitchen/tickets/${ticketId}/status`, {
+        method: 'POST',
+        body: { to: to === 'completed' ? 'served' : to },
+      });
+      await qc.invalidateQueries({ queryKey: key });
+    },
+  };
 }
 
 const MUTE_KEY = 'foodstack.kds.muted';

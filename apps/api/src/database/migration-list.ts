@@ -11,6 +11,8 @@ import { Menu1798000009000 } from './migrations/1798000009000-Menu';
 import { Inventory1798000010000 } from './migrations/1798000010000-Inventory';
 import { Reports1798000011000 } from './migrations/1798000011000-Reports';
 import { Promotions1798000012000 } from './migrations/1798000012000-Promotions';
+import { MenuVariants1798000012500 } from './migrations/1798000012500-MenuVariants';
+import { Orders1798000013000 } from './migrations/1798000013000-Orders';
 
 /**
  * All migrations in order, for code that cannot load them by file glob (the e2e test setup).
@@ -30,4 +32,6 @@ export const ALL_MIGRATIONS = [
   Inventory1798000010000,
   Reports1798000011000,
   Promotions1798000012000,
+  MenuVariants1798000012500,
+  Orders1798000013000,
 ];

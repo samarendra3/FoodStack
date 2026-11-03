@@ -106,7 +106,13 @@ export const quoteSchema = z.strictObject({
   channel: z.enum(CHANNELS),
   couponCode: z.string().trim().max(32).nullish(),
   lines: z
-    .array(z.strictObject({ menuItemId: z.uuid(), quantity: z.number().int().min(1).max(999) }))
+    .array(
+      z.strictObject({
+        menuItemId: z.uuid(),
+        variantId: z.uuid().nullish(),
+        quantity: z.number().int().min(1).max(999),
+      }),
+    )
     .min(1)
     .max(200),
 });

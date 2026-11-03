@@ -6,6 +6,7 @@ import {
   Bike,
   ChefHat,
   ChevronDown,
+  Loader2,
   Minus,
   Plus,
   ShoppingBag,
@@ -19,7 +20,7 @@ import { useState } from 'react';
 import { COUPON_REASON, type QuoteResult } from '@/lib/promotions';
 import type { PosTable } from './catalog';
 import { FoodImage } from './food-image';
-import { inr, type OrderLine, orderTotals } from './order-math';
+import { inr, type OrderLine, orderTotals, unitPrice } from './order-math';
 import { type PaymentMethod, PaymentSection } from './payment-section';
 
 export const ORDER_TYPES = [
@@ -49,8 +50,9 @@ export interface OrderPanelProps {
   onChange: (id: string, delta: number) => void;
   onRemove: (id: string) => void;
   onClear: () => void;
-  /** Present once the orders API exists; until then placing an order is unavailable. */
   onPlaceOrder?: () => void;
+  placing?: boolean;
+  placeError?: string | null;
 }
 
 export function OrderPanel(p: OrderPanelProps) {
@@ -208,63 +210,76 @@ export function OrderPanel(p: OrderPanelProps) {
         ) : (
           <ul className="divide-y divide-slate-100 dark:divide-white/5">
             <AnimatePresence initial={false}>
-              {p.lines.map(({ item, qty }) => (
-                <motion.li
-                  key={item.id}
-                  layout
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 'auto' }}
-                  exit={{ opacity: 0, height: 0 }}
-                  className="overflow-hidden"
-                >
-                  <div className="flex items-center gap-3 py-3">
-                    <FoodImage src={item.imageUrl} alt="" className="size-12 shrink-0 rounded-xl" />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-semibold text-slate-900 dark:text-white">
-                        {item.name}
-                      </p>
-                      <p className="text-xs text-slate-500 tabular-nums">
-                        {inr.format(item.price)} each
-                      </p>
-                    </div>
-                    <div className="flex items-center rounded-lg border border-slate-200 dark:border-white/10">
-                      <button
-                        type="button"
-                        onClick={() => p.onChange(item.id, -1)}
-                        aria-label={`Decrease ${item.name}`}
-                        className="flex size-8 items-center justify-center rounded-l-lg text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-white/10"
-                      >
-                        <Minus className="size-3.5" />
-                      </button>
-                      <span
-                        className="w-6 text-center text-sm font-semibold tabular-nums"
-                        aria-live="polite"
-                      >
-                        {qty}
+              {p.lines.map((line) => {
+                const { key, item, variant, qty } = line;
+                const label = variant ? `${item.name} (${variant.name})` : item.name;
+                return (
+                  <motion.li
+                    key={key}
+                    layout
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="flex items-center gap-3 py-3">
+                      <FoodImage
+                        src={item.imageUrl}
+                        alt=""
+                        className="size-12 shrink-0 rounded-xl"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold text-slate-900 dark:text-white">
+                          {item.name}
+                          {variant ? (
+                            <span className="ml-1.5 rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-semibold text-slate-600 dark:bg-white/10 dark:text-slate-300">
+                              {variant.name}
+                            </span>
+                          ) : null}
+                        </p>
+                        <p className="text-xs text-slate-500 tabular-nums">
+                          {inr.format(unitPrice(line))} each
+                        </p>
+                      </div>
+                      <div className="flex items-center rounded-lg border border-slate-200 dark:border-white/10">
+                        <button
+                          type="button"
+                          onClick={() => p.onChange(key, -1)}
+                          aria-label={`Decrease ${label}`}
+                          className="flex size-8 items-center justify-center rounded-l-lg text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-white/10"
+                        >
+                          <Minus className="size-3.5" />
+                        </button>
+                        <span
+                          className="w-6 text-center text-sm font-semibold tabular-nums"
+                          aria-live="polite"
+                        >
+                          {qty}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => p.onChange(key, 1)}
+                          aria-label={`Increase ${label}`}
+                          className="flex size-8 items-center justify-center rounded-r-lg text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-white/10"
+                        >
+                          <Plus className="size-3.5" />
+                        </button>
+                      </div>
+                      <span className="w-[4.5rem] text-right text-sm font-semibold tabular-nums text-slate-900 dark:text-white">
+                        {inr.format(unitPrice(line) * qty)}
                       </span>
                       <button
                         type="button"
-                        onClick={() => p.onChange(item.id, 1)}
-                        aria-label={`Increase ${item.name}`}
-                        className="flex size-8 items-center justify-center rounded-r-lg text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-white/10"
+                        onClick={() => p.onRemove(key)}
+                        aria-label={`Remove ${label}`}
+                        className="rounded-md p-1 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/10"
                       >
-                        <Plus className="size-3.5" />
+                        <Trash2 className="size-4" />
                       </button>
                     </div>
-                    <span className="w-[4.5rem] text-right text-sm font-semibold tabular-nums text-slate-900 dark:text-white">
-                      {inr.format(item.price * qty)}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => p.onRemove(item.id)}
-                      aria-label={`Remove ${item.name}`}
-                      className="rounded-md p-1 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/10"
-                    >
-                      <Trash2 className="size-4" />
-                    </button>
-                  </div>
-                </motion.li>
-              ))}
+                  </motion.li>
+                );
+              })}
             </AnimatePresence>
           </ul>
         )}
@@ -328,21 +343,25 @@ export function OrderPanel(p: OrderPanelProps) {
         <button
           type="button"
           onClick={p.onPlaceOrder}
-          disabled={empty || needsTable || !p.onPlaceOrder}
+          disabled={empty || needsTable || !p.onPlaceOrder || p.placing || Boolean(p.quoteError)}
           className="flex h-13 w-full items-center justify-center gap-2.5 rounded-xl bg-emerald-600 text-base font-semibold text-white shadow-md shadow-emerald-600/20 transition-all hover:bg-emerald-700 active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500 disabled:shadow-none dark:disabled:bg-white/10"
         >
-          <ChefHat className="size-5" />
-          Send to Kitchen
+          {p.placing ? <Loader2 className="size-5 animate-spin" /> : <ChefHat className="size-5" />}
+          {p.placing ? 'Sending…' : 'Send to Kitchen'}
         </button>
-        <p className="text-center text-xs text-slate-500" aria-live="polite">
-          {empty
-            ? 'Add items to place an order'
-            : needsTable
-              ? 'Select a table for dine-in orders'
-              : !p.onPlaceOrder
-                ? 'Placing orders opens when the orders module goes live'
-                : null}
-        </p>
+        {p.placeError ? (
+          <p role="alert" className="text-center text-xs text-red-600">
+            {p.placeError}
+          </p>
+        ) : (
+          <p className="text-center text-xs text-slate-500" aria-live="polite">
+            {empty
+              ? 'Add items to place an order'
+              : needsTable
+                ? 'Select a table for dine-in orders'
+                : 'The bill can be paid now or after the meal'}
+          </p>
+        )}
       </div>
     </div>
   );
@@ -415,7 +434,7 @@ function CouponBox(p: {
         <input
           value={draft}
           disabled={p.disabled}
-          onChange={(e) => setDraft(e.target.value.toUpperCase().replace(/s/g, ''))}
+          onChange={(e) => setDraft(e.target.value.toUpperCase().replace(/\s/g, ''))}
           maxLength={32}
           placeholder="Coupon code"
           className="h-10 flex-1 bg-transparent font-mono text-sm uppercase outline-none placeholder:font-sans placeholder:normal-case placeholder:text-slate-400"

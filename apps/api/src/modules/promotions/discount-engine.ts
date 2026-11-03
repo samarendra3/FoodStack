@@ -39,6 +39,8 @@ export interface EnginePromotion {
 
 export interface CartLine {
   menuItemId: string;
+  /** Portion (e.g. Half); the engine prices by unitPriceMinor and ignores it otherwise. */
+  variantId?: string | null;
   categoryId: string;
   unitPriceMinor: number;
   quantity: number;

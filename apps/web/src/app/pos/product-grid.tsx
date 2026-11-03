@@ -20,8 +20,9 @@ interface ProductSectionProps {
   onQuery: (q: string) => void;
   diet: Diet | null;
   onDiet: (d: Diet | null) => void;
+  /** Quantity in the cart per menu item (all portions together). */
   cart: Record<string, number>;
-  onAdd: (id: string) => void;
+  onAdd: (id: string, variantId: string | null) => void;
 }
 
 export function ProductSection(p: ProductSectionProps) {
@@ -191,7 +192,7 @@ export function ProductSection(p: ProductSectionProps) {
                 key={item.id}
                 item={item}
                 qty={p.cart[item.id] ?? 0}
-                onAdd={() => p.onAdd(item.id)}
+                onAdd={(variantId) => p.onAdd(item.id, variantId)}
               />
             ))}
           </Grid>
@@ -209,7 +210,15 @@ function Grid({ children }: { children: React.ReactNode }) {
   );
 }
 
-function ProductCard({ item, qty, onAdd }: { item: PosItem; qty: number; onAdd: () => void }) {
+function ProductCard({
+  item,
+  qty,
+  onAdd,
+}: {
+  item: PosItem;
+  qty: number;
+  onAdd: (variantId: string | null) => void;
+}) {
   const selected = qty > 0;
   return (
     <motion.div
@@ -261,21 +270,39 @@ function ProductCard({ item, qty, onAdd }: { item: PosItem; qty: number; onAdd: 
         <h3 className="line-clamp-1 text-sm font-semibold text-slate-900 dark:text-white">
           {item.name}
         </h3>
-        <div className="mt-2 flex items-center justify-between gap-2">
-          <span className="text-[15px] font-bold text-slate-900 tabular-nums dark:text-white">
-            {inr.format(item.price)}
-          </span>
-          <button
-            type="button"
-            onClick={onAdd}
-            disabled={!item.available}
-            aria-label={`Add ${item.name}`}
-            className="flex h-8 items-center gap-1 rounded-lg bg-emerald-600 px-2.5 text-xs font-semibold text-white shadow-sm transition-all hover:bg-emerald-700 active:scale-95 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
-          >
-            <Plus className="size-3.5" strokeWidth={2.5} />
-            Add
-          </button>
-        </div>
+        {item.variants.length ? (
+          <div className="mt-2 grid grid-cols-2 gap-1.5">
+            {item.variants.map((v) => (
+              <button
+                key={v.id}
+                type="button"
+                onClick={() => onAdd(v.id)}
+                disabled={!item.available}
+                aria-label={`Add ${item.name}, ${v.name}`}
+                className="flex flex-col items-center rounded-lg border border-emerald-200 bg-emerald-50 px-1.5 py-1 text-emerald-800 transition-all hover:border-emerald-500 hover:bg-emerald-100 active:scale-95 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200"
+              >
+                <span className="text-[11px] font-semibold">{v.name}</span>
+                <span className="text-xs font-bold tabular-nums">{inr.format(v.price)}</span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="mt-2 flex items-center justify-between gap-2">
+            <span className="text-[15px] font-bold text-slate-900 tabular-nums dark:text-white">
+              {inr.format(item.price)}
+            </span>
+            <button
+              type="button"
+              onClick={() => onAdd(null)}
+              disabled={!item.available}
+              aria-label={`Add ${item.name}`}
+              className="flex h-8 items-center gap-1 rounded-lg bg-emerald-600 px-2.5 text-xs font-semibold text-white shadow-sm transition-all hover:bg-emerald-700 active:scale-95 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
+            >
+              <Plus className="size-3.5" strokeWidth={2.5} />
+              Add
+            </button>
+          </div>
+        )}
       </div>
     </motion.div>
   );

@@ -29,7 +29,8 @@ const MAX_BYTES = 2 * 1024 * 1024;
 const COLUMNS = {
   category: ['category', 'category name', 'section'],
   name: ['name', 'item', 'item name', 'dish', 'dish name'],
-  price: ['price', 'rate', 'mrp', 'amount'],
+  price: ['price', 'full price', 'rate', 'mrp', 'amount'],
+  half: ['half price', 'half', 'half plate', 'half rate'],
   type: ['type', 'diet', 'veg/non-veg', 'veg / non-veg', 'food type'],
   description: ['description', 'details', 'desc'],
   image: ['image', 'image url', 'image_url', 'imageurl', 'photo'],
@@ -335,6 +336,7 @@ function mapRows(rows: string[][]): Parsed[] | string {
     description: col('description'),
     image: col('image'),
     available: col('available'),
+    half: col('half'),
   };
   const missing = (['category', 'name', 'price'] as const).filter((k) => idx[k] < 0);
   if (missing.length) {
@@ -361,6 +363,11 @@ function mapRows(rows: string[][]): Parsed[] | string {
     const price = Number(priceText);
     if (!priceText || !Number.isFinite(price) || price < 0 || price > 1_000_000)
       errors.push('price is not a valid amount');
+
+    const halfText = get(idx.half).replace(/[₹$€£,\s]|rs\.?/gi, '');
+    const half = halfText ? Number(halfText) : null;
+    if (half !== null && (!Number.isFinite(half) || half < 0 || half > 1_000_000))
+      errors.push('half price is not a valid amount');
 
     const diet = raw.type ? DIETS[raw.type.toLowerCase()] : 'veg';
     if (!diet) errors.push('type must be Veg, Non-veg or Egg');
@@ -392,6 +399,7 @@ function mapRows(rows: string[][]): Parsed[] | string {
             description: description || null,
             imageUrl: image || null,
             isAvailable: available!,
+            halfPriceMinor: half === null ? null : Math.round(half * 100),
           },
     };
   });
@@ -400,9 +408,9 @@ function mapRows(rows: string[][]): Parsed[] | string {
 function downloadTemplate(menu: MenuData) {
   const cat = menu.categories[0]?.name ?? 'Starters';
   downloadCsv('menu-import-template.csv', [
-    ['Category', 'Name', 'Price', 'Type', 'Description', 'Image URL', 'Available'],
-    [cat, 'Paneer Tikka', 260, 'Veg', 'Char-grilled cottage cheese', '', 'Yes'],
-    ['Main Course', 'Butter Chicken', 360, 'Non-veg', '', '', 'Yes'],
-    ['Breakfast', 'Masala Omelette', 120, 'Egg', '', '', 'No'],
+    ['Category', 'Name', 'Price', 'Half Price', 'Type', 'Description', 'Image URL', 'Available'],
+    [cat, 'Paneer Tikka', 260, 160, 'Veg', 'Char-grilled cottage cheese', '', 'Yes'],
+    ['Main Course', 'Butter Chicken', 360, 220, 'Non-veg', '', '', 'Yes'],
+    ['Breakfast', 'Masala Omelette', 120, '', 'Egg', '', '', 'No'],
   ]);
 }

@@ -198,47 +198,60 @@ export class PromotionsService {
     if (!branch)
       throw new NotFoundException({ code: 'BRANCH_NOT_FOUND', message: 'Branch not found.' });
 
-    const ids = [...new Set(input.lines.map((l) => l.menuItemId))];
-    const items = await db.query<{
-      id: string;
-      category_id: string;
-      price_minor: string;
-      is_available: boolean;
-    }>(
-      `SELECT i.id, i.category_id, i.price_minor, i.is_available
-         FROM menu_items i JOIN menu_categories c ON c.id = i.category_id
-        WHERE i.id = ANY($1::uuid[]) AND i.restaurant_id = $2
-          AND i.deleted_at IS NULL AND c.deleted_at IS NULL AND c.is_active`,
-      [ids, branch.restaurant_id],
-    );
-    const byId = new Map(items.map((i) => [i.id, i]));
-    const missing = ids.filter((id) => !byId.get(id));
-    if (missing.length)
-      throw invalid('Some items are no longer on the menu. Refresh and try again.');
-    if (items.some((i) => !i.is_available)) throw invalid('Some items are sold out.');
-
-    const lines: CartLine[] = input.lines.map((l) => {
-      const i = byId.get(l.menuItemId)!;
-      return {
-        menuItemId: i.id,
-        categoryId: i.category_id,
-        unitPriceMinor: Number(i.price_minor),
-        quantity: l.quantity,
-      };
-    });
+    const { lines, details } = await priceLines(db, branch.restaurant_id, input.lines);
     const promotions = (
       await db.query<Row>(`${SELECT} WHERE p.restaurant_id = $1 AND p.deleted_at IS NULL`, [
         branch.restaurant_id,
       ])
     ).map(toEngine);
 
-    return quote(lines, promotions, {
+    const result = quote(lines, promotions, {
       now: new Date(),
       localDay: branch.dow,
       localTime: branch.local_time,
       branchId: input.branchId,
       channel: input.channel,
       couponCode: input.couponCode ?? null,
+    });
+    return {
+      ...result,
+      lines: result.lines.map((l, i) => ({ ...l, ...details[i]! })),
+      restaurantId: branch.restaurant_id,
+    };
+  }
+
+  /**
+   * Re-prices lines at the prices already saved on an order (used after a void), against the
+   * promotions valid now. Runs in the caller's transaction.
+   */
+  async quoteSavedLines(
+    db: Db,
+    input: {
+      branchId: string;
+      restaurantId: string;
+      channel: string;
+      couponCode: string | null;
+      lines: CartLine[];
+    },
+  ) {
+    const local = await db.one<{ dow: number; local_time: string }>(
+      `SELECT extract(dow FROM now() AT TIME ZONE timezone)::int AS dow,
+              to_char(now() AT TIME ZONE timezone, 'HH24:MI:SS') AS local_time
+         FROM branches WHERE id = $1`,
+      [input.branchId],
+    );
+    const promotions = (
+      await db.query<Row>(`${SELECT} WHERE p.restaurant_id = $1 AND p.deleted_at IS NULL`, [
+        input.restaurantId,
+      ])
+    ).map(toEngine);
+    return quote(input.lines, promotions, {
+      now: new Date(),
+      localDay: local!.dow,
+      localTime: local!.local_time,
+      branchId: input.branchId,
+      channel: input.channel as Channel,
+      couponCode: input.couponCode,
     });
   }
 
@@ -352,6 +365,73 @@ export class PromotionsService {
       ...meta,
     });
   }
+}
+
+/**
+ * Loads current prices for cart lines from the database. Items with portions must name one of
+ * them (its price applies); items without portions must not. Hidden, deleted or sold-out items
+ * are refused.
+ */
+async function priceLines(
+  db: Db,
+  restaurantId: string,
+  input: { menuItemId: string; variantId?: string | null; quantity: number }[],
+) {
+  const ids = [...new Set(input.map((l) => l.menuItemId))];
+  const items = await db.query<{
+    id: string;
+    name: string;
+    category_id: string;
+    price_minor: string;
+    is_available: boolean;
+  }>(
+    `SELECT i.id, i.name, i.category_id, i.price_minor, i.is_available
+       FROM menu_items i JOIN menu_categories c ON c.id = i.category_id
+      WHERE i.id = ANY($1::uuid[]) AND i.restaurant_id = $2
+        AND i.deleted_at IS NULL AND c.deleted_at IS NULL AND c.is_active`,
+    [ids, restaurantId],
+  );
+  const byId = new Map(items.map((i) => [i.id, i]));
+  if (ids.some((id) => !byId.has(id))) {
+    throw invalid('Some items are no longer on the menu. Refresh and try again.');
+  }
+  if (items.some((i) => !i.is_available)) throw invalid('Some items are sold out.');
+
+  const variants = await db.query<{
+    id: string;
+    menu_item_id: string;
+    name: string;
+    price_minor: string;
+  }>(
+    `SELECT id, menu_item_id, name, price_minor FROM menu_item_variants
+      WHERE menu_item_id = ANY($1::uuid[]) AND deleted_at IS NULL`,
+    [ids],
+  );
+  const lines: CartLine[] = [];
+  const details: { name: string; variantName: string | null }[] = [];
+  for (const l of input) {
+    const item = byId.get(l.menuItemId)!;
+    const options = variants.filter((v) => v.menu_item_id === item.id);
+    let price = Number(item.price_minor);
+    let variantName: string | null = null;
+    if (options.length) {
+      const v = options.find((o) => o.id === l.variantId);
+      if (!v) throw invalid(`Choose a portion for ${item.name}.`);
+      price = Number(v.price_minor);
+      variantName = v.name;
+    } else if (l.variantId) {
+      throw invalid(`${item.name} has no portions.`);
+    }
+    lines.push({
+      menuItemId: item.id,
+      variantId: options.length ? l.variantId! : null,
+      categoryId: item.category_id,
+      unitPriceMinor: price,
+      quantity: l.quantity,
+    });
+    details.push({ name: item.name, variantName });
+  }
+  return { lines, details };
 }
 
 // ---- mapping ----

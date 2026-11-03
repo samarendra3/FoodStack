@@ -21,6 +21,8 @@ export interface PosItem {
   imageUrl?: string;
   available: boolean;
   badge?: 'Popular' | 'New';
+  /** Portions (e.g. Full / Half) in major units; empty for single-price items. */
+  variants: { id: string; name: string; price: number }[];
 }
 
 export interface PosTable {
@@ -58,6 +60,7 @@ export function usePosCatalog(): PosCatalog {
       diet: i.diet === 'non_veg' ? 'non-veg' : i.diet,
       imageUrl: i.imageUrl ?? undefined,
       available: i.isAvailable,
+      variants: i.variants.map((v) => ({ id: v.id, name: v.name, price: v.priceMinor / 100 })),
     }));
 
   return {

@@ -40,6 +40,12 @@ export interface MenuItem {
   updatedAt: string;
 }
 
+export interface MenuVariant {
+  id: string;
+  name: string;
+  priceMinor: number;
+}
+
 interface Restaurant {
   id: string;
   name: string;
@@ -87,6 +93,24 @@ export class MenuService {
           ORDER BY sort_order, lower(name)`,
         [restaurant.id],
       );
+      const variantRows = await db.query<{
+        id: string;
+        menu_item_id: string;
+        name: string;
+        price_minor: string;
+      }>(
+        `SELECT v.id, v.menu_item_id, v.name, v.price_minor FROM menu_item_variants v
+           JOIN menu_items i ON i.id = v.menu_item_id
+          WHERE i.restaurant_id = $1 AND v.deleted_at IS NULL
+          ORDER BY v.sort_order, v.created_at`,
+        [restaurant.id],
+      );
+      const byItem = new Map<string, MenuVariant[]>();
+      for (const v of variantRows) {
+        const list = byItem.get(v.menu_item_id) ?? [];
+        list.push({ id: v.id, name: v.name, priceMinor: Number(v.price_minor) });
+        byItem.set(v.menu_item_id, list);
+      }
       return {
         restaurant: {
           id: restaurant.id,
@@ -100,7 +124,7 @@ export class MenuService {
           isActive: c.is_active,
           itemCount: Number(c.item_count),
         })),
-        items: items.map(toItem),
+        items: items.map((i) => ({ ...toItem(i), variants: byItem.get(i.id) ?? [] })),
         canManage: canUse(access, 'menu:manage', restaurant.id),
       };
     });
@@ -192,7 +216,7 @@ export class MenuService {
           category.id,
           input.name,
           input.description || null,
-          input.priceMinor,
+          input.variants?.[0]?.priceMinor ?? input.priceMinor,
           input.diet,
           input.imageUrl || null,
           input.isAvailable ?? true,
@@ -200,6 +224,7 @@ export class MenuService {
           auth.userId,
         ],
       );
+      if (input.variants?.length) await syncVariants(db, auth.tenantId!, row!.id, input.variants);
       await this.audit(db, auth, meta, 'menu.item_created', 'menu_item', row!.id, {
         name: input.name,
         priceMinor: input.priceMinor,
@@ -248,6 +273,7 @@ export class MenuService {
           auth.userId,
         ],
       );
+      if (input.variants) await syncVariants(db, auth.tenantId!, id, input.variants);
       await this.audit(db, auth, meta, 'menu.item_updated', 'menu_item', id, input);
     });
   }
@@ -274,7 +300,7 @@ export class MenuService {
       const seen = new Set<string>();
       const duplicates: number[] = [];
       input.rows.forEach((r, i) => {
-        const key = `${r.category.toLowerCase()} ${r.name.toLowerCase()}`;
+        const key = `${r.category.toLowerCase()}\u0000${r.name.toLowerCase()}`;
         if (seen.has(key)) duplicates.push(i + 1);
         seen.add(key);
       });
@@ -314,7 +340,7 @@ export class MenuService {
               WHERE restaurant_id = $1 AND deleted_at IS NULL FOR UPDATE`,
             [restaurant.id],
           )
-        ).map((i) => [`${i.category_id} ${i.name.toLowerCase()}`, i.id]),
+        ).map((i) => [`${i.category_id}\u0000${i.name.toLowerCase()}`, i.id]),
       );
 
       let created = 0;
@@ -322,7 +348,7 @@ export class MenuService {
       let skipped = 0;
       for (const r of input.rows) {
         const categoryId = categories.get(r.category.toLowerCase())!;
-        const match = existing.get(`${categoryId} ${r.name.toLowerCase()}`);
+        const match = existing.get(`${categoryId}\u0000${r.name.toLowerCase()}`);
         if (match) {
           if (input.onDuplicate === 'skip') {
             skipped++;
@@ -342,16 +368,18 @@ export class MenuService {
               auth.userId,
             ],
           );
+          await syncVariants(db, auth.tenantId!, match, halfAndFull(r));
           updated++;
           continue;
         }
-        await db.query(
+        const inserted = await db.one<{ id: string }>(
           `INSERT INTO menu_items (tenant_id, restaurant_id, category_id, name, description,
                                    price_minor, currency_code, diet, image_url, is_available,
                                    sort_order, created_by, updated_by)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
                    (SELECT coalesce(max(sort_order) + 1, 0) FROM menu_items
-                     WHERE category_id = $3 AND deleted_at IS NULL), $11, $11)`,
+                     WHERE category_id = $3 AND deleted_at IS NULL), $11, $11)
+           RETURNING id`,
           [
             auth.tenantId,
             restaurant.id,
@@ -366,6 +394,8 @@ export class MenuService {
             auth.userId,
           ],
         );
+        const portions = halfAndFull(r);
+        if (portions.length) await syncVariants(db, auth.tenantId!, inserted!.id, portions);
         created++;
       }
 
@@ -488,6 +518,70 @@ export function canUse(access: TenantAccess, perm: Perm, restaurantId: string): 
       (b) => b.restaurantId === restaurantId && access.byBranch[b.id]?.includes(perm),
     )
   );
+}
+
+/** Import rows with a half price become Full + Half portions; otherwise no portions. */
+function halfAndFull(r: { priceMinor: number; halfPriceMinor?: number | null }) {
+  return r.halfPriceMinor != null
+    ? [
+        { name: 'Full', priceMinor: r.priceMinor },
+        { name: 'Half', priceMinor: r.halfPriceMinor },
+      ]
+    : [];
+}
+
+/**
+ * Replaces an item's portions: keeps (and updates) ids that are listed, soft-deletes the rest,
+ * inserts new ones, and mirrors the first portion's price onto the item.
+ */
+export async function syncVariants(
+  db: Db,
+  tenantId: string,
+  itemId: string,
+  variants: { id?: string; name: string; priceMinor: number }[],
+) {
+  const keep = variants.filter((v) => v.id).map((v) => v.id!);
+  const owned = await db.query<{ id: string }>(
+    'SELECT id FROM menu_item_variants WHERE menu_item_id = $1 AND deleted_at IS NULL',
+    [itemId],
+  );
+  const ownedIds = new Set(owned.map((o) => o.id));
+  if (keep.some((id) => !ownedIds.has(id))) {
+    throw new BadRequestException({
+      code: 'VARIANT_NOT_FOUND',
+      message: 'A portion no longer exists. Refresh and try again.',
+    });
+  }
+  // Free the names first so renames/reorders don't trip the unique index.
+  await db.query(
+    `UPDATE menu_item_variants SET deleted_at = now(), updated_at = now()
+      WHERE menu_item_id = $1 AND deleted_at IS NULL AND NOT (id = ANY($2::uuid[]))`,
+    [itemId, keep],
+  );
+  await db.query(
+    `UPDATE menu_item_variants SET name = id::text, updated_at = now() WHERE id = ANY($1::uuid[])`,
+    [keep],
+  );
+  for (const [i, v] of variants.entries()) {
+    if (v.id) {
+      await db.query(
+        'UPDATE menu_item_variants SET name = $2, price_minor = $3, sort_order = $4, updated_at = now() WHERE id = $1',
+        [v.id, v.name, v.priceMinor, i],
+      );
+    } else {
+      await db.query(
+        `INSERT INTO menu_item_variants (tenant_id, menu_item_id, name, price_minor, sort_order)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [tenantId, itemId, v.name, v.priceMinor, i],
+      );
+    }
+  }
+  if (variants[0]) {
+    await db.query('UPDATE menu_items SET price_minor = $2 WHERE id = $1', [
+      itemId,
+      variants[0].priceMinor,
+    ]);
+  }
 }
 
 interface ItemRow {
