@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { pageQuerySchema } from '../../common/pagination/paged';
 import { CHANNELS } from '../promotions/promotions.schemas';
 
 export const KITCHEN_STATUSES = ['new', 'accepted', 'preparing', 'ready', 'served'] as const;
@@ -37,12 +38,27 @@ export const createOrderSchema = z.strictObject({
 });
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;
 
-export const listOrdersSchema = z.strictObject({
-  branchId: z.uuid(),
-  status: z.enum(['open', 'completed', 'cancelled']).optional(),
-  limit: z.coerce.number().int().min(1).max(200).default(50),
-});
+export const listOrdersSchema = pageQuerySchema(
+  ['createdAt', 'orderNumber', 'totalMinor', 'status'] as const,
+  'createdAt',
+  {
+    branchId: z.uuid().optional(),
+    status: z.enum(['open', 'completed', 'cancelled']).optional(),
+    channel: z.enum(CHANNELS).optional(),
+  },
+);
 export type ListOrdersQuery = z.infer<typeof listOrdersSchema>;
+
+export const listPaymentsSchema = pageQuerySchema(
+  ['createdAt', 'amountMinor'] as const,
+  'createdAt',
+  {
+    branchId: z.uuid().optional(),
+    method: z.enum(PAYMENT_METHODS).optional(),
+    refunded: z.enum(['yes', 'no']).optional(),
+  },
+);
+export type ListPaymentsQuery = z.infer<typeof listPaymentsSchema>;
 
 export const reasonSchema = z.strictObject({ reason });
 export type ReasonInput = z.infer<typeof reasonSchema>;

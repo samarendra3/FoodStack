@@ -5,6 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { likeTerm, runPaged } from '../../common/pagination/paged';
 import { type Db, DbContext } from '../../core/db/db-context';
 import { hasPermission } from '../auth/access';
 import { AccessService } from '../auth/access.service';
@@ -13,6 +14,7 @@ import { writeAudit } from '../auth/user-tokens';
 import { type CartLine, type Channel, type EnginePromotion, quote } from './discount-engine';
 import {
   type CreatePromotionInput,
+  type ListPromotionsQuery,
   type PromotionShape,
   promotionProblems,
   type QuoteInput,
@@ -57,6 +59,16 @@ const SELECT = `
     coalesce((SELECT array_agg(branch_id) FROM promotion_branches x WHERE x.promotion_id = p.id), '{}') AS branch_ids
   FROM promotions p`;
 
+/** SQL for each derived state (matches stateOf). */
+const STATE_SQL = {
+  paused: "p.status = 'paused'",
+  expired: "p.status = 'active' AND p.ends_at IS NOT NULL AND p.ends_at <= now()",
+  scheduled:
+    "p.status = 'active' AND p.starts_at IS NOT NULL AND p.starts_at > now() AND (p.ends_at IS NULL OR p.ends_at > now())",
+  active:
+    "p.status = 'active' AND (p.starts_at IS NULL OR p.starts_at <= now()) AND (p.ends_at IS NULL OR p.ends_at > now())",
+} as const;
+
 const forbidden = (message = 'You cannot manage promotions.') =>
   new ForbiddenException({ code: 'PROMOTION_FORBIDDEN', message });
 const invalid = (message: string) =>
@@ -73,20 +85,66 @@ export class PromotionsService {
     private readonly access: AccessService,
   ) {}
 
-  list(auth: AuthContext) {
+  /** State counts for the promotions screen header. */
+  summary(auth: AuthContext) {
     return this.run(auth, async (db, access) => {
       const restaurants = this.restaurants(access, 'promotion:read');
-      const rows = await db.query<Row>(
-        `${SELECT} WHERE p.restaurant_id = ANY($1::uuid[]) AND p.deleted_at IS NULL
-          ORDER BY p.created_at DESC`,
+      const r = await db.one<Record<'active' | 'scheduled' | 'expired' | 'paused', string>>(
+        `SELECT count(*) FILTER (WHERE ${STATE_SQL.active}) AS active,
+                count(*) FILTER (WHERE ${STATE_SQL.scheduled}) AS scheduled,
+                count(*) FILTER (WHERE ${STATE_SQL.expired}) AS expired,
+                count(*) FILTER (WHERE ${STATE_SQL.paused}) AS paused
+           FROM promotions p WHERE p.restaurant_id = ANY($1::uuid[]) AND p.deleted_at IS NULL`,
         [restaurants],
       );
       return {
-        promotions: rows.map(toDto),
-        canManage: restaurants.some((r) =>
-          hasPermission(access, 'promotion:manage', { restaurantId: r }),
+        counts: {
+          active: Number(r?.active ?? 0),
+          scheduled: Number(r?.scheduled ?? 0),
+          expired: Number(r?.expired ?? 0),
+          paused: Number(r?.paused ?? 0),
+        },
+        canManage: restaurants.some((x) =>
+          hasPermission(access, 'promotion:manage', { restaurantId: x }),
         ),
       };
+    });
+  }
+
+  /** Paged promotions; state is computed in SQL so it can be filtered and counted. */
+  listPaged(auth: AuthContext, query: ListPromotionsQuery) {
+    return this.run(auth, async (db, access) => {
+      const restaurants = this.restaurants(access, 'promotion:read');
+      const where = ['p.restaurant_id = ANY($1::uuid[])', 'p.deleted_at IS NULL'];
+      const params: unknown[] = [restaurants];
+      if (query.state) where.push(STATE_SQL[query.state]);
+      if (query.type) {
+        params.push(query.type);
+        where.push('p.type = $' + params.length);
+      }
+      if (query.coupon === 'yes') where.push('p.coupon_code IS NOT NULL');
+      if (query.coupon === 'no') where.push('p.coupon_code IS NULL');
+      if (query.search) {
+        params.push(likeTerm(query.search));
+        where.push(
+          `(p.name ILIKE $${params.length} OR p.coupon_code::text ILIKE $${params.length})`,
+        );
+      }
+      return runPaged<Row, unknown>(db, {
+        select: SELECT.replace('SELECT', '').replace('FROM promotions p', '').trim(),
+        from: 'promotions p',
+        where,
+        params,
+        sortColumns: {
+          createdAt: 'p.created_at',
+          name: 'lower(p.name)',
+          startsAt: 'p.starts_at',
+          endsAt: 'p.ends_at',
+        },
+        tiebreak: 'p.id',
+        query,
+        map: toDto,
+      });
     });
   }
 

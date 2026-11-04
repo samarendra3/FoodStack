@@ -5,8 +5,10 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { likeTerm, runPaged } from '../../common/pagination/paged';
 import { type Db, DbContext } from '../../core/db/db-context';
 import { hasPermission } from '../auth/access';
+import { SubscriptionLifecycleService } from '../billing/subscription-lifecycle.service';
 import { AccessService } from '../auth/access.service';
 import type { AuthContext, RequestMeta, TenantAccess } from '../auth/auth.types';
 import { writeAudit } from '../auth/user-tokens';
@@ -16,6 +18,7 @@ import {
   KITCHEN_STATUSES,
   type KitchenStatus,
   type ListOrdersQuery,
+  type ListPaymentsQuery,
   type PaymentInput,
   type RefundInput,
 } from './orders.schemas';
@@ -63,6 +66,7 @@ export class OrdersService {
     private readonly db: DbContext,
     private readonly access: AccessService,
     private readonly promotions: PromotionsService,
+    private readonly subscriptions: SubscriptionLifecycleService,
   ) {}
 
   create(
@@ -85,6 +89,7 @@ export class OrdersService {
         );
         if (existing) return this.detail(db, existing.id);
       }
+      await this.subscriptions.assertWithinLimit(db, auth.tenantId!, 'ordersPerMonth');
 
       const q = await this.promotions.quoteInTx(db, input);
       if (input.couponCode && q.coupon?.status !== 'applied') {
@@ -165,23 +170,86 @@ export class OrdersService {
     });
   }
 
+  /** Paged orders across the branches the caller may see (optionally one branch). */
   list(auth: AuthContext, query: ListOrdersQuery) {
     return this.run(auth, async (db, access) => {
-      this.require(
-        access,
-        query.branchId,
-        ['order:read', 'pos:access'],
-        'You cannot view orders at this branch.',
-      );
-      const rows = await db.query<OrderRow & { item_count: string }>(
-        `SELECT o.*, (SELECT coalesce(sum(quantity), 0) FROM order_items i
-                       WHERE i.order_id = o.id AND i.status = 'active') AS item_count
-           FROM orders o
-          WHERE o.branch_id = $1 AND ($2::text IS NULL OR o.status = $2)
-          ORDER BY o.created_at DESC LIMIT $3`,
-        [query.branchId, query.status ?? null, query.limit],
-      );
-      return rows.map((r) => ({ ...summary(r), itemCount: Number(r.item_count) }));
+      const branches = this.visibleBranches(access, query.branchId, ['order:read', 'pos:access']);
+      const { where, params, add } = filters('o.branch_id', branches);
+      if (query.status) add('o.status = ?', query.status);
+      if (query.channel) add('o.channel = ?', query.channel);
+      if (query.from) add('(o.created_at AT TIME ZONE b.timezone)::date >= ?::date', query.from);
+      if (query.to) add('(o.created_at AT TIME ZONE b.timezone)::date <= ?::date', query.to);
+      if (query.search) {
+        const term = query.search.replace(/^#/, '');
+        params.push(likeTerm(term), /^\d{1,9}$/.test(term) ? Number(term) : null);
+        const n = params.length;
+        where.push(
+          `(o.order_number = $${n} OR c.phone ILIKE $${n - 1} OR c.name ILIKE $${n - 1} OR o.table_label ILIKE $${n - 1})`,
+        );
+      }
+      return runPaged<ListRow, unknown>(db, {
+        select: `o.*, b.name AS branch_name, c.name AS customer_name, c.phone AS customer_phone,
+                 (SELECT coalesce(sum(quantity), 0) FROM order_items i
+                   WHERE i.order_id = o.id AND i.status = 'active') AS item_count`,
+        from: 'orders o JOIN branches b ON b.id = o.branch_id LEFT JOIN customers c ON c.id = o.customer_id',
+        where,
+        params,
+        sortColumns: {
+          createdAt: 'o.created_at',
+          orderNumber: 'o.order_number',
+          totalMinor: 'o.total_minor',
+          status: 'o.status',
+        },
+        tiebreak: 'o.id',
+        query,
+        map: (r) => ({
+          ...summary(r),
+          branchName: r.branch_name,
+          customer: r.customer_phone ? { name: r.customer_name, phone: r.customer_phone } : null,
+          itemCount: Number(r.item_count),
+        }),
+      });
+    });
+  }
+
+  /** Paged payments with their order number, across the caller's visible branches. */
+  listPayments(auth: AuthContext, query: ListPaymentsQuery) {
+    return this.run(auth, async (db, access) => {
+      const branches = this.visibleBranches(access, query.branchId, ['order:read']);
+      const { where, params, add } = filters('p.branch_id', branches);
+      if (query.method) add('p.method = ?', query.method);
+      if (query.refunded === 'yes') where.push('p.refunded_minor > 0');
+      if (query.refunded === 'no') where.push('p.refunded_minor = 0');
+      if (query.from) add('(p.created_at AT TIME ZONE b.timezone)::date >= ?::date', query.from);
+      if (query.to) add('(p.created_at AT TIME ZONE b.timezone)::date <= ?::date', query.to);
+      if (query.search) {
+        const term = query.search.replace(/^#/, '');
+        params.push(likeTerm(term), /^\d{1,9}$/.test(term) ? Number(term) : null);
+        const n = params.length;
+        where.push(`(o.order_number = $${n} OR p.reference ILIKE $${n - 1})`);
+      }
+      return runPaged<PaymentListRow, unknown>(db, {
+        select: `p.id, p.order_id, o.order_number, b.name AS branch_name, p.method, p.amount_minor,
+                 p.refunded_minor, p.reference, p.created_at, o.currency_code`,
+        from: 'payments p JOIN orders o ON o.id = p.order_id JOIN branches b ON b.id = p.branch_id',
+        where,
+        params,
+        sortColumns: { createdAt: 'p.created_at', amountMinor: 'p.amount_minor' },
+        tiebreak: 'p.id',
+        query,
+        map: (r) => ({
+          id: r.id,
+          orderId: r.order_id,
+          orderNumber: r.order_number,
+          branchName: r.branch_name,
+          method: r.method,
+          amountMinor: Number(r.amount_minor),
+          refundedMinor: Number(r.refunded_minor),
+          reference: r.reference,
+          currencyCode: r.currency_code.trim(),
+          createdAt: new Date(r.created_at).toISOString(),
+        }),
+      });
     });
   }
 
@@ -425,6 +493,23 @@ export class OrdersService {
     return this.db.run({ tenantId: auth.tenantId, userId: auth.userId }, async (db) =>
       work(db, await this.access.tenantAccess(db, auth.membershipId!)),
     );
+  }
+
+  /** Branches where the caller holds any of `anyOf`; narrowed to `branchId` when given. */
+  private visibleBranches(
+    access: TenantAccess,
+    branchId: string | undefined,
+    anyOf: string[],
+  ): string[] {
+    const ids = access.allBranches
+      .filter((b) => anyOf.some((p) => hasPermission(access, p, { branchId: b.id })))
+      .map((b) => b.id);
+    if (branchId) {
+      if (!ids.includes(branchId)) throw forbidden('You cannot view this branch.');
+      return [branchId];
+    }
+    if (ids.length === 0) throw forbidden('You cannot view orders.');
+    return ids;
   }
 
   private require(access: TenantAccess, branchId: string, anyOf: string[], message: string) {
@@ -683,4 +768,35 @@ function summary(o: OrderRow) {
     completedAt: o.completed_at ? new Date(o.completed_at).toISOString() : null,
     cancelledAt: o.cancelled_at ? new Date(o.cancelled_at).toISOString() : null,
   };
+}
+
+type ListRow = OrderRow & {
+  item_count: string;
+  branch_name: string;
+  customer_name: string | null;
+  customer_phone: string | null;
+};
+
+interface PaymentListRow {
+  id: string;
+  order_id: string;
+  order_number: number;
+  branch_name: string;
+  method: string;
+  amount_minor: string;
+  refunded_minor: string;
+  reference: string | null;
+  created_at: Date;
+  currency_code: string;
+}
+
+/** WHERE builder: `add('col = ?', v)` appends a condition with the next $n placeholder. */
+function filters(branchColumn: string, branches: string[]) {
+  const where = [`${branchColumn} = ANY($1::uuid[])`];
+  const params: unknown[] = [branches];
+  const add = (sql: string, value: unknown) => {
+    params.push(value);
+    where.push(sql.replace('?', '$' + params.length));
+  };
+  return { where, params, add };
 }

@@ -21,6 +21,8 @@ for (const file of envFilePaths('test')) {
 }
 // Two-factor tests need an encryption key; a throwaway one is enough when none is configured.
 process.env.MFA_ENCRYPTION_KEY ||= randomBytes(32).toString('base64');
+// Tests drive the expiry sweep themselves.
+process.env.SUBSCRIPTION_SWEEP_INTERVAL_SECONDS ??= '0';
 
 // Tests create and drop tables and revert migrations: never point them at a real database.
 if (!process.env.DATABASE_NAME.endsWith('_test')) {

@@ -13,6 +13,10 @@ import { Reports1798000011000 } from './migrations/1798000011000-Reports';
 import { Promotions1798000012000 } from './migrations/1798000012000-Promotions';
 import { MenuVariants1798000012500 } from './migrations/1798000012500-MenuVariants';
 import { Orders1798000013000 } from './migrations/1798000013000-Orders';
+import { ListIndexes1798000014000 } from './migrations/1798000014000-ListIndexes';
+import { Subscriptions1798000015000 } from './migrations/1798000015000-Subscriptions';
+import { SubscriptionLifecycle1798000016000 } from './migrations/1798000016000-SubscriptionLifecycle';
+import { PlanCatalogue1798000017000 } from './migrations/1798000017000-PlanCatalogue';
 
 /**
  * All migrations in order, for code that cannot load them by file glob (the e2e test setup).
@@ -34,4 +38,8 @@ export const ALL_MIGRATIONS = [
   Promotions1798000012000,
   MenuVariants1798000012500,
   Orders1798000013000,
+  ListIndexes1798000014000,
+  Subscriptions1798000015000,
+  SubscriptionLifecycle1798000016000,
+  PlanCatalogue1798000017000,
 ];

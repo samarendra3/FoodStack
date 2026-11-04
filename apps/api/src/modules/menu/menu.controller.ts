@@ -26,6 +26,8 @@ import {
   createItemSchema,
   type ImportInput,
   importSchema,
+  type ListItemsQuery,
+  listItemsSchema,
   type MenuQuery,
   menuQuerySchema,
   type UpdateCategoryInput,
@@ -52,6 +54,26 @@ export class MenuController {
     @Query(new ZodValidationPipe(menuQuerySchema)) query: MenuQuery,
   ) {
     return this.menu.get(auth, query.restaurantId);
+  }
+
+  @Get('categories')
+  @RequirePermission('menu:read')
+  @ApiOperation({ summary: 'Categories with item counts (no items)' })
+  categories(
+    @CurrentAuth() auth: AuthContext,
+    @Query(new ZodValidationPipe(menuQuerySchema)) query: MenuQuery,
+  ) {
+    return this.menu.categories(auth, query.restaurantId);
+  }
+
+  @Get('items')
+  @RequirePermission('menu:read')
+  @ApiOperation({ summary: 'Menu items, paged: search, category, type, availability' })
+  items(
+    @CurrentAuth() auth: AuthContext,
+    @Query(new ZodValidationPipe(listItemsSchema)) query: ListItemsQuery,
+  ) {
+    return this.menu.listItems(auth, query);
   }
 
   @Post('categories')

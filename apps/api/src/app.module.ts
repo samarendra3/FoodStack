@@ -7,8 +7,11 @@ import { ResponseEnvelopeInterceptor } from './common/interceptors/response-enve
 import { AppConfigService } from './config/app-config.service';
 import { AppConfigModule } from './config/config.module';
 import { DatabaseModule } from './database/database.module';
+import { AccountModule } from './modules/account/account.module';
+import { BillingModule } from './modules/billing/billing.module';
 import { AccessRequestsModule } from './modules/access-requests/access-requests.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { CustomersModule } from './modules/customers/customers.module';
 import { HealthModule } from './modules/health/health.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
 import { MenuModule } from './modules/menu/menu.module';
@@ -70,10 +73,13 @@ function isInstalled(pkg: string): boolean {
     ReportsModule,
     PromotionsModule,
     OrdersModule,
+    CustomersModule,
+    BillingModule,
+    AccountModule,
     // Feature modules (scaffolded under ./modules and ./websocket); register as each is implemented:
     // RestaurantsModule, BranchesModule, StaffModule, RolesModule,
     // FloorsModule, TablesModule, DiningSessionsModule, KitchenModule,
-    // BillingModule, PaymentsModule, CustomersModule,
+    // PaymentsModule,
     // NotificationsModule, AuditLogsModule, WebsocketModule,
   ],
   providers: [

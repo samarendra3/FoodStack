@@ -24,6 +24,10 @@ import {
   type HistoryQuery,
   historyQuerySchema,
   type InventoryQuery,
+  type ListMovementsQuery,
+  type ListStockQuery,
+  listMovementsSchema,
+  listStockSchema,
   inventoryQuerySchema,
   type MovementInput,
   movementSchema,
@@ -49,6 +53,36 @@ export class InventoryController {
     @Query(new ZodValidationPipe(inventoryQuerySchema)) query: InventoryQuery,
   ) {
     return this.inventory.overview(auth, query.branchId);
+  }
+
+  @Get('summary')
+  @RequirePermission('inventory:read')
+  @ApiOperation({ summary: 'Branch, permissions and stock counts for the inventory screen' })
+  summary(
+    @CurrentAuth() auth: AuthContext,
+    @Query(new ZodValidationPipe(inventoryQuerySchema)) query: InventoryQuery,
+  ) {
+    return this.inventory.summary(auth, query.branchId);
+  }
+
+  @Get('items')
+  @RequirePermission('inventory:read')
+  @ApiOperation({ summary: 'Stock items with quantities at a branch, paged' })
+  listStock(
+    @CurrentAuth() auth: AuthContext,
+    @Query(new ZodValidationPipe(listStockSchema)) query: ListStockQuery,
+  ) {
+    return this.inventory.listStock(auth, query);
+  }
+
+  @Get('movements')
+  @RequirePermission('inventory:read')
+  @ApiOperation({ summary: 'Stock movement log (stock in, usage, wastage, counts), paged' })
+  listMovements(
+    @CurrentAuth() auth: AuthContext,
+    @Query(new ZodValidationPipe(listMovementsSchema)) query: ListMovementsQuery,
+  ) {
+    return this.inventory.listMovements(auth, query);
   }
 
   @Post('items')

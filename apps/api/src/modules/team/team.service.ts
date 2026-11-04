@@ -9,6 +9,7 @@ import {
 import { AppConfigService } from '../../config/app-config.service';
 import { type Db, DbContext } from '../../core/db/db-context';
 import { hasPermission } from '../auth/access';
+import { SubscriptionLifecycleService } from '../billing/subscription-lifecycle.service';
 import { AccessService } from '../auth/access.service';
 import type { AuthContext, RequestMeta, TenantAccess } from '../auth/auth.types';
 import { issueUserToken, writeAudit } from '../auth/user-tokens';
@@ -76,6 +77,7 @@ export class TeamService {
     private readonly access: AccessService,
     private readonly mail: MailService,
     private readonly config: AppConfigService,
+    private readonly subscriptions: SubscriptionLifecycleService,
   ) {}
 
   async list(auth: AuthContext) {
@@ -121,6 +123,7 @@ export class TeamService {
               : 'This person is already on your team.',
         });
       }
+      await this.subscriptions.assertWithinLimit(db, auth.tenantId!, 'staff');
       const membership = await db.one<{ id: string }>(
         `INSERT INTO tenant_memberships (tenant_id, user_id, status, invited_by_user_id, joined_at)
          VALUES ($1, $2, 'active', $3, CASE WHEN $4 THEN now() END) RETURNING id`,
@@ -187,6 +190,9 @@ export class TeamService {
     await this.run(auth, async (db, caller) => {
       const target = await this.editableTarget(db, caller, membershipId);
       if (suspend && isOwner(target)) await this.requireAnotherOwner(db, membershipId);
+      if (!suspend && target.membership_status === 'suspended') {
+        await this.subscriptions.assertWithinLimit(db, auth.tenantId!, 'staff');
+      }
       await db.query(
         `UPDATE tenant_memberships SET status = $2, permission_version = permission_version + 1
           WHERE id = $1`,

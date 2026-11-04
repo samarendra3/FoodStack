@@ -5,6 +5,7 @@ import type { Audience, AuthContext } from './auth.types';
 export const PUBLIC_KEY = 'foodstack:public';
 export const AUDIENCE_KEY = 'foodstack:audience';
 export const PERMISSION_KEY = 'foodstack:permission';
+export const SUBSCRIPTION_EXEMPT_KEY = 'foodstack:subscription-exempt';
 
 /** No authentication (sign-in, refresh, password reset, health probes). */
 export const Public = () => SetMetadata(PUBLIC_KEY, true);
@@ -14,6 +15,12 @@ export const Public = () => SetMetadata(PUBLIC_KEY, true);
  * Platform routes also require a TOTP-verified session.
  */
 export const AllowAudience = (audience: Audience | 'any') => SetMetadata(AUDIENCE_KEY, audience);
+
+/**
+ * Tenant routes that stay reachable when the subscription has lapsed (sign-in/session, account,
+ * subscription, billing and payment). Every other tenant route requires an active entitlement.
+ */
+export const AllowInactiveSubscription = () => SetMetadata(SUBSCRIPTION_EXEMPT_KEY, true);
 
 export interface PermissionRequirement {
   permission: string;

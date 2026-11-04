@@ -9,6 +9,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   Req,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
@@ -20,6 +21,8 @@ import type { AuthContext } from '../auth/auth.types';
 import { CurrentAuth, RequirePermission } from '../auth/decorators';
 import {
   type CreatePromotionInput,
+  type ListPromotionsQuery,
+  listPromotionsSchema,
   createPromotionSchema,
   type QuoteInput,
   quoteSchema,
@@ -36,9 +39,19 @@ export class PromotionsController {
 
   @Get()
   @RequirePermission('promotion:read')
-  @ApiOperation({ summary: 'Promotions with their current state' })
-  list(@CurrentAuth() auth: AuthContext) {
-    return this.promotions.list(auth);
+  @ApiOperation({ summary: 'Promotions, paged: search name/coupon; filter state, type, coupon' })
+  list(
+    @CurrentAuth() auth: AuthContext,
+    @Query(new ZodValidationPipe(listPromotionsSchema)) query: ListPromotionsQuery,
+  ) {
+    return this.promotions.listPaged(auth, query);
+  }
+
+  @Get('summary')
+  @RequirePermission('promotion:read')
+  @ApiOperation({ summary: 'Promotion counts by state' })
+  summary(@CurrentAuth() auth: AuthContext) {
+    return this.promotions.summary(auth);
   }
 
   /** Any order-taking staff may price a cart; the service checks the branch. */

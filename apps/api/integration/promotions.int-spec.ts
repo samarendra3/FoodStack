@@ -186,15 +186,22 @@ describe('Promotions (integration)', () => {
     await call('owner', 'post', '/promotions')
       .send({ name: 'Later', type: 'percentage', value: 500, startsAt: '2099-01-01T00:00:00Z' })
       .expect(201);
-    const list = (await call('owner', 'get', '/promotions').expect(200)).body.data;
-    expect(list.canManage).toBe(true);
-    expect(list.promotions.map((p: { name: string; state: string }) => [p.name, p.state])).toEqual(
+    const res = (await call('owner', 'get', '/promotions').expect(200)).body;
+    expect(res.meta).toMatchObject({ page: 1, limit: 25, total: 3, totalPages: 1 });
+    expect(res.data.map((p: { name: string; state: string }) => [p.name, p.state])).toEqual(
       expect.arrayContaining([
         ['10% off', 'active'],
         ['Naan BOGO', 'active'],
         ['Later', 'scheduled'],
       ]),
     );
+    const summary = (await call('owner', 'get', '/promotions/summary').expect(200)).body.data;
+    expect(summary).toEqual({
+      counts: { active: 2, scheduled: 1, expired: 0, paused: 0 },
+      canManage: true,
+    });
+    const scheduled = (await call('owner', 'get', '/promotions?state=scheduled').expect(200)).body;
+    expect(scheduled.data.map((p: { name: string }) => p.name)).toEqual(['Later']);
   });
 
   it('validates rules and ownership of linked records', async () => {
@@ -297,7 +304,7 @@ describe('Promotions (integration)', () => {
   });
 
   it('enforces roles', async () => {
-    const mgr = (await call('manager', 'get', '/promotions').expect(200)).body.data;
+    const mgr = (await call('manager', 'get', '/promotions/summary').expect(200)).body.data;
     expect(mgr.canManage).toBe(false);
     await call('manager', 'post', '/promotions')
       .send({ name: 'x', type: 'percentage', value: 100 })
@@ -309,8 +316,9 @@ describe('Promotions (integration)', () => {
   });
 
   it('isolates tenants', async () => {
-    const list = (await call('bravoOwner', 'get', '/promotions').expect(200)).body.data;
-    expect(list.promotions).toEqual([]);
+    const list = (await call('bravoOwner', 'get', '/promotions').expect(200)).body;
+    expect(list.data).toEqual([]);
+    expect(list.meta.total).toBe(0);
     await call('bravoOwner', 'get', `/promotions/${breadBogo}`).expect(404);
     await call('bravoOwner', 'patch', `/promotions/${breadBogo}`)
       .send({ status: 'active' })

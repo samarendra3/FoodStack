@@ -124,6 +124,16 @@ export const envSchema = z
     SMTP_SECURE: booleanString,
     MAIL_FROM: z.string().min(3).default('FoodStack <no-reply@foodstack.local>'),
 
+    /** Shown to owners on pending subscription invoices (bank account, UPI ID, contact). */
+    BILLING_PAYMENT_INSTRUCTIONS: optionalString,
+    /** Razorpay online payments for subscriptions. Unset: owners pay offline and a Super Admin verifies. */
+    RAZORPAY_KEY_ID: optionalString,
+    RAZORPAY_KEY_SECRET: optionalString,
+    /** Secret configured on the Razorpay webhook; required to accept webhook callbacks. */
+    RAZORPAY_WEBHOOK_SECRET: optionalString,
+    /** How often the background job moves ended trials/periods to expired. 0 disables it. */
+    SUBSCRIPTION_SWEEP_INTERVAL_SECONDS: z.coerce.number().int().min(0).max(86_400).default(300),
+
     AWS_REGION: z.string().default('ap-south-1'),
     AWS_S3_BUCKET: z.string().optional(),
   })

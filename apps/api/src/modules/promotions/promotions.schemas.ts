@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { pageQuerySchema } from '../../common/pagination/paged';
 
 export const PROMOTION_TYPES = ['percentage', 'fixed_amount', 'bogo'] as const;
 export const CHANNELS = ['dine_in', 'takeaway', 'delivery', 'qr'] as const;
@@ -100,6 +101,17 @@ export const updatePromotionSchema = z
   .refine((v) => Object.keys(v).length > 0, { message: 'Nothing to update' });
 export type UpdatePromotionInput = z.infer<typeof updatePromotionSchema>;
 export type PromotionShape = Shape;
+
+export const listPromotionsSchema = pageQuerySchema(
+  ['createdAt', 'name', 'startsAt', 'endsAt'] as const,
+  'createdAt',
+  {
+    state: z.enum(['active', 'scheduled', 'expired', 'paused']).optional(),
+    type: z.enum(PROMOTION_TYPES).optional(),
+    coupon: z.enum(['yes', 'no']).optional(),
+  },
+);
+export type ListPromotionsQuery = z.infer<typeof listPromotionsSchema>;
 
 export const quoteSchema = z.strictObject({
   branchId: z.uuid(),

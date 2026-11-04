@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { pageQuerySchema } from '../../common/pagination/paged';
 
 export const UNITS = ['kg', 'g', 'l', 'ml', 'pcs', 'pack', 'box', 'dozen'] as const;
 export const MOVEMENT_TYPES = ['purchase', 'usage', 'wastage', 'count'] as const;
@@ -11,6 +12,29 @@ const quantity = z
   .refine((n) => Math.round(n * 1000) === n * 1000, { message: 'At most 3 decimal places' });
 
 export const inventoryQuerySchema = z.strictObject({ branchId: z.uuid().optional() });
+
+export const listStockSchema = pageQuerySchema(
+  ['name', 'quantity', 'category', 'value'] as const,
+  'name',
+  {
+    branchId: z.uuid().optional(),
+    status: z.enum(['ok', 'low', 'out']).optional(),
+    category: z.string().trim().max(40).optional(),
+  },
+  'ASC',
+);
+export type ListStockQuery = z.infer<typeof listStockSchema>;
+
+export const listMovementsSchema = pageQuerySchema(
+  ['createdAt', 'quantity'] as const,
+  'createdAt',
+  {
+    branchId: z.uuid().optional(),
+    type: z.enum(MOVEMENT_TYPES).optional(),
+    itemId: z.uuid().optional(),
+  },
+);
+export type ListMovementsQuery = z.infer<typeof listMovementsSchema>;
 export type InventoryQuery = z.infer<typeof inventoryQuerySchema>;
 
 export const createStockItemSchema = z.strictObject({

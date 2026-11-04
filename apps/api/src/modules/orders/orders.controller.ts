@@ -25,7 +25,9 @@ import {
   type KitchenStatusInput,
   kitchenStatusSchema,
   type ListOrdersQuery,
+  type ListPaymentsQuery,
   listOrdersSchema,
+  listPaymentsSchema,
   type PaymentInput,
   paymentSchema,
   type ReasonInput,
@@ -62,12 +64,24 @@ export class OrdersController {
 
   @Get('orders')
   @RequirePermission('menu:read')
-  @ApiOperation({ summary: 'Recent orders at a branch' })
+  @ApiOperation({
+    summary: 'Orders, paged: search number/phone/table; filter branch, status, channel, dates',
+  })
   list(
     @CurrentAuth() auth: AuthContext,
     @Query(new ZodValidationPipe(listOrdersSchema)) query: ListOrdersQuery,
   ) {
     return this.orders.list(auth, query);
+  }
+
+  @Get('payments')
+  @RequirePermission('order:read')
+  @ApiOperation({ summary: 'Payments, paged: filter by branch, method, refunded, dates' })
+  payments(
+    @CurrentAuth() auth: AuthContext,
+    @Query(new ZodValidationPipe(listPaymentsSchema)) query: ListPaymentsQuery,
+  ) {
+    return this.orders.listPayments(auth, query);
   }
 
   @Get('orders/:id')

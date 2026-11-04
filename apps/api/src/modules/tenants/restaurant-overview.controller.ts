@@ -31,7 +31,11 @@ export class RestaurantOverviewController {
         name: string;
         status: string;
         trial_ends_at: Date | null;
-      }>('SELECT id, name, status, trial_ends_at FROM tenants WHERE id = $1', [auth.tenantId]);
+      }>(
+        `SELECT t.id, t.name, t.status, s.trial_ends_at
+           FROM tenants t LEFT JOIN subscriptions s ON s.tenant_id = t.id WHERE t.id = $1`,
+        [auth.tenantId],
+      );
       const restaurants = await db.query<{
         id: string;
         name: string;

@@ -5,8 +5,10 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { likeTerm, Paged, runPaged } from '../../common/pagination/paged';
 import { type Db, DbContext } from '../../core/db/db-context';
 import { hasPermission } from '../auth/access';
+import { SubscriptionLifecycleService } from '../billing/subscription-lifecycle.service';
 import { AccessService } from '../auth/access.service';
 import type { AuthContext, RequestMeta, TenantAccess } from '../auth/auth.types';
 import { writeAudit } from '../auth/user-tokens';
@@ -14,6 +16,7 @@ import type {
   CreateCategoryInput,
   CreateItemInput,
   ImportInput,
+  ListItemsQuery,
   UpdateCategoryInput,
   UpdateItemInput,
 } from './menu.schemas';
@@ -68,7 +71,105 @@ export class MenuService {
   constructor(
     private readonly db: DbContext,
     private readonly access: AccessService,
+    private readonly subscriptions: SubscriptionLifecycleService,
   ) {}
+
+  /** Categories with item counts, without items (for list screens that page items). */
+  categories(auth: AuthContext, restaurantId?: string) {
+    return this.run(auth, async (db, access) => {
+      const restaurant = await this.restaurant(db, access, 'menu:read', restaurantId);
+      const rows = await db.query<{
+        id: string;
+        name: string;
+        sort_order: number;
+        is_active: boolean;
+        item_count: string;
+      }>(
+        `SELECT c.id, c.name, c.sort_order, c.is_active,
+                (SELECT count(*) FROM menu_items i WHERE i.category_id = c.id AND i.deleted_at IS NULL) AS item_count
+           FROM menu_categories c
+          WHERE c.restaurant_id = $1 AND c.deleted_at IS NULL
+          ORDER BY c.sort_order, lower(c.name)`,
+        [restaurant.id],
+      );
+      const total = await db.one<{ n: string }>(
+        'SELECT count(*) AS n FROM menu_items WHERE restaurant_id = $1 AND deleted_at IS NULL',
+        [restaurant.id],
+      );
+      return {
+        restaurant: {
+          id: restaurant.id,
+          name: restaurant.name,
+          currencyCode: restaurant.currency_code.trim(),
+        },
+        categories: rows.map((c) => ({
+          id: c.id,
+          name: c.name,
+          sortOrder: c.sort_order,
+          isActive: c.is_active,
+          itemCount: Number(c.item_count),
+        })),
+        itemCount: Number(total?.n ?? 0),
+        canManage: canUse(access, 'menu:manage', restaurant.id),
+      };
+    });
+  }
+
+  /** Paged menu items with their portions. */
+  listItems(auth: AuthContext, query: ListItemsQuery) {
+    return this.run(auth, async (db, access) => {
+      const restaurant = await this.restaurant(db, access, 'menu:read', query.restaurantId);
+      const where = ['i.restaurant_id = $1', 'i.deleted_at IS NULL'];
+      const params: unknown[] = [restaurant.id];
+      const add = (sql: string, v: unknown) => {
+        params.push(v);
+        where.push(sql.split('?').join(`$${params.length}`));
+      };
+      if (query.categoryId) add('i.category_id = ?', query.categoryId);
+      if (query.diet) add('i.diet = ?', query.diet);
+      if (query.available) add('i.is_available = ?', query.available === 'yes');
+      if (query.search) add('(i.name ILIKE ? OR i.description ILIKE ?)', likeTerm(query.search));
+      const page = await runPaged<
+        ItemRow & { category_name: string },
+        MenuItem & { categoryName: string }
+      >(db, {
+        select: `i.id, i.category_id, i.name, i.description, i.price_minor, i.currency_code, i.diet,
+                 i.image_url, i.is_available, i.sort_order, i.updated_at, c.name AS category_name`,
+        from: 'menu_items i JOIN menu_categories c ON c.id = i.category_id',
+        where,
+        params,
+        sortColumns: {
+          name: 'lower(i.name)',
+          priceMinor: 'i.price_minor',
+          updatedAt: 'i.updated_at',
+          category:
+            "lpad(c.sort_order::text, 6, '0') || lower(c.name) || lpad(i.sort_order::text, 6, '0')",
+        },
+        tiebreak: 'i.id',
+        query,
+        map: (r) => ({ ...toItem(r), categoryName: r.category_name }),
+      });
+      const variants = await db.query<{
+        id: string;
+        menu_item_id: string;
+        name: string;
+        price_minor: string;
+      }>(
+        `SELECT id, menu_item_id, name, price_minor FROM menu_item_variants
+          WHERE menu_item_id = ANY($1::uuid[]) AND deleted_at IS NULL ORDER BY sort_order, created_at`,
+        [page.items.map((i) => i.id)],
+      );
+      return new Paged(
+        page.items.map((i) => ({
+          ...i,
+          variants: variants
+            .filter((v) => v.menu_item_id === i.id)
+            .map((v) => ({ id: v.id, name: v.name, priceMinor: Number(v.price_minor) })),
+        })),
+        page.meta,
+      );
+    });
+  }
 
   get(auth: AuthContext, restaurantId?: string) {
     return this.run(auth, async (db, access) => {
@@ -200,6 +301,7 @@ export class MenuService {
   createItem(auth: AuthContext, input: CreateItemInput, meta: RequestMeta) {
     return this.run(auth, async (db, access) => {
       const category = await this.categoryForManage(db, access, input.categoryId);
+      await this.subscriptions.assertWithinLimit(db, auth.tenantId!, 'menuItems');
       const row = await db.one<{ id: string }>(
         `INSERT INTO menu_items (tenant_id, restaurant_id, category_id, name, description,
                                  price_minor, currency_code, diet, image_url, is_available,
@@ -343,6 +445,11 @@ export class MenuService {
         ).map((i) => [`${i.category_id}\u0000${i.name.toLowerCase()}`, i.id]),
       );
 
+      const adding = input.rows.filter(
+        (r) => !existing.has(`${categories.get(r.category.toLowerCase())} ${r.name.toLowerCase()}`),
+      ).length;
+      if (adding)
+        await this.subscriptions.assertWithinLimit(db, auth.tenantId!, 'menuItems', adding);
       let created = 0;
       let updated = 0;
       let skipped = 0;

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { pageQuerySchema } from '../../common/pagination/paged';
 
 export const DIETS = ['veg', 'non_veg', 'egg'] as const;
 
@@ -15,6 +16,19 @@ const imageUrl = z
   });
 
 export const menuQuerySchema = z.strictObject({ restaurantId: z.uuid().optional() });
+
+export const listItemsSchema = pageQuerySchema(
+  ['name', 'priceMinor', 'updatedAt', 'category'] as const,
+  'category',
+  {
+    restaurantId: z.uuid().optional(),
+    categoryId: z.uuid().optional(),
+    diet: z.enum(DIETS).optional(),
+    available: z.enum(['yes', 'no']).optional(),
+  },
+  'ASC',
+);
+export type ListItemsQuery = z.infer<typeof listItemsSchema>;
 export type MenuQuery = z.infer<typeof menuQuerySchema>;
 
 export const createCategorySchema = z.strictObject({

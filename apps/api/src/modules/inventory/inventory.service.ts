@@ -5,6 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { likeTerm, runPaged } from '../../common/pagination/paged';
 import { type Db, DbContext } from '../../core/db/db-context';
 import { accessibleBranches, hasPermission } from '../auth/access';
 import { AccessService } from '../auth/access.service';
@@ -12,6 +13,8 @@ import type { AuthContext, BranchRef, RequestMeta, TenantAccess } from '../auth/
 import { writeAudit } from '../auth/user-tokens';
 import type {
   CreateStockItemInput,
+  ListMovementsQuery,
+  ListStockQuery,
   MovementInput,
   UpdateStockItemInput,
 } from './inventory.schemas';
@@ -31,6 +34,132 @@ export class InventoryService {
     private readonly db: DbContext,
     private readonly access: AccessService,
   ) {}
+
+  /** Header data for the inventory screen: branch, permissions and stock counts (no rows). */
+  summary(auth: AuthContext, branchId?: string) {
+    return this.run(auth, async (db, access) => {
+      const { branch, branches } = this.readableBranch(access, branchId);
+      const restaurant = await db.one<{ id: string; name: string; currency_code: string }>(
+        'SELECT id, name, currency_code FROM restaurants WHERE id = $1',
+        [branch.restaurantId],
+      );
+      const c = await db.one<{
+        total: string;
+        low: string;
+        out: string;
+        value: string | null;
+        categories: string[] | null;
+      }>(
+        `SELECT count(*) AS total,
+                count(*) FILTER (WHERE coalesce(s.quantity, 0) > 0 AND coalesce(s.quantity, 0) <= i.low_stock_threshold) AS low,
+                count(*) FILTER (WHERE coalesce(s.quantity, 0) <= 0) AS out,
+                sum(coalesce(s.quantity, 0) * i.cost_per_unit_minor) AS value,
+                array_agg(DISTINCT i.category) FILTER (WHERE i.category IS NOT NULL) AS categories
+           FROM inventory_items i
+           LEFT JOIN inventory_stock s ON s.item_id = i.id AND s.branch_id = $2
+          WHERE i.restaurant_id = $1 AND i.deleted_at IS NULL`,
+        [branch.restaurantId, branch.id],
+      );
+      return {
+        restaurant: restaurant && {
+          id: restaurant.id,
+          name: restaurant.name,
+          currencyCode: restaurant.currency_code.trim(),
+        },
+        branch: { id: branch.id, name: branch.name },
+        branches: branches
+          .filter((b) => b.restaurantId === branch.restaurantId)
+          .map((b) => ({ id: b.id, name: b.name })),
+        counts: {
+          total: Number(c?.total ?? 0),
+          low: Number(c?.low ?? 0),
+          out: Number(c?.out ?? 0),
+        },
+        stockValueMinor: Math.round(Number(c?.value ?? 0)),
+        categories: (c?.categories ?? []).sort(),
+        canManageItems: hasPermission(access, 'inventory:manage', {
+          restaurantId: branch.restaurantId,
+        }),
+        canRecordMovements: hasPermission(access, 'inventory:manage', { branchId: branch.id }),
+      };
+    });
+  }
+
+  /** Paged stock items with quantities at one branch. */
+  listStock(auth: AuthContext, query: ListStockQuery) {
+    return this.run(auth, async (db, access) => {
+      const { branch } = this.readableBranch(access, query.branchId);
+      const qty = 'coalesce(s.quantity, 0)';
+      const where = ['i.restaurant_id = $1', 'i.deleted_at IS NULL'];
+      const params: unknown[] = [branch.restaurantId, branch.id];
+      const add = (sql: string, v: unknown) => {
+        params.push(v);
+        where.push(sql.split('?').join('$' + params.length));
+      };
+      if (query.status === 'out') where.push(`${qty} <= 0`);
+      if (query.status === 'low') where.push(`${qty} > 0 AND ${qty} <= i.low_stock_threshold`);
+      if (query.status === 'ok') where.push(`${qty} > i.low_stock_threshold`);
+      if (query.category) add('i.category = ?', query.category);
+      if (query.search) add('(i.name ILIKE ? OR i.category ILIKE ?)', likeTerm(query.search));
+      return runPaged<StockRow, unknown>(db, {
+        select: `i.id, i.name, i.category, i.unit, i.low_stock_threshold, i.cost_per_unit_minor,
+                 i.is_active, s.quantity, s.updated_at AS stock_updated_at`,
+        from: 'inventory_items i LEFT JOIN inventory_stock s ON s.item_id = i.id AND s.branch_id = $2',
+        where,
+        params,
+        sortColumns: {
+          name: 'lower(i.name)',
+          quantity: qty,
+          category: "lower(coalesce(i.category, ''))",
+          value: `${qty} * coalesce(i.cost_per_unit_minor, 0)`,
+        },
+        tiebreak: 'i.id',
+        query,
+        map: stockDto,
+      });
+    });
+  }
+
+  /** Paged stock movement log (stock adjustments) for one branch. */
+  listMovements(auth: AuthContext, query: ListMovementsQuery) {
+    return this.run(auth, async (db, access) => {
+      const { branch } = this.readableBranch(access, query.branchId);
+      const where = ['m.branch_id = $1'];
+      const params: unknown[] = [branch.id];
+      const add = (sql: string, v: unknown) => {
+        params.push(v);
+        where.push(sql.split('?').join('$' + params.length));
+      };
+      if (query.type) add('m.type = ?', query.type);
+      if (query.itemId) add('m.item_id = ?', query.itemId);
+      if (query.from) add('(m.created_at AT TIME ZONE b.timezone)::date >= ?::date', query.from);
+      if (query.to) add('(m.created_at AT TIME ZONE b.timezone)::date <= ?::date', query.to);
+      if (query.search) add('(i.name ILIKE ? OR m.note ILIKE ?)', likeTerm(query.search));
+      return runPaged<MovementRow, unknown>(db, {
+        select: `m.id, m.item_id, i.name AS item_name, i.unit, m.type, m.quantity_delta, m.quantity_after,
+                 m.note, m.created_at, u.full_name AS by_name`,
+        from: `inventory_movements m JOIN inventory_items i ON i.id = m.item_id
+               JOIN branches b ON b.id = m.branch_id LEFT JOIN users u ON u.id = m.created_by`,
+        where,
+        params,
+        sortColumns: { createdAt: 'm.created_at', quantity: 'abs(m.quantity_delta)' },
+        tiebreak: 'm.id',
+        query,
+        map: (r) => ({
+          id: r.id,
+          itemId: r.item_id,
+          itemName: r.item_name,
+          unit: r.unit,
+          type: r.type,
+          quantityDelta: Number(r.quantity_delta),
+          quantityAfter: Number(r.quantity_after),
+          note: r.note,
+          byName: r.by_name,
+          createdAt: new Date(r.created_at).toISOString(),
+        }),
+      });
+    });
+  }
 
   overview(auth: AuthContext, branchId?: string) {
     return this.run(auth, async (db, access) => {
@@ -277,6 +406,16 @@ export class InventoryService {
 
   // ---- helpers ----
 
+  private readableBranch(access: TenantAccess, branchId?: string) {
+    const branches = accessibleBranches(access).filter((b) =>
+      hasPermission(access, 'inventory:read', { branchId: b.id }),
+    );
+    if (branches.length === 0) throw forbidden('You cannot view stock.');
+    const branch = branchId ? branches.find((b) => b.id === branchId) : branches[0];
+    if (!branch) throw forbidden('You cannot view stock for this branch.');
+    return { branch, branches };
+  }
+
   private run<T>(auth: AuthContext, work: (db: Db, access: TenantAccess) => Promise<T>) {
     return this.db.run({ tenantId: auth.tenantId, userId: auth.userId }, async (db) =>
       work(db, await this.access.tenantAccess(db, auth.membershipId!)),
@@ -357,4 +496,46 @@ function restaurantsOf(branches: BranchRef[]): string[] {
 
 function round3(n: number): number {
   return Math.round(n * 1000) / 1000;
+}
+
+interface StockRow {
+  id: string;
+  name: string;
+  category: string | null;
+  unit: string;
+  low_stock_threshold: string;
+  cost_per_unit_minor: string | null;
+  is_active: boolean;
+  quantity: string | null;
+  stock_updated_at: Date | null;
+}
+
+interface MovementRow {
+  id: string;
+  item_id: string;
+  item_name: string;
+  unit: string;
+  type: string;
+  quantity_delta: string;
+  quantity_after: string;
+  note: string | null;
+  created_at: Date;
+  by_name: string | null;
+}
+
+function stockDto(r: StockRow) {
+  const quantity = Number(r.quantity ?? 0);
+  const threshold = Number(r.low_stock_threshold);
+  return {
+    id: r.id,
+    name: r.name,
+    category: r.category,
+    unit: r.unit,
+    lowStockThreshold: threshold,
+    costPerUnitMinor: r.cost_per_unit_minor === null ? null : Number(r.cost_per_unit_minor),
+    isActive: r.is_active,
+    quantity,
+    status: quantity <= 0 ? 'out' : quantity <= threshold ? 'low' : 'ok',
+    stockUpdatedAt: r.stock_updated_at ? new Date(r.stock_updated_at).toISOString() : null,
+  };
 }
