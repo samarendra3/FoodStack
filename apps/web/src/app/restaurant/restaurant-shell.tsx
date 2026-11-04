@@ -148,7 +148,7 @@ export function RestaurantShell({ children }: { children: ReactNode }) {
         </AnimatePresence>
 
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="sticky top-0 z-30 flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-[#E2E8F0] bg-white/90 px-4 py-3 backdrop-blur-md sm:h-16 sm:flex-nowrap sm:px-6 sm:py-0 dark:border-white/10 dark:bg-[#0B1120]/90">
+          <header className="sticky top-0 z-30 flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-slate-200 bg-white px-4 py-3 sm:h-16 sm:flex-nowrap sm:px-6 sm:py-0 dark:border-white/[0.06] dark:bg-[#0F172A]">
             <button
               type="button"
               onClick={() => setDrawerOpen(true)}
@@ -161,6 +161,10 @@ export function RestaurantShell({ children }: { children: ReactNode }) {
             <div className="ml-auto flex items-center gap-0.5 sm:gap-1.5">
               <ThemeButton />
               <NotificationsButton />
+              <span
+                className="mx-1.5 hidden h-6 w-px bg-slate-200 sm:block dark:bg-white/10"
+                aria-hidden
+              />
               <UserMenu />
             </div>
           </header>
@@ -208,11 +212,11 @@ function Sidebar({
   };
 
   return (
-    <div className="flex h-full flex-col border-r border-white/[0.06] bg-[#0F172A] text-slate-300">
+    <div className="flex h-full flex-col border-r border-slate-200 dark:border-white/[0.06] bg-white dark:bg-[#0F172A] text-slate-600 dark:text-slate-300">
       {/* Brand */}
       <div
         className={cn(
-          'flex h-16 shrink-0 items-center',
+          'flex h-16 shrink-0 items-center border-b border-slate-200 dark:border-white/[0.06]',
           collapsed ? 'justify-center' : 'justify-between px-4',
         )}
       >
@@ -223,7 +227,9 @@ function Sidebar({
         >
           <BrandMark className="size-8 rounded-lg shadow-none" />
           {collapsed ? null : (
-            <span className="text-[17px] font-semibold tracking-tight text-white">FoodStack</span>
+            <span className="text-[17px] font-semibold tracking-tight text-slate-900 dark:text-white">
+              FoodStack
+            </span>
           )}
         </Link>
         {onClose ? (
@@ -231,7 +237,7 @@ function Sidebar({
             type="button"
             onClick={onClose}
             aria-label="Close menu"
-            className="flex size-8 items-center justify-center rounded-md hover:bg-white/[0.06]"
+            className="flex size-8 items-center justify-center rounded-md hover:bg-slate-100 dark:hover:bg-white/[0.06]"
           >
             <X className="size-4" />
           </button>
@@ -249,7 +255,10 @@ function Sidebar({
         {groups.map((group) => (
           <div key={group.id}>
             {collapsed ? (
-              <div className="mx-auto mb-2 h-px w-6 bg-white/[0.08]" aria-hidden />
+              <div
+                className="mx-auto mb-2 h-px w-6 bg-slate-200 dark:bg-white/[0.08]"
+                aria-hidden
+              />
             ) : (
               <p className="mb-1 px-2.5 text-[11px] font-medium text-slate-500">{group.title}</p>
             )}
@@ -275,14 +284,14 @@ function Sidebar({
         ) : null}
       </nav>
 
-      <div className="shrink-0 space-y-1 p-3">
+      <div className="shrink-0 space-y-1 border-t border-slate-200 p-3 dark:border-white/[0.06]">
         {onToggleCollapsed ? (
           <button
             type="button"
             onClick={onToggleCollapsed}
             aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             className={cn(
-              'group relative flex h-9 w-full items-center gap-2.5 rounded-md px-2.5 text-[13px] text-slate-500 transition-colors hover:bg-white/[0.04] hover:text-slate-300',
+              'group relative flex h-9 w-full items-center gap-2.5 rounded-md px-2.5 text-[13px] text-slate-500 transition-colors hover:bg-slate-100 dark:hover:bg-white/[0.04] hover:text-slate-700 dark:hover:text-slate-300',
               collapsed && 'justify-center px-0',
             )}
           >
@@ -325,14 +334,16 @@ function Item({
         'group relative flex h-9 items-center gap-2.5 rounded-md text-sm transition-colors focus-visible:ring-2 focus-visible:ring-emerald-500/60 focus-visible:outline-none',
         collapsed ? 'mx-auto w-10 justify-center' : 'px-2.5',
         active
-          ? 'bg-white/[0.08] font-medium text-white'
-          : 'text-slate-400 hover:bg-white/[0.04] hover:text-slate-100',
+          ? 'bg-emerald-50 font-medium text-emerald-700 dark:bg-white/[0.08] dark:text-white'
+          : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-white/[0.04] hover:text-slate-900 dark:hover:text-slate-100',
       )}
     >
       <Icon
         className={cn(
           'size-[18px] shrink-0',
-          active ? 'text-emerald-400' : 'text-slate-500 group-hover:text-slate-300',
+          active
+            ? 'text-emerald-600 dark:text-emerald-400'
+            : 'text-slate-500 dark:text-slate-400 group-hover:text-slate-600 dark:text-slate-500 dark:group-hover:text-slate-300',
         )}
         strokeWidth={active ? 2.2 : 1.9}
         aria-hidden
@@ -350,7 +361,7 @@ function Item({
           <span className="flex-1 truncate">{item.label}</span>
           {badge ? (
             <span
-              className="rounded bg-emerald-500/15 px-1.5 text-[11px] leading-5 font-medium text-emerald-300 tabular-nums"
+              className="rounded bg-emerald-500/15 px-1.5 text-[11px] leading-5 font-medium text-emerald-700 dark:text-emerald-300 tabular-nums"
               aria-label={`${badge} pending`}
             >
               {badge > 99 ? '99+' : badge}
@@ -387,7 +398,7 @@ function Workspace({ collapsed }: { collapsed: boolean }) {
         ? `All branches · ${branches.length}`
         : `${branches.length} branches`;
   const mark = (
-    <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-emerald-500/15 text-xs font-semibold text-emerald-300">
+    <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-emerald-500/15 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
       {name.charAt(0).toUpperCase()}
     </span>
   );
@@ -406,11 +417,13 @@ function Workspace({ collapsed }: { collapsed: boolean }) {
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-white/[0.04] focus-visible:ring-2 focus-visible:ring-emerald-500/60 focus-visible:outline-none"
+        className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-slate-100 dark:hover:bg-white/[0.04] focus-visible:ring-2 focus-visible:ring-emerald-500/60 focus-visible:outline-none"
       >
         {mark}
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-medium text-white">{name}</span>
+          <span className="block truncate text-sm font-medium text-slate-900 dark:text-white">
+            {name}
+          </span>
           <span className="block truncate text-xs text-slate-500">{subtitle}</span>
         </span>
         <ChevronsUpDown className="size-4 shrink-0 text-slate-500" aria-hidden />
@@ -422,21 +435,21 @@ function Workspace({ collapsed }: { collapsed: boolean }) {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -4 }}
             transition={{ duration: 0.12 }}
-            className="absolute inset-x-3 top-full z-20 mt-1 rounded-lg border border-white/10 bg-[#1E293B] p-1 shadow-xl"
+            className="absolute inset-x-3 top-full z-20 mt-1 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-[#1E293B] p-1 shadow-xl"
           >
             <p className="px-2 pt-1.5 pb-1 text-[11px] font-medium text-slate-500">Branches</p>
             {branches.map((b) => (
               <div key={b.id} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm">
                 <MapPin className="size-3.5 text-slate-500" aria-hidden />
-                <span className="truncate text-slate-200">{b.name}</span>
+                <span className="truncate text-slate-700 dark:text-slate-200">{b.name}</span>
                 <span className="ml-auto text-[11px] text-slate-500">{b.code}</span>
               </div>
             ))}
-            <div className="my-1 h-px bg-white/[0.06]" />
+            <div className="my-1 h-px bg-slate-200 dark:bg-white/[0.06]" />
             <Link
               href="/restaurant/branches"
               onClick={() => setOpen(false)}
-              className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-300 hover:bg-white/[0.06]"
+              className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/[0.06]"
             >
               <Settings2 className="size-3.5" aria-hidden />
               Manage branches
@@ -456,7 +469,7 @@ function AccountRow({ collapsed }: { collapsed: boolean }) {
   const [showHelp, setShowHelp] = useState(false);
   const role = profile.roles[0] ? roleLabel(profile.roles[0]) : '';
   const menuItem =
-    'flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm text-slate-300 hover:bg-white/[0.06]';
+    'flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/[0.06]';
 
   return (
     <div ref={ref} className="relative">
@@ -469,15 +482,19 @@ function AccountRow({ collapsed }: { collapsed: boolean }) {
             exit={{ opacity: 0, y: 4 }}
             transition={{ duration: 0.12 }}
             className={cn(
-              'absolute bottom-full z-30 mb-1 w-56 rounded-lg border border-white/10 bg-[#1E293B] p-1 shadow-xl',
+              'absolute bottom-full z-30 mb-1 w-56 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-[#1E293B] p-1 shadow-xl',
               collapsed ? 'left-0' : 'inset-x-0 w-auto',
             )}
           >
             <div className="px-2 py-1.5">
-              <p className="truncate text-sm font-medium text-white">{profile.user.fullName}</p>
-              <p className="truncate text-xs text-slate-400">{profile.user.email}</p>
+              <p className="truncate text-sm font-medium text-slate-900 dark:text-white">
+                {profile.user.fullName}
+              </p>
+              <p className="truncate text-xs text-slate-500 dark:text-slate-400">
+                {profile.user.email}
+              </p>
             </div>
-            <div className="my-1 h-px bg-white/[0.06]" />
+            <div className="my-1 h-px bg-slate-200 dark:bg-white/[0.06]" />
             <span
               role="menuitem"
               aria-disabled="true"
@@ -495,12 +512,15 @@ function AccountRow({ collapsed }: { collapsed: boolean }) {
               <CircleHelp className="size-4" aria-hidden /> Help &amp; Support
             </button>
             {showHelp ? (
-              <p className="px-2 pb-1.5 text-xs leading-relaxed text-slate-400">
-                Press <kbd className="rounded border border-white/15 px-1">Ctrl K</kbd> to jump to
-                any page. For account questions, contact your restaurant owner.
+              <p className="px-2 pb-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                Press{' '}
+                <kbd className="rounded border border-slate-300 dark:border-white/15 px-1">
+                  Ctrl K
+                </kbd>{' '}
+                to jump to any page. For account questions, contact your restaurant owner.
               </p>
             ) : null}
-            <div className="my-1 h-px bg-white/[0.06]" />
+            <div className="my-1 h-px bg-slate-200 dark:bg-white/[0.06]" />
             <button
               type="button"
               role="menuitem"
@@ -525,7 +545,7 @@ function AccountRow({ collapsed }: { collapsed: boolean }) {
         aria-haspopup="menu"
         aria-label="Account menu"
         className={cn(
-          'group relative flex w-full items-center gap-2.5 rounded-md text-left transition-colors hover:bg-white/[0.04] focus-visible:ring-2 focus-visible:ring-emerald-500/60 focus-visible:outline-none',
+          'group relative flex w-full items-center gap-2.5 rounded-md text-left transition-colors hover:bg-slate-100 dark:hover:bg-white/[0.04] focus-visible:ring-2 focus-visible:ring-emerald-500/60 focus-visible:outline-none',
           collapsed ? 'justify-center py-1.5' : 'px-2 py-1.5',
         )}
       >
@@ -537,7 +557,7 @@ function AccountRow({ collapsed }: { collapsed: boolean }) {
         ) : (
           <>
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-medium text-white">
+              <span className="block truncate text-sm font-medium text-slate-900 dark:text-white">
                 {profile.user.fullName}
               </span>
               <span className="block truncate text-xs text-slate-500">{role}</span>
@@ -608,7 +628,7 @@ function CommandSearch() {
           if (e.key === 'Enter' && results[cursor]) go(results[cursor].href);
           if (e.key === 'Escape') inputRef.current?.blur();
         }}
-        className="h-10 w-full rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] pr-16 pl-10 text-sm outline-none placeholder:text-slate-400 focus:border-[#059669] focus:bg-white focus:ring-4 focus:ring-[#059669]/15 dark:border-white/10 dark:bg-white/5"
+        className="h-9 w-full rounded-md border border-slate-200 bg-slate-50 pr-16 pl-10 text-sm outline-none placeholder:text-slate-400 focus:border-[#059669] focus:bg-white focus:ring-4 focus:ring-[#059669]/15 dark:border-white/10 dark:bg-white/5"
       />
       <kbd className="pointer-events-none absolute top-1/2 right-3 hidden -translate-y-1/2 rounded border border-[#E2E8F0] bg-white px-1.5 py-0.5 text-[11px] text-slate-500 sm:block dark:border-white/10 dark:bg-white/5">
         Ctrl K
@@ -663,10 +683,10 @@ function ThemeButton() {
       type="button"
       onClick={toggle}
       aria-label="Toggle dark mode"
-      className="flex size-10 items-center justify-center rounded-full text-slate-600 transition-colors hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-white/5"
+      className="flex size-9 items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-white/5 dark:hover:text-white"
     >
-      <Moon className="size-5 dark:hidden" />
-      <Sun className="hidden size-5 dark:block" />
+      <Moon className="size-[18px] dark:hidden" />
+      <Sun className="hidden size-[18px] dark:block" />
     </button>
   );
 }

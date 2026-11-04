@@ -90,7 +90,7 @@ export function TicketBoard({ feed }: { feed: KitchenFeed }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-3 lg:flex-row lg:items-center dark:border-white/10 dark:bg-slate-900">
+      <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-3 lg:flex-row lg:items-center dark:border-white/10 dark:bg-slate-900">
         <div
           className="-mx-1 flex gap-1.5 overflow-x-auto px-1 [scrollbar-width:none]"
           role="tablist"
@@ -153,7 +153,7 @@ export function TicketBoard({ feed }: { feed: KitchenFeed }) {
       </div>
 
       {visible.length === 0 ? (
-        <p className="rounded-2xl border border-dashed border-slate-200 bg-white py-16 text-center text-sm text-slate-500 dark:border-white/10 dark:bg-slate-900">
+        <p className="rounded-xl border border-dashed border-slate-200 bg-white py-16 text-center text-sm text-slate-500 dark:border-white/10 dark:bg-slate-900">
           No orders match these filters.
         </p>
       ) : (
@@ -195,7 +195,7 @@ function TicketCard({
       exit={{ opacity: 0, scale: 0.96 }}
       transition={{ duration: 0.25 }}
       className={cn(
-        'relative flex flex-col overflow-hidden rounded-2xl border bg-white shadow-xs dark:bg-slate-900',
+        'relative flex flex-col overflow-hidden rounded-xl border bg-white shadow-xs dark:bg-slate-900',
         late ? 'border-red-300 dark:border-red-500/40' : 'border-slate-200 dark:border-white/10',
       )}
       aria-label={`Order ${t.orderNumber}, ${status.label}`}

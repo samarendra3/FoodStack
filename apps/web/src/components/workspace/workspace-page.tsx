@@ -6,6 +6,7 @@ import { MapPin } from 'lucide-react';
 import Link from 'next/link';
 import { createContext, type ReactNode, useContext, useState } from 'react';
 import { AccountMenu } from '@/components/account-menu';
+import { ThemeToggle } from '@/components/theme-toggle';
 import { useProfile } from '@/components/auth/auth-provider';
 import { RequireAuth } from '@/components/auth/require-auth';
 import { canAccessPath } from '@/lib/auth/access';
@@ -46,7 +47,9 @@ function Workspace({ title, icon, emptyTitle, emptyDescription, children }: Work
   return (
     <div
       className={
-        children ? 'flex h-dvh flex-col bg-muted/30' : 'flex min-h-dvh flex-col bg-muted/30'
+        children
+          ? 'flex h-dvh flex-col bg-muted/30 dark:bg-[#0B1120]'
+          : 'flex min-h-dvh flex-col bg-muted/30 dark:bg-[#0B1120]'
       }
     >
       <header className="sticky top-0 z-10 flex h-14 shrink-0 items-center justify-between gap-3 bg-sidebar px-4 text-sidebar-foreground sm:px-6">
@@ -89,6 +92,7 @@ function Workspace({ title, icon, emptyTitle, emptyDescription, children }: Work
               {profile.branches[0].name}
             </span>
           ) : null}
+          <ThemeToggle className="rounded-full text-slate-300 hover:bg-white/10 hover:text-white" />
           <AccountMenu inverted />
         </div>
       </header>

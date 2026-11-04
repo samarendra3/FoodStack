@@ -18,6 +18,7 @@ import {
 import Link from 'next/link';
 import { type ReactNode, useState } from 'react';
 import { AccountMenu } from '@/components/account-menu';
+import { ThemeToggle } from '@/components/theme-toggle';
 import { useProfile } from '@/components/auth/auth-provider';
 import type { Connection } from './kitchen-feed';
 import { ConnectionPill } from './status';
@@ -46,41 +47,49 @@ export function KitchenShell(p: KitchenShellProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const sidebar = (compact: boolean) => (
-    <div className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
-      <div className={cn('flex h-16 items-center gap-2.5 px-5', compact && 'justify-center px-0')}>
-        <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-700 text-white shadow-sm">
-          <ChefHat className="size-5" />
+    <div className="flex h-full flex-col border-r border-slate-200 bg-white text-slate-700 dark:border-white/10 dark:bg-slate-900 dark:text-slate-300">
+      <div
+        className={cn(
+          'flex h-14 items-center gap-2.5 border-b border-slate-200 px-5 dark:border-white/10',
+          compact && 'justify-center px-0',
+        )}
+      >
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-emerald-600 text-white">
+          <ChefHat className="size-4" />
         </span>
-        {!compact ? <span className="text-lg font-bold text-white">FoodStack</span> : null}
+        {!compact ? (
+          <span className="text-[15px] font-semibold tracking-tight text-slate-900 dark:text-white">
+            FoodStack
+          </span>
+        ) : null}
       </div>
-      <nav aria-label="Kitchen" className="mt-2 flex-1 space-y-1 px-3">
+      <nav aria-label="Kitchen" className="flex-1 space-y-0.5 px-3 pt-4">
+        {!compact ? (
+          <p className="px-2.5 pb-2 text-[11px] font-medium tracking-wider text-slate-400 uppercase dark:text-slate-500">
+            Workspace
+          </p>
+        ) : null}
         {NAV.map(({ label, icon: Icon, href }) => {
           const active = href === '/kitchen';
           const body = (
             <>
-              {active ? (
-                <span
-                  className="absolute inset-y-2 left-0 w-1 rounded-r-full bg-emerald-300"
-                  aria-hidden
-                />
-              ) : null}
-              <Icon className="size-5 shrink-0" />
+              <Icon className="size-4 shrink-0" />
               {!compact ? <span className="flex-1 truncate">{label}</span> : null}
               {!compact && !href ? (
-                <span className="rounded-md bg-white/5 px-1.5 py-0.5 text-[10px] font-medium text-slate-400">
+                <span className="rounded px-1.5 py-0.5 text-[10px] font-medium text-slate-400 ring-1 ring-slate-200 ring-inset dark:text-slate-500 dark:ring-white/10">
                   Soon
                 </span>
               ) : null}
             </>
           );
           const cls = cn(
-            'relative flex h-11 items-center gap-3 rounded-xl px-3 text-sm font-medium transition-colors',
+            'flex h-9 items-center gap-2.5 rounded-md px-2.5 text-sm font-medium transition-colors',
             compact && 'justify-center px-0',
             active
-              ? 'bg-emerald-600 text-white shadow-sm shadow-emerald-900/30'
+              ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300'
               : href
-                ? 'text-slate-300 hover:bg-white/5 hover:text-white'
-                : 'cursor-default text-slate-500',
+                ? 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-white/5 dark:hover:text-white'
+                : 'cursor-default text-slate-400 dark:text-slate-500',
           );
           return href ? (
             <Link
@@ -99,7 +108,14 @@ export function KitchenShell(p: KitchenShellProps) {
           );
         })}
       </nav>
-      {!compact ? <p className="px-5 pb-5 text-xs text-slate-500">Kitchen Display</p> : null}
+      {!compact && profile.activeTenant ? (
+        <div className="border-t border-slate-200 px-5 py-4 dark:border-white/10">
+          <p className="truncate text-sm font-medium text-slate-900 dark:text-white">
+            {profile.activeTenant.name}
+          </p>
+          <p className="text-xs text-slate-500 dark:text-slate-400">Kitchen Display</p>
+        </div>
+      ) : null}
     </div>
   );
 
@@ -128,7 +144,7 @@ export function KitchenShell(p: KitchenShellProps) {
               type="button"
               onClick={() => setMobileOpen(false)}
               aria-label="Close menu"
-              className="absolute top-4 right-3 rounded-lg p-1.5 text-slate-400 hover:bg-white/10"
+              className="absolute top-4 right-3 rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10"
             >
               <X className="size-5" />
             </button>
@@ -137,7 +153,7 @@ export function KitchenShell(p: KitchenShellProps) {
       ) : null}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-16 shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-4 sm:px-6 dark:border-white/10 dark:bg-slate-900">
+        <header className="flex h-14 shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-4 sm:px-6 dark:border-white/10 dark:bg-slate-900">
           <button
             type="button"
             onClick={() =>
@@ -146,7 +162,7 @@ export function KitchenShell(p: KitchenShellProps) {
                 : setMobileOpen(true)
             }
             aria-label="Toggle sidebar"
-            className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-white/10"
+            className="rounded-md p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-white/10"
           >
             <Menu className="size-5 lg:hidden" />
             <PanelLeftClose
@@ -168,7 +184,7 @@ export function KitchenShell(p: KitchenShellProps) {
                 value={p.branchId}
                 onChange={(e) => p.onBranch(e.target.value)}
                 disabled={profile.branches.length < 2}
-                className="h-10 appearance-none rounded-xl border border-slate-200 bg-slate-50 pr-9 pl-9 text-sm font-medium text-slate-800 disabled:opacity-100 dark:border-white/10 dark:bg-white/5 dark:text-white"
+                className="h-9 appearance-none rounded-md border border-slate-200 bg-white pr-9 pl-9 text-sm font-medium text-slate-700 shadow-xs disabled:opacity-100 dark:border-white/10 dark:bg-white/5 dark:text-white"
               >
                 {profile.branches.map((b) => (
                   <option key={b.id} value={b.id}>
@@ -186,7 +202,7 @@ export function KitchenShell(p: KitchenShellProps) {
           ) : null}
 
           <span className="hidden h-6 w-px bg-slate-200 md:block dark:bg-white/10" aria-hidden />
-          <h1 className="hidden font-semibold text-slate-900 md:block dark:text-white">
+          <h1 className="hidden text-sm font-semibold text-slate-900 md:block dark:text-white">
             Kitchen Display
           </h1>
           <ConnectionPill connection={p.connection} />
@@ -198,10 +214,11 @@ export function KitchenShell(p: KitchenShellProps) {
               aria-pressed={p.muted}
               aria-label={p.muted ? 'Unmute new-order sound' : 'Mute new-order sound'}
               title={p.muted ? 'New-order sound off' : 'New-order sound on'}
-              className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-white/10"
+              className="rounded-md p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-white/10"
             >
               {p.muted ? <VolumeX className="size-5" /> : <Volume2 className="size-5" />}
             </button>
+            <ThemeToggle className="rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-white/10" />
             <span
               className="mx-1 hidden h-6 w-px bg-slate-200 sm:block dark:bg-white/10"
               aria-hidden

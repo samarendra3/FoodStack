@@ -55,7 +55,7 @@ export function ProductSection(p: ProductSectionProps) {
                 type="button"
                 onClick={() => p.onQuery('')}
                 aria-label="Clear search"
-                className="absolute top-1/2 right-2.5 -translate-y-1/2 rounded-md p-1 text-slate-400 hover:bg-slate-200 hover:text-slate-700"
+                className="absolute top-1/2 right-2.5 -translate-y-1/2 rounded-md p-1 text-slate-400 hover:bg-slate-200 hover:text-slate-700 dark:hover:bg-white/10 dark:hover:text-slate-200"
               >
                 <X className="size-4" />
               </button>

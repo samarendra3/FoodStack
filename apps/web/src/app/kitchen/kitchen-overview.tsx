@@ -22,7 +22,7 @@ export function SummaryCards({
       label: 'Pending Orders',
       value: tickets.filter((t) => t.status === 'new' || t.status === 'accepted').length,
       icon: UtensilsCrossed,
-      tile: 'bg-emerald-600 text-white',
+      tile: 'bg-amber-50 text-amber-600 dark:bg-amber-500/15 dark:text-amber-300',
     },
     {
       label: 'In Progress',
@@ -50,12 +50,12 @@ export function SummaryCards({
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: i * 0.05 }}
-          className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5 transition-all hover:-translate-y-0.5 hover:shadow-md hover:shadow-slate-900/5 dark:border-white/10 dark:bg-slate-900"
+          className="flex items-center gap-4 rounded-xl border border-slate-200 bg-white p-5 shadow-xs dark:border-white/10 dark:bg-slate-900"
         >
           <span
-            className={cn('flex size-12 shrink-0 items-center justify-center rounded-full', tile)}
+            className={cn('flex size-10 shrink-0 items-center justify-center rounded-lg', tile)}
           >
-            <Icon className="size-6" />
+            <Icon className="size-5" />
           </span>
           <div>
             {isLoading ? (
@@ -77,7 +77,7 @@ export function SummaryCards({
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.15 }}
         className={cn(
-          'relative flex items-center overflow-hidden rounded-2xl border p-5 transition-all hover:-translate-y-0.5',
+          'relative flex items-center overflow-hidden rounded-xl border p-5',
           live
             ? 'border-emerald-200 bg-gradient-to-r from-emerald-50 to-emerald-100/60 dark:border-emerald-500/20 dark:from-emerald-500/10 dark:to-emerald-500/5'
             : 'border-slate-200 bg-white dark:border-white/10 dark:bg-slate-900',
@@ -115,7 +115,7 @@ export function KitchenEmptyState({
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, delay: 0.1 }}
-      className="relative flex flex-col items-center overflow-hidden rounded-3xl border border-slate-200 bg-white px-6 py-12 text-center sm:py-16 dark:border-white/10 dark:bg-slate-900"
+      className="relative flex flex-col items-center overflow-hidden rounded-xl border border-slate-200 bg-white px-6 py-12 text-center sm:py-16 dark:border-white/10 dark:bg-slate-900"
     >
       <svg
         aria-hidden
@@ -155,7 +155,7 @@ export function KitchenError({ message }: { message: string }) {
   return (
     <p
       role="alert"
-      className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300"
+      className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300"
     >
       {message}
     </p>
@@ -168,7 +168,7 @@ export function TicketSkeletons() {
       {Array.from({ length: 4 }, (_, i) => (
         <div
           key={i}
-          className="animate-pulse space-y-3 rounded-2xl border border-slate-200 bg-white p-4 dark:border-white/10 dark:bg-slate-900"
+          className="animate-pulse space-y-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-white/10 dark:bg-slate-900"
         >
           <div className="h-5 w-24 rounded bg-slate-200 dark:bg-white/10" />
           <div className="h-3 w-32 rounded bg-slate-200 dark:bg-white/10" />
@@ -195,10 +195,24 @@ function ChefIllustration({ className }: { className?: string }) {
       <rect x="272" y="42" width="10" height="28" rx="3" fill="#A7F3D0" />
       <rect x="286" y="56" width="14" height="14" rx="3" fill="#D1FAE5" />
       {/* counter */}
-      <rect x="40" y="206" width="290" height="5" rx="2.5" fill="#0F172A" />
+      <rect
+        x="40"
+        y="206"
+        width="290"
+        height="5"
+        rx="2.5"
+        className="fill-slate-900 dark:fill-slate-600"
+      />
       {/* monitor */}
       <rect x="62" y="118" width="96" height="70" rx="10" fill="#059669" />
-      <rect x="70" y="126" width="80" height="54" rx="5" fill="#FFFFFF" />
+      <rect
+        x="70"
+        y="126"
+        width="80"
+        height="54"
+        rx="5"
+        className="fill-white dark:fill-slate-200"
+      />
       <path
         d="M100 158 h20 v6 h-20z M98 150 a6 6 0 0 1 4-10 a8 8 0 0 1 16 0 a6 6 0 0 1 4 10z"
         fill="none"
@@ -211,8 +225,7 @@ function ChefIllustration({ className }: { className?: string }) {
       {/* chef body */}
       <path
         d="M150 206 C 150 160, 168 140, 196 140 C 224 140, 242 160, 242 206 Z"
-        fill="#FFFFFF"
-        stroke="#E2E8F0"
+        className="fill-white stroke-slate-200 dark:fill-slate-200 dark:stroke-slate-400"
         strokeWidth="2"
       />
       <path d="M182 142 L196 160 L210 142" fill="#059669" />
@@ -240,21 +253,19 @@ function ChefIllustration({ className }: { className?: string }) {
         width="36"
         height="12"
         rx="3"
-        fill="#FFFFFF"
-        stroke="#E2E8F0"
+        className="fill-white stroke-slate-200 dark:fill-slate-200 dark:stroke-slate-400"
         strokeWidth="2"
       />
       <path
         d="M176 82 C 166 70, 178 54, 190 60 C 194 48, 210 50, 210 60 C 222 54, 230 72, 216 82 Z"
-        fill="#FFFFFF"
-        stroke="#E2E8F0"
+        className="fill-white stroke-slate-200 dark:fill-slate-200 dark:stroke-slate-400"
         strokeWidth="2"
       />
       {/* OK hand */}
       <path
         d="M238 168 C 248 156, 250 140, 248 130"
         fill="none"
-        stroke="#FFFFFF"
+        className="stroke-white dark:stroke-slate-200"
         strokeWidth="14"
         strokeLinecap="round"
       />

@@ -31,7 +31,7 @@ import { useRestaurantOverview } from '../overview';
 
 const ease = [0.22, 1, 0.36, 1] as const;
 const card =
-  'rounded-2xl border border-slate-200/80 bg-white shadow-[0_1px_3px_rgba(15,23,42,0.05)] dark:border-white/10 dark:bg-[#101C18]';
+  'rounded-xl border border-slate-200 bg-white shadow-xs dark:border-white/10 dark:bg-slate-900';
 const fullDate = new Intl.DateTimeFormat(undefined, {
   weekday: 'long',
   month: 'long',
@@ -154,79 +154,37 @@ function Welcome() {
   const restaurant = profile.activeTenant?.name ?? 'your restaurant';
   return (
     <motion.section
-      initial={{ opacity: 0, y: 10 }}
+      initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.45, ease }}
-      className="relative isolate overflow-hidden rounded-3xl bg-gradient-to-r from-white via-white to-emerald-50 px-5 py-6 sm:px-7 dark:from-[#0F1D18] dark:via-[#0F1D18] dark:to-emerald-950/40"
+      transition={{ duration: 0.35, ease }}
+      className="flex flex-wrap items-end justify-between gap-4"
     >
-      {/* Soft green hills behind the illustration, as in the design. */}
-      <svg
-        aria-hidden
-        viewBox="0 0 700 220"
-        preserveAspectRatio="none"
-        className="absolute inset-y-0 right-0 -z-10 hidden h-full w-[55%] md:block"
-      >
-        <path
-          d="M0 220 C 140 120, 260 40, 420 60 S 640 150, 700 120 L700 220 Z"
-          className="fill-emerald-100/60 dark:fill-emerald-900/25"
-        />
-        <path
-          d="M120 220 C 260 150, 380 110, 520 130 S 660 190, 700 180 L700 220 Z"
-          className="fill-emerald-200/40 dark:fill-emerald-800/20"
-        />
-      </svg>
-      <DishIllustration />
-
-      <div className="relative max-w-2xl">
+      <div className="min-w-0">
         <p className="text-sm text-slate-500 dark:text-slate-400">{fullDate.format(today)}</p>
-        <h1 className="mt-1 text-[1.65rem] leading-tight font-bold tracking-tight sm:text-[2rem]">
-          Welcome back,{' '}
-          <span className="text-emerald-600 dark:text-emerald-400">{profile.user.fullName}!</span>{' '}
-          <motion.span
-            className="inline-block origin-[70%_70%]"
-            animate={{ rotate: [0, 16, -8, 14, 0] }}
-            transition={{ duration: 1.6, delay: 0.6 }}
-            aria-hidden
-          >
-            👋
-          </motion.span>
+        <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-900 dark:text-white">
+          Welcome back, {profile.user.fullName}
         </h1>
-        <p className="mt-1.5 text-slate-600 dark:text-slate-300">
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
           Here&apos;s what&apos;s happening at{' '}
-          <strong className="font-semibold text-slate-900 dark:text-white">{restaurant}</strong>{' '}
+          <span className="font-medium text-slate-700 dark:text-slate-200">{restaurant}</span>{' '}
           today.
         </p>
-        <div className="mt-5 flex flex-wrap gap-3">
-          <Link
-            href="/restaurant/branches"
-            className="inline-flex items-center gap-2.5 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium shadow-sm transition-colors hover:border-emerald-300 dark:border-white/10 dark:bg-white/5"
-          >
-            <span className="size-2.5 rounded-full bg-emerald-500" aria-hidden />
-            {restaurant}
-            <ChevronDown className="size-4 text-slate-400" aria-hidden />
-          </Link>
-          <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium shadow-sm dark:border-white/10 dark:bg-white/5">
-            <CalendarDays className="size-4 text-slate-500" aria-hidden />
-            {pillDate.format(today)}
-          </span>
-        </div>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Link
+          href="/restaurant/branches"
+          className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 shadow-xs transition-colors hover:bg-slate-50 dark:border-white/10 dark:bg-white/5 dark:text-slate-200 dark:hover:bg-white/10"
+        >
+          <span className="size-2 rounded-full bg-emerald-500" aria-hidden />
+          {restaurant}
+          <ChevronDown className="size-4 text-slate-400" aria-hidden />
+        </Link>
+        <span className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 shadow-xs dark:border-white/10 dark:bg-white/5 dark:text-slate-200">
+          <CalendarDays className="size-4 text-slate-400" aria-hidden />
+          {pillDate.format(today)}
+        </span>
       </div>
     </motion.section>
-  );
-}
-
-/** Decorative dish photo on the right of the welcome banner. */
-function DishIllustration() {
-  return (
-    <motion.img
-      src="/images/restaurant-dashboard-dish.png"
-      alt=""
-      aria-hidden
-      className="pointer-events-none absolute top-1/2 right-4 -z-10 hidden h-[60%] max-w-[40%] w-auto -translate-y-1/2 object-contain drop-shadow-sm md:block lg:right-10"
-      initial={{ opacity: 0, scale: 0.92 }}
-      animate={{ opacity: 1, scale: 1 }}
-      transition={{ duration: 0.9, ease }}
-    />
   );
 }
 
@@ -262,16 +220,16 @@ function StatCard({
   const body = (
     <motion.div
       {...rise(i)}
-      className={cn(card, 'relative flex h-full items-center gap-4 overflow-hidden p-5')}
+      className={cn(card, 'relative flex h-full flex-row-reverse items-start gap-4 p-5')}
     >
-      <span className={cn('flex size-14 shrink-0 items-center justify-center rounded-2xl', t.tile)}>
-        <Icon className="size-7" aria-hidden />
+      <span className={cn('flex size-9 shrink-0 items-center justify-center rounded-lg', t.tile)}>
+        <Icon className="size-[18px]" aria-hidden />
       </span>
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium text-slate-600 dark:text-slate-300">{label}</p>
+        <p className="text-sm font-medium text-slate-500 dark:text-slate-400">{label}</p>
         {value !== undefined ? (
           <>
-            <p className="mt-1 text-[1.75rem] leading-none font-bold tracking-tight tabular-nums">
+            <p className="mt-1 text-2xl leading-none font-semibold tracking-tight tabular-nums">
               {value}
             </p>
             {note ? <p className="mt-1.5 truncate text-xs text-slate-500">{note}</p> : null}
@@ -280,7 +238,7 @@ function StatCard({
           <div className="mt-2 h-7 w-14 animate-pulse rounded bg-slate-100 dark:bg-white/10" />
         ) : (
           <>
-            <p className="mt-1 text-[1.75rem] leading-none font-bold text-slate-300 dark:text-slate-600">
+            <p className="mt-1 text-2xl leading-none font-semibold text-slate-300 dark:text-slate-600">
               —
             </p>
             <p className="mt-1.5 truncate text-xs text-slate-500">{empty}</p>
@@ -292,7 +250,7 @@ function StatCard({
   return href ? (
     <Link
       href={href}
-      className="block rounded-2xl transition-transform hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-emerald-500/50 focus-visible:outline-none"
+      className="block rounded-xl transition-colors hover:[&>div]:border-slate-300 dark:hover:[&>div]:border-white/20 focus-visible:ring-2 focus-visible:ring-emerald-500/50 focus-visible:outline-none"
     >
       {body}
     </Link>
@@ -315,9 +273,11 @@ function CardHead({
   return (
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div className="flex items-start gap-3">
-        {Icon ? <Icon className="mt-0.5 size-6 text-emerald-600" aria-hidden /> : null}
+        {Icon ? <Icon className="mt-0.5 size-[18px] text-slate-400" aria-hidden /> : null}
         <div>
-          <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
+          <h2 className="text-base font-semibold tracking-tight text-slate-900 dark:text-white">
+            {title}
+          </h2>
           {subtitle ? <p className="text-sm text-slate-500">{subtitle}</p> : null}
         </div>
       </div>
@@ -426,7 +386,7 @@ function RevenueOverview() {
           ))}
         </div>
         <div className="absolute inset-x-0 top-0 bottom-7 flex items-center justify-center">
-          <div className="rounded-2xl bg-white/90 dark:bg-[#101C18]/90">
+          <div className="rounded-xl bg-white/90 dark:bg-slate-900/90">
             <EmptyNote
               icon={BarChart3}
               title={`No sales recorded ${range === 'Today' ? 'today' : range.toLowerCase()}`}
@@ -526,7 +486,7 @@ function QuickActions() {
             </>
           );
           const base =
-            'relative flex min-h-24 flex-col items-center justify-center gap-2 rounded-2xl p-3 text-center transition-all';
+            'relative flex min-h-24 flex-col items-center justify-center gap-2 rounded-lg p-3 text-center transition-all';
           return a.href ? (
             <Link
               key={a.label}
@@ -646,7 +606,7 @@ function TrialCard() {
       <div className="flex items-baseline gap-2">
         <span
           className={cn(
-            'text-4xl font-bold tabular-nums',
+            'text-3xl font-semibold tabular-nums',
             soon ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400',
           )}
         >

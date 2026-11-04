@@ -151,7 +151,7 @@ export function PosTerminal() {
       {catalog.error ? (
         <p
           role="alert"
-          className="border-b border-red-200 bg-red-50 px-4 py-2 text-center text-sm text-red-700"
+          className="border-b border-red-200 bg-red-50 px-4 py-2 text-center text-sm text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300"
         >
           {catalog.error}
         </p>
@@ -237,7 +237,7 @@ export function PosTerminal() {
                 type="button"
                 onClick={() => setSheetOpen(false)}
                 aria-label="Close order"
-                className="absolute top-4 right-3 z-10 rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"
+                className="absolute top-4 right-3 z-10 rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-white/10"
               >
                 <X className="size-5" />
               </button>

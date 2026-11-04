@@ -44,14 +44,14 @@ export function NotificationsButton() {
         onClick={() => setOpen((o) => !o)}
         aria-label="Notifications"
         aria-expanded={open}
-        className="flex size-10 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        className="flex size-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
       >
         <motion.span
           className="flex"
           whileHover={{ rotate: [0, -14, 12, -8, 0] }}
           transition={{ duration: 0.5 }}
         >
-          <Bell className="size-5" />
+          <Bell className="size-[18px]" />
         </motion.span>
       </button>
       <AnimatePresence>
@@ -99,9 +99,9 @@ export function UserMenu() {
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-haspopup="menu"
-        className="flex items-center gap-3 rounded-full py-1 pr-2 pl-1 transition-colors hover:bg-muted"
+        className="flex items-center gap-2.5 rounded-md py-1 pr-2 pl-1 transition-colors hover:bg-muted"
       >
-        <span className="flex size-10 items-center justify-center rounded-full bg-gradient-to-br from-emerald-500 to-emerald-700 text-sm font-semibold text-white">
+        <span className="flex size-8 items-center justify-center rounded-full bg-emerald-600 text-xs font-semibold text-white">
           {initials(profile.user.fullName)}
         </span>
         <span className="hidden text-left md:block">
