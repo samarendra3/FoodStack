@@ -4,7 +4,7 @@ import { GetStartedForm } from '@/components/auth/get-started-form';
 
 export const metadata: Metadata = {
   title: 'Get started',
-  description: 'Request a FoodStack account for your restaurant and start a 14-day free trial.',
+  description: 'Request a FoodStack account for your restaurant and start your free trial.',
 };
 
 export default function GetStartedPage() {

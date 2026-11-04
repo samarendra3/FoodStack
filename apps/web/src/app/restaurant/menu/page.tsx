@@ -11,9 +11,7 @@ import {
   Loader2,
   Pencil,
   Plus,
-  Search,
   Tags,
-  Download,
   Trash2,
   Upload,
   X,
@@ -21,7 +19,6 @@ import {
 import { AnimatePresence, motion } from 'motion/react';
 import { type FormEvent, type ReactNode, useState } from 'react';
 import { authErrorMessage } from '@/lib/auth/errors';
-import { downloadCsv } from '@/lib/csv';
 import {
   DIET_LABEL,
   type Diet,
@@ -30,8 +27,11 @@ import {
   type MenuCategory,
   type MenuItem,
   useMenu,
+  useMenuCategories,
   useMenuMutations,
 } from '@/lib/menu';
+import { type Column, DataTable } from '@/components/data-table/data-table';
+import { usePagedList } from '@/lib/paged';
 import { ImportDialog } from './import-dialog';
 import { MenuTabs } from './menu-tabs';
 
@@ -43,22 +43,20 @@ type Dialog =
   | { kind: 'import' };
 
 export default function MenuPage() {
-  const menu = useMenu();
+  const cats = useMenuCategories();
   const m = useMenuMutations();
-  const [categoryId, setCategoryId] = useState<string | 'all'>('all');
-  const [query, setQuery] = useState('');
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [rowError, setRowError] = useState<string | null>(null);
+  const list = usePagedList<PagedItem>('menu', '/menu/items', {
+    sortBy: 'category',
+    sortOrder: 'asc',
+    filters: { categoryId: '', diet: '', available: '' },
+  });
 
-  const data = menu.data;
+  const data = cats.data;
   const canManage = data?.canManage ?? false;
-  const q = query.trim().toLowerCase();
-  const items = (data?.items ?? []).filter(
-    (i) =>
-      (categoryId === 'all' || i.categoryId === categoryId) &&
-      (!q || i.name.toLowerCase().includes(q)),
-  );
-  const categoryName = (id: string) => data?.categories.find((c) => c.id === id)?.name ?? '';
+  const categoryId = list.state.filters.categoryId ?? '';
+  const currency = data?.restaurant.currencyCode ?? 'INR';
 
   const toggleAvailable = (item: MenuItem) => {
     setRowError(null);
@@ -67,6 +65,84 @@ export default function MenuPage() {
       { onError: (e) => setRowError(authErrorMessage(e)) },
     );
   };
+  const setAvailability = async (rows: PagedItem[], isAvailable: boolean) => {
+    for (const r of rows) await m.updateItem.mutateAsync({ id: r.id, isAvailable });
+  };
+
+  const columns: Column<PagedItem>[] = [
+    {
+      key: 'item',
+      header: 'Item',
+      sortKey: 'name',
+      cell: (item) => (
+        <div className="flex items-center gap-3">
+          <Thumb item={item} />
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <DietDot diet={item.diet} />
+              <p className="truncate font-medium">{item.name}</p>
+            </div>
+            <p className="truncate text-xs text-muted-foreground">
+              {item.categoryName}
+              {item.description ? ` · ${item.description}` : ''}
+            </p>
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: 'price',
+      header: 'Price',
+      sortKey: 'priceMinor',
+      align: 'right',
+      cell: (item) =>
+        item.variants.length ? (
+          <div className="text-xs">
+            {item.variants.map((v) => (
+              <p key={v.id}>
+                <span className="text-muted-foreground">{v.name}</span>{' '}
+                <span className="font-semibold">
+                  {formatMoney(v.priceMinor, item.currencyCode)}
+                </span>
+              </p>
+            ))}
+          </div>
+        ) : (
+          <span className="font-semibold">{formatMoney(item.priceMinor, item.currencyCode)}</span>
+        ),
+    },
+    {
+      key: 'available',
+      header: 'Availability',
+      cell: (item) => (
+        <button
+          type="button"
+          role="switch"
+          aria-checked={item.isAvailable}
+          aria-label={`${item.name} available`}
+          disabled={!canManage}
+          onClick={(e) => {
+            e.stopPropagation();
+            toggleAvailable(item);
+          }}
+          className={cn(
+            'inline-flex h-7 items-center gap-1.5 rounded-full px-2.5 text-xs font-semibold disabled:cursor-default',
+            item.isAvailable
+              ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300'
+              : 'bg-slate-100 text-slate-500 dark:bg-white/10',
+          )}
+        >
+          <span
+            className={cn(
+              'size-1.5 rounded-full',
+              item.isAvailable ? 'bg-emerald-500' : 'bg-slate-400',
+            )}
+          />
+          {item.isAvailable ? 'Available' : 'Sold out'}
+        </button>
+      ),
+    },
+  ];
 
   return (
     <div className="mx-auto max-w-[96rem] space-y-6">
@@ -83,11 +159,6 @@ export default function MenuPage() {
             <Button variant="outline" onClick={() => setDialog({ kind: 'import' })}>
               <Upload aria-hidden /> Import
             </Button>
-            {data && data.items.length > 0 ? (
-              <Button variant="outline" onClick={() => exportMenu(data)}>
-                <Download aria-hidden /> Export
-              </Button>
-            ) : null}
             <Button variant="outline" onClick={() => setDialog({ kind: 'category' })}>
               <Tags aria-hidden /> Add category
             </Button>
@@ -104,12 +175,12 @@ export default function MenuPage() {
 
       <MenuTabs />
 
-      {menu.isError ? (
+      {cats.isError ? (
         <p
           role="alert"
           className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"
         >
-          {authErrorMessage(menu.error)}
+          {authErrorMessage(cats.error)}
         </p>
       ) : null}
       {rowError ? (
@@ -121,28 +192,27 @@ export default function MenuPage() {
         </p>
       ) : null}
 
-      {menu.isPending ? (
+      {cats.isPending ? (
         <MenuSkeleton />
       ) : data && data.categories.length === 0 ? (
         <EmptyMenu canManage={canManage} onAdd={() => setDialog({ kind: 'category' })} />
       ) : data ? (
         <div className="grid gap-6 lg:grid-cols-[16rem_1fr]">
-          {/* Categories */}
           <aside className="h-fit rounded-2xl border bg-card p-2">
             <p className="px-3 pt-2 pb-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
               Categories
             </p>
             <CategoryButton
-              active={categoryId === 'all'}
-              onClick={() => setCategoryId('all')}
+              active={!categoryId}
+              onClick={() => list.update({ filters: { categoryId: '' } })}
               name="All items"
-              count={data.items.length}
+              count={data.itemCount}
             />
             {data.categories.map((c) => (
               <div key={c.id} className="group relative">
                 <CategoryButton
                   active={categoryId === c.id}
-                  onClick={() => setCategoryId(c.id)}
+                  onClick={() => list.update({ filters: { categoryId: c.id } })}
                   name={c.name}
                   count={c.itemCount}
                   hidden={!c.isActive}
@@ -178,106 +248,92 @@ export default function MenuPage() {
             ))}
           </aside>
 
-          {/* Items */}
-          <section className="min-w-0 space-y-4">
-            <label className="relative block max-w-sm">
-              <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-              <span className="sr-only">Search items</span>
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search items"
-                className="h-10 w-full rounded-xl border bg-card pr-3 pl-9 text-sm outline-none focus-visible:border-primary focus-visible:ring-3 focus-visible:ring-primary/20"
-              />
-            </label>
-
-            {items.length === 0 ? (
-              <div className="rounded-2xl border border-dashed bg-card px-6 py-14 text-center">
-                <p className="font-medium">
-                  {q ? 'No items match your search' : 'No items in this category yet'}
-                </p>
-                {canManage && !q ? (
-                  <Button className="mt-4" onClick={() => setDialog({ kind: 'item' })}>
-                    <Plus aria-hidden /> Add item
-                  </Button>
-                ) : null}
-              </div>
-            ) : (
-              <div className="overflow-hidden rounded-2xl border bg-card">
-                <ul className="divide-y">
-                  {items.map((item) => (
-                    <li key={item.id} className="flex items-center gap-4 px-4 py-3">
-                      <Thumb item={item} />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <DietDot diet={item.diet} />
-                          <p className="truncate font-medium">{item.name}</p>
-                        </div>
-                        <p className="truncate text-xs text-muted-foreground">
-                          {categoryName(item.categoryId)}
-                          {item.description ? ` · ${item.description}` : ''}
-                        </p>
-                      </div>
-                      {item.variants.length ? (
-                        <div className="w-36 text-right text-xs tabular-nums">
-                          {item.variants.map((v) => (
-                            <p key={v.id}>
-                              <span className="text-muted-foreground">{v.name}</span>{' '}
-                              <span className="font-semibold">
-                                {formatMoney(v.priceMinor, item.currencyCode)}
-                              </span>
-                            </p>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="w-24 text-right font-semibold tabular-nums">
-                          {formatMoney(item.priceMinor, item.currencyCode)}
-                        </p>
-                      )}
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={item.isAvailable}
-                        aria-label={`${item.name} available`}
-                        disabled={!canManage}
-                        onClick={() => toggleAvailable(item)}
-                        className={cn(
-                          'hidden h-7 items-center gap-1.5 rounded-full px-2.5 text-xs font-semibold sm:flex disabled:cursor-default',
-                          item.isAvailable
-                            ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300'
-                            : 'bg-slate-100 text-slate-500 dark:bg-white/10',
-                        )}
+          <DataTable
+            list={list}
+            columns={columns}
+            getRowId={(i) => i.id}
+            searchPlaceholder="Search items"
+            filters={[
+              {
+                key: 'diet',
+                label: 'Type',
+                options: (Object.keys(DIET_LABEL) as Diet[]).map((d) => ({
+                  value: d,
+                  label: DIET_LABEL[d],
+                })),
+              },
+              {
+                key: 'available',
+                label: 'Availability',
+                options: [
+                  { value: 'yes', label: 'Available' },
+                  { value: 'no', label: 'Sold out' },
+                ],
+              },
+            ]}
+            bulkActions={
+              canManage
+                ? [
+                    { label: 'Mark available', run: (rows) => setAvailability(rows, true) },
+                    { label: 'Mark sold out', run: (rows) => setAvailability(rows, false) },
+                    {
+                      label: 'Delete',
+                      destructive: true,
+                      run: async (rows) => {
+                        if (
+                          !window.confirm(
+                            `Delete ${rows.length} items? They disappear from the POS.`,
+                          )
+                        )
+                          return;
+                        for (const r of rows) await m.deleteItem.mutateAsync(r.id);
+                      },
+                    },
+                  ]
+                : undefined
+            }
+            rowActions={
+              canManage
+                ? (item) => (
+                    <>
+                      <IconButton
+                        label={`Edit ${item.name}`}
+                        onClick={() => setDialog({ kind: 'item', item })}
                       >
-                        <span
-                          className={cn(
-                            'size-1.5 rounded-full',
-                            item.isAvailable ? 'bg-emerald-500' : 'bg-slate-400',
-                          )}
-                        />
-                        {item.isAvailable ? 'Available' : 'Sold out'}
-                      </button>
-                      {canManage ? (
-                        <div className="flex gap-0.5">
-                          <IconButton
-                            label={`Edit ${item.name}`}
-                            onClick={() => setDialog({ kind: 'item', item })}
-                          >
-                            <Pencil />
-                          </IconButton>
-                          <IconButton
-                            label={`Delete ${item.name}`}
-                            onClick={() => setDialog({ kind: 'delete-item', item })}
-                          >
-                            <Trash2 />
-                          </IconButton>
-                        </div>
-                      ) : null}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </section>
+                        <Pencil />
+                      </IconButton>
+                      <IconButton
+                        label={`Delete ${item.name}`}
+                        onClick={() => setDialog({ kind: 'delete-item', item })}
+                      >
+                        <Trash2 />
+                      </IconButton>
+                    </>
+                  )
+                : undefined
+            }
+            exportCsv={{
+              filename: `menu-${new Date().toISOString().slice(0, 10)}.csv`,
+              columns: [
+                { header: 'Category', value: (i) => i.categoryName },
+                { header: 'Name', value: (i) => i.name },
+                { header: 'Price', value: (i) => (i.priceMinor / 100).toFixed(2) },
+                { header: 'Half Price', value: (i) => halfOf(i) },
+                { header: 'Type', value: (i) => DIET_LABEL[i.diet] },
+                { header: 'Description', value: (i) => i.description ?? '' },
+                { header: 'Image URL', value: (i) => i.imageUrl ?? '' },
+                { header: 'Available', value: (i) => (i.isAvailable ? 'Yes' : 'No') },
+              ],
+            }}
+            empty={{
+              title: 'No items yet',
+              action: canManage ? (
+                <Button onClick={() => setDialog({ kind: 'item' })}>
+                  <Plus aria-hidden /> Add item
+                </Button>
+              ) : undefined,
+            }}
+          />
         </div>
       ) : null}
 
@@ -285,15 +341,15 @@ export default function MenuPage() {
         {dialog && data ? (
           <Modal onClose={() => setDialog(null)} wide={dialog.kind === 'import'}>
             {dialog.kind === 'import' ? (
-              <ImportDialog menu={data} onDone={() => setDialog(null)} />
+              <ImportLoader onDone={() => setDialog(null)} />
             ) : dialog.kind === 'category' ? (
               <CategoryForm category={dialog.category} onDone={() => setDialog(null)} />
             ) : dialog.kind === 'item' ? (
               <ItemForm
                 item={dialog.item}
                 categories={data.categories}
-                currency={data.restaurant.currencyCode}
-                defaultCategory={categoryId === 'all' ? undefined : categoryId}
+                currency={currency}
+                defaultCategory={categoryId || undefined}
                 onDone={() => setDialog(null)}
               />
             ) : dialog.kind === 'delete-item' ? (
@@ -320,6 +376,21 @@ export default function MenuPage() {
       </AnimatePresence>
     </div>
   );
+}
+
+type PagedItem = MenuItem & { categoryName: string };
+
+/** The import dialog needs the whole menu to spot duplicates, so it loads it only when opened. */
+function ImportLoader({ onDone }: { onDone: () => void }) {
+  const menu = useMenu();
+  if (menu.isError)
+    return (
+      <p role="alert" className="text-sm text-red-600">
+        {authErrorMessage(menu.error)}
+      </p>
+    );
+  if (!menu.data) return <div className="h-40 animate-pulse rounded-xl bg-muted" />;
+  return <ImportDialog menu={menu.data} onDone={onDone} />;
 }
 
 function CategoryButton(p: {
@@ -854,24 +925,6 @@ function ConfirmDelete(p: {
       </div>
     </div>
   );
-}
-
-/** Exports the menu in the import format, so it can be edited in a spreadsheet and re-imported. */
-function exportMenu(data: NonNullable<ReturnType<typeof useMenu>['data']>) {
-  const category = (id: string) => data.categories.find((c) => c.id === id)?.name ?? '';
-  downloadCsv(`menu-${new Date().toISOString().slice(0, 10)}.csv`, [
-    ['Category', 'Name', 'Price', 'Half Price', 'Type', 'Description', 'Image URL', 'Available'],
-    ...data.items.map((i) => [
-      category(i.categoryId),
-      i.name,
-      (i.priceMinor / 100).toFixed(2),
-      halfOf(i),
-      DIET_LABEL[i.diet],
-      i.description ?? '',
-      i.imageUrl ?? '',
-      i.isAvailable ? 'Yes' : 'No',
-    ]),
-  ]);
 }
 
 /** "Half" portion price for the export, when the item has exactly Full + Half portions. */

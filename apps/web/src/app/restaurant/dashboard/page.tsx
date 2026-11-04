@@ -26,6 +26,7 @@ import { type ReactNode, useState } from 'react';
 import { useAuth, useProfile } from '@/components/auth/auth-provider';
 import { canAccessPath, hasPermissionAnywhere } from '@/lib/auth/access';
 import { authErrorMessage } from '@/lib/auth/errors';
+import { useEntitlement } from '@/lib/billing';
 import { useRestaurantOverview } from '../overview';
 
 const ease = [0.22, 1, 0.36, 1] as const;
@@ -70,6 +71,7 @@ export default function RestaurantDashboardPage() {
   return (
     <div className="mx-auto max-w-[96rem] space-y-5">
       <Welcome />
+      <TrialCard />
 
       {overview.isError ? (
         <p className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
@@ -620,5 +622,66 @@ function TableOccupancy() {
         Set up floors and tables to see live occupancy.
       </p>
     </motion.section>
+  );
+}
+
+/** Remaining free-trial days, with the end date and a link to the plans. */
+function TrialCard() {
+  const ent = useEntitlement();
+  const e = ent.data;
+  if (!e?.isTrial || !e.trialEndsAt) return null;
+  // Share of the trial used, from the server's remaining-day count (no clock reads in render).
+  const total = e.trialStartedAt
+    ? Math.max(
+        1,
+        Math.round(
+          (new Date(e.trialEndsAt).getTime() - new Date(e.trialStartedAt).getTime()) / 86_400_000,
+        ),
+      )
+    : 15;
+  const used = Math.min(1, Math.max(0, 1 - e.remainingDays / total));
+  const soon = e.remainingDays <= 3;
+  return (
+    <section className={cn(card, 'flex flex-col gap-4 p-5 sm:flex-row sm:items-center')}>
+      <div className="flex items-baseline gap-2">
+        <span
+          className={cn(
+            'text-4xl font-bold tabular-nums',
+            soon ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400',
+          )}
+        >
+          {e.remainingDays}
+        </span>
+        <span className="text-sm text-muted-foreground">
+          day{e.remainingDays === 1 ? '' : 's'} left in your free trial
+        </span>
+      </div>
+      <div className="flex-1 space-y-1.5">
+        <div
+          className="h-2 overflow-hidden rounded-full bg-muted"
+          role="progressbar"
+          aria-label="Free trial used"
+          aria-valuenow={Math.round(used * 100)}
+          aria-valuemin={0}
+          aria-valuemax={100}
+        >
+          <div
+            className={cn('h-full rounded-full', soon ? 'bg-red-500' : 'bg-emerald-500')}
+            style={{ width: `${Math.round(used * 100)}%` }}
+          />
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Trial ends {pillDate.format(new Date(e.trialEndsAt))} · 1 branch included
+        </p>
+      </div>
+      {e.canManage ? (
+        <Link
+          href="/restaurant/profile#subscription"
+          className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
+        >
+          View plans <ArrowRight className="size-4" />
+        </Link>
+      ) : null}
+    </section>
   );
 }

@@ -15,22 +15,23 @@ import {
   PackageX,
   Pencil,
   Plus,
-  Search,
   Trash2,
   X,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { type FormEvent, type ReactNode, useState } from 'react';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { useAuth, useProfile } from '@/components/auth/auth-provider';
+import { type Column, DataTable } from '@/components/data-table/data-table';
 import { authErrorMessage } from '@/lib/auth/errors';
+import { usePagedList } from '@/lib/paged';
 import {
   formatQty,
-  type InventoryData,
   type MovementType,
   type StockItem,
   type StockStatus,
   UNITS,
   type Unit,
-  useInventory,
   useInventoryMutations,
   useMovements,
 } from '@/lib/inventory';
@@ -85,22 +86,175 @@ const MOVES: Record<
   },
 };
 
-export default function InventoryPage() {
-  const [branchId, setBranchId] = useState<string | null>(null);
-  const inv = useInventory(branchId);
-  const [query, setQuery] = useState('');
-  const [status, setStatus] = useState<StockStatus | 'all'>('all');
-  const [dialog, setDialog] = useState<Dialog | null>(null);
+interface Summary {
+  restaurant: { id: string; name: string; currencyCode: string } | null;
+  branch: { id: string; name: string };
+  branches: { id: string; name: string }[];
+  counts: { total: number; low: number; out: number };
+  stockValueMinor: number;
+  categories: string[];
+  canManageItems: boolean;
+  canRecordMovements: boolean;
+}
 
-  const data = inv.data;
-  const q = query.trim().toLowerCase();
-  const items = (data?.items ?? []).filter(
-    (i) =>
-      (status === 'all' || i.status === status) &&
-      (!q || i.name.toLowerCase().includes(q) || i.category?.toLowerCase().includes(q)),
-  );
-  const count = (s: StockStatus) => data?.items.filter((i) => i.status === s).length ?? 0;
-  const value = (data?.items ?? []).reduce((n, i) => n + (i.costPerUnitMinor ?? 0) * i.quantity, 0);
+interface MovementRow {
+  id: string;
+  itemId: string;
+  itemName: string;
+  unit: string;
+  type: MovementType;
+  quantityDelta: number;
+  quantityAfter: number;
+  note: string | null;
+  byName: string | null;
+  createdAt: string;
+}
+
+function useInventorySummary(branchId: string) {
+  const { client } = useAuth();
+  const profile = useProfile();
+  return useQuery({
+    queryKey: ['inventory', profile.activeTenant?.id, 'summary', branchId],
+    queryFn: () =>
+      client.request<Summary>(
+        `/inventory/summary${branchId ? `?branchId=${encodeURIComponent(branchId)}` : ''}`,
+      ),
+    placeholderData: keepPreviousData,
+  });
+}
+
+const when = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+
+export default function InventoryPage() {
+  const [tab, setTab] = useState<'stock' | 'movements'>('stock');
+  const [dialog, setDialog] = useState<Dialog | null>(null);
+  const stock = usePagedList<StockItem>('inventory', '/inventory/items', {
+    sortBy: 'name',
+    sortOrder: 'asc',
+    filters: { branchId: '', status: '', category: '' },
+  });
+  const branchId = stock.state.filters.branchId ?? '';
+  const summary = useInventorySummary(branchId);
+  const movements = usePagedList<MovementRow>('inventory-movements', '/inventory/movements', {
+    sortBy: 'createdAt',
+    filters: { branchId: '', type: '', from: '', to: '' },
+  });
+  const data = summary.data;
+  const currency = data?.restaurant?.currencyCode ?? 'INR';
+  const money = (m: number) => formatMoney(Math.round(m), currency);
+
+  const pickBranch = (id: string) => {
+    stock.update({ filters: { branchId: id } });
+    movements.update({ filters: { branchId: id } });
+  };
+
+  const stockColumns: Column<StockItem>[] = [
+    {
+      key: 'name',
+      header: 'Item',
+      sortKey: 'name',
+      cell: (i) => (
+        <div>
+          <p className="font-medium">{i.name}</p>
+          <p className="text-xs text-muted-foreground">
+            {i.category ?? 'Uncategorised'} · alert below {formatQty(i.lowStockThreshold)} {i.unit}
+          </p>
+        </div>
+      ),
+    },
+    {
+      key: 'qty',
+      header: 'On hand',
+      sortKey: 'quantity',
+      align: 'right',
+      cell: (i) => (
+        <span className="font-semibold">
+          {formatQty(i.quantity)}{' '}
+          <span className="font-normal text-muted-foreground">{i.unit}</span>
+        </span>
+      ),
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      cell: (i) => (
+        <span
+          className={cn(
+            'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold',
+            STATUS[i.status].cls,
+          )}
+        >
+          <span className={cn('size-1.5 rounded-full', STATUS[i.status].dot)} />
+          {STATUS[i.status].label}
+        </span>
+      ),
+    },
+    {
+      key: 'cost',
+      header: 'Cost / unit',
+      align: 'right',
+      hideOnMobile: true,
+      cell: (i) => (i.costPerUnitMinor !== null ? `${money(i.costPerUnitMinor)} / ${i.unit}` : '—'),
+    },
+    {
+      key: 'value',
+      header: 'Value',
+      sortKey: 'value',
+      align: 'right',
+      hideOnMobile: true,
+      cell: (i) => (i.costPerUnitMinor !== null ? money(i.costPerUnitMinor * i.quantity) : '—'),
+    },
+  ];
+
+  const movementColumns: Column<MovementRow>[] = [
+    {
+      key: 'when',
+      header: 'When',
+      sortKey: 'createdAt',
+      cell: (m) => when.format(new Date(m.createdAt)),
+    },
+    { key: 'item', header: 'Item', cell: (m) => <span className="font-medium">{m.itemName}</span> },
+    {
+      key: 'type',
+      header: 'Type',
+      cell: (m) => (
+        <span
+          className={cn(
+            'text-xs font-semibold',
+            m.quantityDelta >= 0 ? 'text-emerald-600' : 'text-red-600',
+          )}
+        >
+          {MOVES[m.type].label}
+        </span>
+      ),
+    },
+    {
+      key: 'change',
+      header: 'Change',
+      sortKey: 'quantity',
+      align: 'right',
+      cell: (m) => (
+        <span className={m.quantityDelta >= 0 ? 'text-emerald-600' : 'text-red-600'}>
+          {m.quantityDelta >= 0 ? '+' : ''}
+          {formatQty(m.quantityDelta)} {m.unit}
+        </span>
+      ),
+    },
+    {
+      key: 'after',
+      header: 'After',
+      align: 'right',
+      hideOnMobile: true,
+      cell: (m) => `${formatQty(m.quantityAfter)} ${m.unit}`,
+    },
+    {
+      key: 'note',
+      header: 'Note',
+      hideOnMobile: true,
+      cell: (m) => m.note ?? <span className="text-muted-foreground">—</span>,
+    },
+    { key: 'by', header: 'By', hideOnMobile: true, cell: (m) => m.byName ?? '—' },
+  ];
 
   return (
     <div className="mx-auto max-w-[96rem] space-y-6">
@@ -118,7 +272,7 @@ export default function InventoryPage() {
               <span className="sr-only">Branch</span>
               <select
                 value={data.branch.id}
-                onChange={(e) => setBranchId(e.target.value)}
+                onChange={(e) => pickBranch(e.target.value)}
                 className="h-9 rounded-md border bg-card pr-3 pl-9 text-sm"
               >
                 {data.branches.map((b) => (
@@ -141,144 +295,227 @@ export default function InventoryPage() {
         </div>
       </div>
 
-      {inv.isError ? (
+      {summary.isError ? (
         <p
           role="alert"
           className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"
         >
-          {authErrorMessage(inv.error)}
+          {authErrorMessage(summary.error)}
         </p>
       ) : null}
 
-      {inv.isPending ? (
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
-            {Array.from({ length: 4 }, (_, i) => (
-              <div key={i} className="h-24 animate-pulse rounded-2xl bg-muted" />
-            ))}
-          </div>
-          <div className="h-80 animate-pulse rounded-2xl bg-muted" />
-        </div>
-      ) : data ? (
-        <>
-          <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
-            <Stat
-              icon={Boxes}
-              tone="bg-primary/10 text-primary"
-              label="Stock items"
-              value={data.items.length}
-            />
-            <Stat
-              icon={AlertTriangle}
-              tone="bg-amber-100 text-amber-600 dark:bg-amber-500/15"
-              label="Low stock"
-              value={count('low')}
-              onClick={() => setStatus('low')}
-            />
-            <Stat
-              icon={PackageX}
-              tone="bg-red-100 text-red-600 dark:bg-red-500/15"
-              label="Out of stock"
-              value={count('out')}
-              onClick={() => setStatus('out')}
-            />
-            <Stat
-              icon={ArrowDownToLine}
-              tone="bg-sky-100 text-sky-600 dark:bg-sky-500/15"
-              label="Stock value (at cost)"
-              value={
-                data.restaurant ? formatMoney(Math.round(value), data.restaurant.currencyCode) : '—'
-              }
-            />
-          </div>
+      <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+        <Stat
+          icon={Boxes}
+          tone="bg-primary/10 text-primary"
+          label="Stock items"
+          value={data?.counts.total ?? '—'}
+        />
+        <Stat
+          icon={AlertTriangle}
+          tone="bg-amber-100 text-amber-600 dark:bg-amber-500/15"
+          label="Low stock"
+          value={data?.counts.low ?? '—'}
+          onClick={() => {
+            setTab('stock');
+            stock.update({ filters: { status: 'low' } });
+          }}
+        />
+        <Stat
+          icon={PackageX}
+          tone="bg-red-100 text-red-600 dark:bg-red-500/15"
+          label="Out of stock"
+          value={data?.counts.out ?? '—'}
+          onClick={() => {
+            setTab('stock');
+            stock.update({ filters: { status: 'out' } });
+          }}
+        />
+        <Stat
+          icon={ArrowDownToLine}
+          tone="bg-sky-100 text-sky-600 dark:bg-sky-500/15"
+          label="Stock value (at cost)"
+          value={data ? money(data.stockValueMinor) : '—'}
+        />
+      </div>
 
-          {data.items.length === 0 ? (
-            <div className="flex flex-col items-center rounded-2xl border bg-card px-6 py-16 text-center">
-              <span className="flex size-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-                <Boxes className="size-6" />
-              </span>
-              <h2 className="mt-4 text-lg font-semibold">No stock items yet</h2>
-              <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-                {data.canManageItems
-                  ? 'Add the ingredients and supplies you buy — rice, oil, paneer, packaging — then record stock as it arrives.'
-                  : 'Your restaurant has not added stock items yet.'}
-              </p>
-              {data.canManageItems ? (
-                <Button className="mt-5" onClick={() => setDialog({ kind: 'item' })}>
-                  <Plus aria-hidden /> Add first item
-                </Button>
-              ) : null}
-            </div>
-          ) : (
-            <div className="overflow-hidden rounded-2xl border bg-card">
-              <div className="flex flex-col gap-3 border-b p-3 sm:flex-row sm:items-center">
-                <label className="relative flex-1 sm:max-w-xs">
-                  <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-                  <span className="sr-only">Search stock</span>
-                  <input
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Search items or categories"
-                    className="h-9 w-full rounded-lg border bg-background pr-3 pl-9 text-sm outline-none focus-visible:border-primary focus-visible:ring-3 focus-visible:ring-primary/20"
-                  />
-                </label>
-                <div className="flex gap-1 overflow-x-auto" role="tablist">
-                  {(['all', 'ok', 'low', 'out'] as const).map((s) => (
-                    <button
-                      key={s}
-                      type="button"
-                      role="tab"
-                      aria-selected={status === s}
-                      onClick={() => setStatus(s)}
-                      className={cn(
-                        'h-9 shrink-0 rounded-lg px-3 text-sm font-medium',
-                        status === s
-                          ? 'bg-primary text-primary-foreground'
-                          : 'text-muted-foreground hover:bg-muted',
-                      )}
+      <div className="flex gap-1 border-b" role="tablist">
+        {(
+          [
+            { id: 'stock', label: 'Stock' },
+            { id: 'movements', label: 'Stock movements' },
+          ] as const
+        ).map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            aria-selected={tab === t.id}
+            onClick={() => setTab(t.id)}
+            className={cn(
+              '-mb-px border-b-2 px-4 py-2.5 text-sm font-medium',
+              tab === t.id
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted-foreground hover:text-foreground',
+            )}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'stock' ? (
+        <DataTable
+          list={stock}
+          columns={stockColumns}
+          getRowId={(i) => i.id}
+          searchPlaceholder="Search items or categories"
+          filters={[
+            {
+              key: 'status',
+              label: 'Status',
+              options: (Object.keys(STATUS) as StockStatus[]).map((s) => ({
+                value: s,
+                label: STATUS[s].label,
+              })),
+            },
+            ...(data?.categories.length
+              ? [
+                  {
+                    key: 'category',
+                    label: 'Category',
+                    options: data.categories.map((c) => ({ value: c, label: c })),
+                  },
+                ]
+              : []),
+          ]}
+          rowActions={(item) =>
+            data ? (
+              <>
+                {data.canRecordMovements ? (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setDialog({ kind: 'move', item, type: 'purchase' })}
                     >
-                      {s === 'all' ? 'All' : STATUS[s].label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {items.length === 0 ? (
-                <p className="py-14 text-center text-sm text-muted-foreground">No items match.</p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[46rem] text-sm">
-                    <thead className="bg-muted/40 text-left text-xs font-semibold text-muted-foreground uppercase">
-                      <tr>
-                        <th className="px-4 py-2.5">Item</th>
-                        <th className="px-4 py-2.5 text-right">On hand</th>
-                        <th className="px-4 py-2.5">Status</th>
-                        <th className="px-4 py-2.5 text-right">Cost / unit</th>
-                        <th className="px-4 py-2.5 text-right">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {items.map((item) => (
-                        <Row key={item.id} item={item} data={data} onDialog={setDialog} />
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          )}
-        </>
-      ) : null}
+                      <ArrowDownToLine /> Stock in
+                    </Button>
+                    <Icon
+                      label={`Record usage of ${item.name}`}
+                      onClick={() => setDialog({ kind: 'move', item, type: 'usage' })}
+                    >
+                      <MinusCircle />
+                    </Icon>
+                    <Icon
+                      label={`Record wastage of ${item.name}`}
+                      onClick={() => setDialog({ kind: 'move', item, type: 'wastage' })}
+                    >
+                      <PackageX />
+                    </Icon>
+                    <Icon
+                      label={`Count ${item.name}`}
+                      onClick={() => setDialog({ kind: 'move', item, type: 'count' })}
+                    >
+                      <ClipboardCheck />
+                    </Icon>
+                  </>
+                ) : null}
+                <Icon
+                  label={`History of ${item.name}`}
+                  onClick={() => setDialog({ kind: 'history', item })}
+                >
+                  <History />
+                </Icon>
+                {data.canManageItems ? (
+                  <>
+                    <Icon
+                      label={`Edit ${item.name}`}
+                      onClick={() => setDialog({ kind: 'item', item })}
+                    >
+                      <Pencil />
+                    </Icon>
+                    <Icon
+                      label={`Delete ${item.name}`}
+                      onClick={() => setDialog({ kind: 'delete', item })}
+                    >
+                      <Trash2 />
+                    </Icon>
+                  </>
+                ) : null}
+              </>
+            ) : null
+          }
+          exportCsv={{
+            filename: `stock-${new Date().toISOString().slice(0, 10)}.csv`,
+            columns: [
+              { header: 'Item', value: (i) => i.name },
+              { header: 'Category', value: (i) => i.category ?? '' },
+              { header: 'Unit', value: (i) => i.unit },
+              { header: 'On hand', value: (i) => i.quantity },
+              { header: 'Low-stock alert', value: (i) => i.lowStockThreshold },
+              {
+                header: 'Cost per unit',
+                value: (i) =>
+                  i.costPerUnitMinor === null ? '' : (i.costPerUnitMinor / 100).toFixed(2),
+              },
+              { header: 'Status', value: (i) => STATUS[i.status].label },
+            ],
+          }}
+          empty={{
+            title: 'No stock items yet',
+            description: data?.canManageItems
+              ? 'Add the ingredients and supplies you buy — rice, oil, paneer, packaging — then record stock as it arrives.'
+              : 'Your restaurant has not added stock items yet.',
+            action: data?.canManageItems ? (
+              <Button onClick={() => setDialog({ kind: 'item' })}>
+                <Plus aria-hidden /> Add first item
+              </Button>
+            ) : undefined,
+          }}
+        />
+      ) : (
+        <DataTable
+          list={movements}
+          columns={movementColumns}
+          getRowId={(m) => m.id}
+          searchPlaceholder="Item or note"
+          dateRange
+          filters={[
+            {
+              key: 'type',
+              label: 'Type',
+              options: (Object.keys(MOVES) as MovementType[]).map((t) => ({
+                value: t,
+                label: MOVES[t].label,
+              })),
+            },
+          ]}
+          exportCsv={{
+            filename: `stock-movements-${new Date().toISOString().slice(0, 10)}.csv`,
+            columns: [
+              { header: 'When', value: (m) => m.createdAt },
+              { header: 'Item', value: (m) => m.itemName },
+              { header: 'Type', value: (m) => MOVES[m.type].label },
+              { header: 'Change', value: (m) => m.quantityDelta },
+              { header: 'Unit', value: (m) => m.unit },
+              { header: 'After', value: (m) => m.quantityAfter },
+              { header: 'Note', value: (m) => m.note ?? '' },
+              { header: 'By', value: (m) => m.byName ?? '' },
+            ],
+          }}
+          empty={{
+            title: 'No stock movements yet',
+            description: 'Stock in, usage, wastage and counts appear here.',
+          }}
+        />
+      )}
 
       <AnimatePresence>
         {dialog && data ? (
           <Modal onClose={() => setDialog(null)} wide={dialog.kind === 'history'}>
             {dialog.kind === 'item' ? (
-              <ItemForm
-                item={dialog.item}
-                currency={data.restaurant?.currencyCode ?? 'INR'}
-                onDone={() => setDialog(null)}
-              />
+              <ItemForm item={dialog.item} currency={currency} onDone={() => setDialog(null)} />
             ) : dialog.kind === 'move' ? (
               <MoveForm
                 item={dialog.item}
@@ -295,101 +532,6 @@ export default function InventoryPage() {
         ) : null}
       </AnimatePresence>
     </div>
-  );
-}
-
-function Row({
-  item,
-  data,
-  onDialog,
-}: {
-  item: StockItem;
-  data: InventoryData;
-  onDialog: (d: Dialog) => void;
-}) {
-  const s = STATUS[item.status];
-  return (
-    <tr className="hover:bg-muted/30">
-      <td className="px-4 py-3">
-        <p className="font-medium">{item.name}</p>
-        <p className="text-xs text-muted-foreground">
-          {item.category ?? 'Uncategorised'} · alert below {formatQty(item.lowStockThreshold)}{' '}
-          {item.unit}
-        </p>
-      </td>
-      <td className="px-4 py-3 text-right font-semibold tabular-nums">
-        {formatQty(item.quantity)}{' '}
-        <span className="font-normal text-muted-foreground">{item.unit}</span>
-      </td>
-      <td className="px-4 py-3">
-        <span
-          className={cn(
-            'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold',
-            s.cls,
-          )}
-        >
-          <span className={cn('size-1.5 rounded-full', s.dot)} />
-          {s.label}
-        </span>
-      </td>
-      <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">
-        {item.costPerUnitMinor !== null && data.restaurant
-          ? `${formatMoney(item.costPerUnitMinor, data.restaurant.currencyCode)} / ${item.unit}`
-          : '—'}
-      </td>
-      <td className="px-4 py-3">
-        <div className="flex items-center justify-end gap-1">
-          {data.canRecordMovements ? (
-            <>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => onDialog({ kind: 'move', item, type: 'purchase' })}
-              >
-                <ArrowDownToLine /> Stock in
-              </Button>
-              <Icon
-                label={`Record usage of ${item.name}`}
-                onClick={() => onDialog({ kind: 'move', item, type: 'usage' })}
-              >
-                <MinusCircle />
-              </Icon>
-              <Icon
-                label={`Record wastage of ${item.name}`}
-                onClick={() => onDialog({ kind: 'move', item, type: 'wastage' })}
-              >
-                <PackageX />
-              </Icon>
-              <Icon
-                label={`Count ${item.name}`}
-                onClick={() => onDialog({ kind: 'move', item, type: 'count' })}
-              >
-                <ClipboardCheck />
-              </Icon>
-            </>
-          ) : null}
-          <Icon
-            label={`History of ${item.name}`}
-            onClick={() => onDialog({ kind: 'history', item })}
-          >
-            <History />
-          </Icon>
-          {data.canManageItems ? (
-            <>
-              <Icon label={`Edit ${item.name}`} onClick={() => onDialog({ kind: 'item', item })}>
-                <Pencil />
-              </Icon>
-              <Icon
-                label={`Delete ${item.name}`}
-                onClick={() => onDialog({ kind: 'delete', item })}
-              >
-                <Trash2 />
-              </Icon>
-            </>
-          ) : null}
-        </div>
-      </td>
-    </tr>
   );
 }
 

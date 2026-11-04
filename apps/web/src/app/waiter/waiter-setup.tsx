@@ -104,14 +104,14 @@ export function WaiterSetup() {
         </div>
       </header>
 
-      <main className="relative isolate flex flex-1 items-start justify-center overflow-hidden px-4 pt-6 pb-12 sm:pt-8">
+      <main className="relative isolate flex flex-1 items-start justify-center overflow-hidden px-4 pt-3 pb-10 sm:pt-5">
         <Backdrop />
-        <div className="relative flex w-full max-w-3xl flex-col items-center">
+        <div className="relative flex w-full max-w-[56rem] flex-col items-center">
           <motion.div
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5 }}
-            className="w-full max-w-2xl"
+            className="w-full max-w-[48rem]"
           >
             <WaiterIllustration className="-mb-px block h-auto w-full" />
           </motion.div>
@@ -120,19 +120,19 @@ export function WaiterSetup() {
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.1 }}
-            className="relative -mt-14 w-full rounded-[1.75rem] bg-white px-6 pt-16 pb-9 text-center shadow-[0_20px_50px_-24px_rgba(15,23,42,0.18)] sm:-mt-16 sm:px-12 dark:bg-slate-900"
+            className="relative -mt-5 w-full rounded-[1.75rem] bg-white px-6 pt-14 pb-8 text-center shadow-[0_20px_50px_-24px_rgba(15,23,42,0.18)] sm:-mt-6 sm:px-12 dark:bg-slate-900"
           >
-            <span className="absolute -top-14 left-1/2 flex size-28 -translate-x-1/2 items-center justify-center rounded-full bg-white dark:bg-slate-900">
-              <span className="flex size-[5.5rem] items-center justify-center rounded-full bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300">
-                <ConciergeBell className="size-10" strokeWidth={1.75} />
+            <span className="absolute -top-11 left-1/2 flex size-[5.5rem] -translate-x-1/2 items-center justify-center rounded-full bg-white dark:bg-slate-900">
+              <span className="flex size-[4.5rem] items-center justify-center rounded-full bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300">
+                <ConciergeBell className="size-8" strokeWidth={1.75} />
               </span>
             </span>
 
-            <h1 className="text-[1.75rem] leading-tight font-bold tracking-tight text-slate-900 sm:text-4xl dark:text-white">
+            <h1 className="text-[1.75rem] leading-tight font-bold tracking-tight text-slate-900 sm:text-4xl lg:text-[2.6rem] dark:text-white">
               Your dining floor is{' '}
               <span className="text-emerald-600 dark:text-emerald-400">almost ready!</span>
             </h1>
-            <p className="mx-auto mt-4 max-w-xl text-base text-slate-500 sm:text-lg dark:text-slate-400">
+            <p className="mx-auto mt-4 max-w-2xl text-base text-slate-500 sm:text-lg lg:text-xl dark:text-slate-400">
               Your account and branch access are ready. Table management and order taking will be
               available when the dining module is activated.
             </p>
@@ -277,9 +277,9 @@ function WaiterIllustration({ className }: { className?: string }) {
         <path d="M150 20 V100" stroke="#334155" strokeWidth="2" />
         <path d="M128 124 C 128 106, 172 106, 172 124 Z" fill="#334155" />
         <circle cx="150" cy="128" r="5" fill="#FDE68A" />
-        <path d="M500 120 V178" stroke="#94A3B8" strokeWidth="2" />
-        <path d="M486 192 C 486 180, 514 180, 514 192 Z" fill="#475569" />
-        <circle cx="500" cy="195" r="3.5" fill="#FDE68A" />
+        <path d="M566 168 V218" stroke="#94A3B8" strokeWidth="2" />
+        <path d="M552 232 C 552 220, 580 220, 580 232 Z" fill="#475569" />
+        <circle cx="566" cy="235" r="3.5" fill="#FDE68A" />
       </g>
 
       {/* waiter */}
@@ -328,30 +328,38 @@ function WaiterIllustration({ className }: { className?: string }) {
         />
         <circle cx="298" cy="150" r="5" fill="#FDA4AF" opacity="0.5" />
         <circle cx="344" cy="150" r="5" fill="#FDA4AF" opacity="0.5" />
-        {/* left arm down */}
+        {/* left arm down (outline, then sleeve) */}
+        <path
+          d="M244 300 C 244 260, 248 236, 260 220"
+          stroke="#CBD5E1"
+          strokeWidth="33"
+          strokeLinecap="round"
+          fill="none"
+        />
         <path
           d="M244 300 C 244 260, 248 236, 260 220"
           stroke="#FFFFFF"
-          strokeWidth="30"
+          strokeWidth="29"
           strokeLinecap="round"
           fill="none"
         />
         {/* right arm holding tray */}
         <path
           d="M396 236 C 420 236, 440 214, 452 190"
-          stroke="#FFFFFF"
-          strokeWidth="26"
+          stroke="#CBD5E1"
+          strokeWidth="29"
           strokeLinecap="round"
           fill="none"
         />
         <path
           d="M396 236 C 420 236, 440 214, 452 190"
-          stroke="#E2E8F0"
-          strokeWidth="28"
+          stroke="#FFFFFF"
+          strokeWidth="25"
           strokeLinecap="round"
           fill="none"
-          opacity="0.35"
         />
+        {/* cuff */}
+        <path d="M446 200 l14 8" stroke="#CBD5E1" strokeWidth="3" strokeLinecap="round" />
         <ellipse cx="462" cy="178" rx="14" ry="9" fill="#F8C9A0" />
         {/* tray + cloche */}
         <ellipse cx="490" cy="168" rx="72" ry="7" fill="#1E293B" />

@@ -30,7 +30,7 @@ export function createApiClient(options: ApiClientOptions) {
   const doFetch = options.fetch ?? globalThis.fetch.bind(globalThis);
   const baseUrl = options.baseUrl.replace(/\/+$/, '');
 
-  async function request<T>(path: string, init: RequestOptions = {}): Promise<T> {
+  async function send(path: string, init: RequestOptions): Promise<unknown> {
     const headers: Record<string, string> = { Accept: 'application/json', ...init.headers };
     const token = options.getAccessToken?.();
     if (token) headers.Authorization = `Bearer ${token}`;
@@ -60,11 +60,24 @@ export function createApiClient(options: ApiClientOptions) {
         },
       );
     }
-    return (payload as { data: T } | undefined)?.data as T;
+    return payload;
+  }
+
+  async function request<T>(path: string, init: RequestOptions = {}): Promise<T> {
+    return ((await send(path, init)) as { data: T } | undefined)?.data as T;
+  }
+
+  /** Like `request` but keeps the whole `{ data, meta }` envelope (e.g. pagination). */
+  async function requestEnvelope<T, M = Record<string, unknown>>(
+    path: string,
+    init: RequestOptions = {},
+  ): Promise<{ data: T; meta: M }> {
+    return (await send(path, init)) as { data: T; meta: M };
   }
 
   return {
     request,
+    requestEnvelope,
     health: {
       check: (signal?: AbortSignal) =>
         request<HealthCheckResult>('/health', signal ? { signal } : {}),

@@ -105,15 +105,6 @@ export const COUPON_REASON: Record<string, string> = {
 
 const key = (tenantId?: string) => ['promotions', tenantId] as const;
 
-export function usePromotions() {
-  const { client } = useAuth();
-  const profile = useProfile();
-  return useQuery({
-    queryKey: key(profile.activeTenant?.id),
-    queryFn: () => client.request<{ promotions: Promotion[]; canManage: boolean }>('/promotions'),
-  });
-}
-
 export function usePromotion(id: string) {
   const { client } = useAuth();
   const profile = useProfile();

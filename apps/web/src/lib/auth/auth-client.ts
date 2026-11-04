@@ -139,6 +139,22 @@ export class AuthClient {
     }
   }
 
+  /** Authorized call returning the full `{ data, meta }` envelope (paged lists). */
+  async requestEnvelope<T, M>(
+    path: string,
+    init: RequestOptions = {},
+  ): Promise<{ data: T; meta: M }> {
+    if (!this.accessToken) await this.refresh();
+    try {
+      return await this.api.requestEnvelope<T, M>(path, init);
+    } catch (error) {
+      if (error instanceof ApiError && error.problem.status === 401 && (await this.refresh())) {
+        return this.api.requestEnvelope<T, M>(path, init);
+      }
+      throw error;
+    }
+  }
+
   private accept<T extends AuthSession>(session: T): T {
     this.accessToken = session.accessToken;
     clearTimeout(this.refreshTimer);

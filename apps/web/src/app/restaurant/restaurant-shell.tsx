@@ -37,6 +37,7 @@ import {
   usePopover,
   useSignOut,
 } from '@/components/shell/header-widgets';
+import { TrialReminderBanner } from '@/components/subscription/subscription-gate';
 import { hasPermissionAnywhere } from '@/lib/auth/access';
 import { initials, roleLabel } from '@/lib/auth/roles';
 import { isActive, liveItemsFor, type NavItem, navFor, upcomingFor } from './nav';
@@ -163,6 +164,7 @@ export function RestaurantShell({ children }: { children: ReactNode }) {
               <UserMenu />
             </div>
           </header>
+          <TrialReminderBanner />
           <main className="min-w-0 flex-1 px-4 py-5 sm:px-6">{children}</main>
         </div>
       </div>

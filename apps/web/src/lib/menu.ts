@@ -88,6 +88,22 @@ export function useMenu() {
   });
 }
 
+/** Categories with item counts (no items), for screens that page the items. */
+export function useMenuCategories() {
+  const { client } = useAuth();
+  const profile = useProfile();
+  return useQuery({
+    queryKey: [...menuKey(profile.activeTenant?.id), 'categories'],
+    queryFn: () =>
+      client.request<{
+        restaurant: MenuData['restaurant'];
+        categories: MenuCategory[];
+        itemCount: number;
+        canManage: boolean;
+      }>('/menu/categories'),
+  });
+}
+
 /** Menu writes; every success refetches the menu so all screens stay in step. */
 export function useMenuMutations() {
   const { client } = useAuth();

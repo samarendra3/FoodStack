@@ -111,7 +111,13 @@ export const RESTAURANT_NAV: readonly NavGroup[] = [
         icon: MonitorSmartphone,
         anyPermission: ['pos:access'],
       },
-      { id: 'orders', label: 'Orders', icon: ClipboardList, anyPermission: TILL },
+      {
+        id: 'orders',
+        label: 'Orders',
+        href: '/restaurant/orders',
+        icon: ClipboardList,
+        anyPermission: ['order:read'],
+      },
       { id: 'reservations', label: 'Reservations', icon: CalendarCheck, anyPermission: FLOOR },
       { id: 'kot', label: 'KOT / Kitchen Tickets', icon: ScrollText, anyPermission: KITCHEN },
       {
@@ -185,8 +191,9 @@ export const RESTAURANT_NAV: readonly NavGroup[] = [
       {
         id: 'customers',
         label: 'Customer Management',
+        href: '/restaurant/customers',
         icon: Users,
-        anyPermission: [...MANAGE, ...BRANCH_OPS],
+        anyPermission: ['order:read'],
       },
       { id: 'loyalty', label: 'Loyalty & Rewards', icon: Gift, anyPermission: MANAGE },
       {
@@ -202,8 +209,20 @@ export const RESTAURANT_NAV: readonly NavGroup[] = [
     id: 'finance',
     title: 'Billing & finance',
     items: [
-      { id: 'bills', label: 'Bills & Invoices', icon: ReceiptText, anyPermission: TILL },
-      { id: 'payments', label: 'Payments', icon: CreditCard, anyPermission: TILL },
+      {
+        id: 'bills',
+        label: 'Bills & Invoices',
+        href: '/restaurant/orders?status=completed',
+        icon: ReceiptText,
+        anyPermission: ['order:read'],
+      },
+      {
+        id: 'payments',
+        label: 'Payments',
+        href: '/restaurant/payments',
+        icon: CreditCard,
+        anyPermission: ['order:read'],
+      },
       { id: 'refunds', label: 'Refunds & Voids', icon: Undo2, anyPermission: BRANCH_OPS },
       { id: 'expenses', label: 'Expenses', icon: Receipt, anyPermission: MANAGE },
       { id: 'register', label: 'Cash Register', icon: Banknote, anyPermission: TILL },

@@ -78,7 +78,8 @@ export default function RequestsPage() {
         <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Restaurant requests</h1>
         <p className="mt-1 text-muted-foreground">
           People who clicked &ldquo;Get started&rdquo; on the website. Approving creates the
-          restaurant on a 14-day trial and emails the owner a link to set their password.
+          restaurant on a free trial (15 days, or the length of the plan they picked) and emails the
+          owner a link to set their password.
         </p>
       </motion.div>
 
@@ -367,7 +368,7 @@ function ReviewDialog({
       void queryClient.invalidateQueries({ queryKey: ['platform'] });
       onDone(
         action === 'approve'
-          ? `${request.restaurantName} is live on a 14-day trial. ${
+          ? `${request.restaurantName} is live on a free trial (15 days, or the length of the plan they picked). ${
               result?.ownerInvited
                 ? `${request.email} has been emailed a link to set their password.`
                 : `${request.email} already had an account and can sign in now.`
@@ -422,7 +423,7 @@ function ReviewDialog({
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">
           {approving
-            ? `Creates the restaurant on a 14-day trial with ${request.contactName} as owner, and emails ${request.email} a link to set their password.`
+            ? `Creates the restaurant on a free trial (15 days, or the length of the plan they picked) with ${request.contactName} as owner, and emails ${request.email} a link to set their password.`
             : `${request.contactName} will get a short, polite email. They can apply again later.`}
         </p>
 

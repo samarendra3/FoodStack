@@ -3,12 +3,14 @@
 import { Loader2 } from 'lucide-react';
 import { usePathname, useRouter } from 'next/navigation';
 import { type ReactNode, useEffect } from 'react';
+import { SubscriptionGate } from '@/components/subscription/subscription-gate';
 import { canAccessPath } from '@/lib/auth/access';
 import { useAuth } from './auth-provider';
 
 /**
  * Renders children only for a signed-in user allowed in this area; otherwise redirects to sign-in
- * or to the user's own home. A UX guard: the API authorizes every request regardless.
+ * or to the user's own home, and shows the subscription screen when a restaurant's trial or plan has
+ * lapsed. A UX guard: the API authorizes every request regardless.
  */
 export function RequireAuth({ children }: { children: ReactNode }) {
   const { state } = useAuth();
@@ -26,7 +28,7 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   }, [state, allowed, pathname, router]);
 
   if (!allowed) return <FullPageSpinner />;
-  return <>{children}</>;
+  return <SubscriptionGate>{children}</SubscriptionGate>;
 }
 
 export function FullPageSpinner({ label = 'Loading your workspace…' }: { label?: string }) {
