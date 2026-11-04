@@ -191,7 +191,7 @@ export function AuthLayout({ children }: { children: ReactNode }) {
         />
 
         <div className="relative flex flex-1 items-center justify-center px-4 min-h-0 py-3 sm:px-8">
-          <div className="w-full max-w-[38rem] rounded-[28px] border border-white bg-white px-6 py-5 sm:py-6 [@media(min-height:860px)]:py-10 max-h-full overflow-y-auto shadow-[0_20px_60px_-20px_rgba(6,58,46,0.25)] sm:px-11">
+          <div className="w-full max-w-[38rem] rounded-[28px] border border-white bg-white px-6 py-5 sm:py-6 [@media(min-height:860px)]:py-10 max-h-full overflow-y-auto shadow-sm sm:px-11">
             <Link
               href="/"
               className="mx-auto mb-3 flex [@media(min-height:860px)]:mb-6 w-fit items-center gap-4"

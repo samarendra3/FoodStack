@@ -1,15 +1,52 @@
 'use client';
 
-import { ChefHat } from 'lucide-react';
-import { WorkspacePage } from '@/components/workspace/workspace-page';
+import { useState } from 'react';
+import { useProfile } from '@/components/auth/auth-provider';
+import { RequireAuth } from '@/components/auth/require-auth';
+import { canAccessPath } from '@/lib/auth/access';
+import { TicketBoard } from './kitchen-board';
+import { useKitchenFeed, useNewTicketChime } from './kitchen-feed';
+import { KitchenEmptyState, KitchenError, SummaryCards, TicketSkeletons } from './kitchen-overview';
+import { KitchenShell } from './kitchen-shell';
 
 export default function KitchenPage() {
   return (
-    <WorkspacePage
-      title="Kitchen display"
-      icon={<ChefHat />}
-      emptyTitle="The kitchen display is being set up"
-      emptyDescription="Your sign-in and branch access are ready. Live kitchen tickets arrive with the kitchen module."
-    />
+    <RequireAuth>
+      <KitchenDisplay />
+    </RequireAuth>
+  );
+}
+
+function KitchenDisplay() {
+  const profile = useProfile();
+  const [branchId, setBranchId] = useState(profile.branches[0]?.id ?? '');
+  const feed = useKitchenFeed(branchId);
+  const { muted, setMuted } = useNewTicketChime(feed.tickets);
+  const canManage = canAccessPath(profile, '/restaurant/dashboard');
+
+  return (
+    <KitchenShell
+      branchId={branchId}
+      onBranch={setBranchId}
+      connection={feed.connection}
+      muted={muted}
+      onMuted={setMuted}
+    >
+      <div className="mx-auto max-w-[110rem] space-y-5 p-4 sm:p-6">
+        <SummaryCards
+          tickets={feed.tickets}
+          connection={feed.connection}
+          isLoading={feed.isLoading}
+        />
+        {feed.error ? <KitchenError message={feed.error} /> : null}
+        {feed.isLoading ? (
+          <TicketSkeletons />
+        ) : feed.tickets.length > 0 ? (
+          <TicketBoard feed={feed} />
+        ) : (
+          <KitchenEmptyState connection={feed.connection} canManage={canManage} />
+        )}
+      </div>
+    </KitchenShell>
   );
 }

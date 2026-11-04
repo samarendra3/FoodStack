@@ -1,7 +1,8 @@
 'use client';
 
 import { cn } from '@foodstack/ui/lib/utils';
-import { Bell, ChevronDown, Loader2, LogOut } from 'lucide-react';
+import { Bell, ChevronDown, Loader2, LogOut, UserRound } from 'lucide-react';
+import Link from 'next/link';
 import { AnimatePresence, motion } from 'motion/react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
@@ -128,6 +129,16 @@ export function UserMenu() {
               <p className="truncate text-sm font-semibold">{profile.user.fullName}</p>
               <p className="truncate text-xs text-muted-foreground">{profile.user.email}</p>
             </div>
+            {profile.audience === 'tenant' ? (
+              <Link
+                href="/restaurant/profile"
+                role="menuitem"
+                onClick={() => setOpen(false)}
+                className="mt-1 flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-sm hover:bg-muted"
+              >
+                <UserRound className="size-4" /> My profile &amp; subscription
+              </Link>
+            ) : null}
             <button
               type="button"
               role="menuitem"

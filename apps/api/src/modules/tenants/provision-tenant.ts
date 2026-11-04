@@ -12,6 +12,8 @@ export interface ProvisionTenantInput {
   /** Super Admin who triggered it (null from the CLI). */
   actorUserId?: string | null;
   via: 'cli' | 'access_request';
+  /** Free trial length in days (default 15). */
+  trialDays?: number;
 }
 
 export interface ProvisionedTenant {
@@ -36,7 +38,7 @@ export async function upsertUser(db: Db, email: string, fullName: string) {
 }
 
 /**
- * Creates a restaurant account on a 14-day trial: tenant, restaurant, MAIN branch, and the owner
+ * Creates a restaurant account on a 15-day trial (trial_ends_at is set by the database from its clock): tenant, restaurant, MAIN branch, and the owner
  * with the Owner role. Runs inside the caller's transaction; leaves the scope set to the new
  * tenant. Throws on a taken slug (unique constraint), which callers turn into a clear message.
  */
@@ -49,8 +51,8 @@ export async function provisionTenant(
   await db.setScope({ platform: true, userId: input.actorUserId ?? null });
   const tenant = await db.one<{ id: string }>(
     `INSERT INTO tenants (slug, name, status, trial_ends_at)
-     VALUES ($1, $2, 'trial', now() + interval '14 days') RETURNING id`,
-    [input.slug, input.name],
+     VALUES ($1, $2, 'trial', now() + make_interval(days => $3)) RETURNING id`,
+    [input.slug, input.name, input.trialDays ?? 15],
   );
   const tenantId = tenant!.id;
   await db.setScope({ tenantId, userId: owner.id });

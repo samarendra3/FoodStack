@@ -168,7 +168,7 @@ function CredentialsStep({
         <Button
           type="submit"
           size="lg"
-          className="h-12 [@media(min-height:860px)]:h-14 w-full rounded-xl text-lg shadow-lg shadow-emerald-700/20"
+          className="h-12 [@media(min-height:860px)]:h-14 w-full rounded-xl text-lg shadow-sm"
           disabled={submitting}
         >
           {submitting ? (

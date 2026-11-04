@@ -71,6 +71,8 @@ export function GetStartedForm() {
           branchCount: d.branchCount ? Number(d.branchCount) : undefined,
           message: d.message || undefined,
           website: honeypot || undefined,
+          // Plan picked on the pricing page (?plan=slug); its trial length applies on approval.
+          planCode: planFromUrl(),
         },
       });
       setSentTo(d.email);
@@ -104,7 +106,7 @@ export function GetStartedForm() {
           <p className="mt-2 text-slate-600">
             Our team will review it shortly. Once approved, we&apos;ll email{' '}
             <strong className="text-slate-900">{sentTo}</strong> a link to set your password and
-            start your 14-day free trial.
+            start your free trial.
           </p>
           <div className="mt-6 flex flex-col items-center gap-3">
             <Link
@@ -262,4 +264,10 @@ export function GetStartedForm() {
       )}
     </AnimatePresence>
   );
+}
+
+/** The plan slug from the pricing page link, if it looks valid. */
+function planFromUrl(): string | undefined {
+  const plan = new URLSearchParams(window.location.search).get('plan')?.toLowerCase();
+  return plan && /^[a-z0-9-]{2,30}$/.test(plan) ? plan : undefined;
 }

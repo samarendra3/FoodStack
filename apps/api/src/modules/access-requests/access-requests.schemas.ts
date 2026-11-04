@@ -27,6 +27,13 @@ export const accessRequestSchema = z.strictObject({
   city: optionalText(120),
   branchCount: z.number().int().min(1).max(10_000).optional(),
   message: optionalText(1000),
+  /** Slug of the plan picked on the pricing page; sets the trial length on approval. */
+  planCode: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .regex(/^[a-z0-9-]{2,30}$/)
+    .optional(),
   /** Honeypot: hidden on the form, so only bots fill it in. */
   website: z.string().max(200).optional(),
 });

@@ -37,11 +37,11 @@ const MAIN_NAV: NavLink[] = [
   { label: 'Dashboard', href: '/platform/dashboard', icon: LayoutGrid },
   { label: 'Restaurants', href: '/platform/restaurants', icon: Store },
   { label: 'Requests', href: '/platform/requests', icon: Inbox },
+  { label: 'Subscriptions', href: '/platform/subscriptions', icon: ShieldCheck },
 ];
 // Not built yet: shown so the structure is visible, but not clickable.
 const PLATFORM_NAV: NavLink[] = [
   { label: 'Users', icon: UsersRound },
-  { label: 'Subscriptions', icon: ShieldCheck },
   { label: 'Settings', icon: Settings },
   { label: 'Audit Logs', icon: FileClock },
 ];

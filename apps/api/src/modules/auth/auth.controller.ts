@@ -27,13 +27,20 @@ import {
 import { AuthService, type IssuedSession } from './auth.service';
 import type { AuthContext, RequestMeta } from './auth.types';
 import { clearSessionCookies, readRefreshCookie, setSessionCookies } from './cookies';
-import { AllowAudience, type AuthedRequest, CurrentAuth, Public } from './decorators';
+import {
+  AllowAudience,
+  AllowInactiveSubscription,
+  type AuthedRequest,
+  CurrentAuth,
+  Public,
+} from './decorators';
 
 const MINUTE = 60_000;
 
 export const CSRF_HEADER = 'x-foodstack-csrf';
 
 @ApiTags('Auth')
+@AllowInactiveSubscription()
 @Controller('auth')
 export class AuthController {
   constructor(

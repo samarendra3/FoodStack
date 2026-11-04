@@ -4,6 +4,8 @@ import { type Db, DbContext } from '../../core/db/db-context';
 import type { AuthContext, RequestMeta } from '../auth/auth.types';
 import { issueUserToken, writeAudit } from '../auth/user-tokens';
 import { MailService } from '../notifications/mail.service';
+import { OFFERED_SQL } from '../billing/plan-catalogue';
+import { TRIAL_DAYS } from '../billing/subscription-state';
 import { provisionTenant } from '../tenants/provision-tenant';
 import {
   type AccessRequestInput,
@@ -59,8 +61,8 @@ export class AccessRequestsService {
     const stored = await this.db.run({}, (db) =>
       db.one<{ id: string }>(
         `INSERT INTO access_requests
-           (restaurant_name, contact_name, email, phone, city, branch_count, message, ip)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           (restaurant_name, contact_name, email, phone, city, branch_count, message, ip, plan_code)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          ON CONFLICT (email) WHERE status = 'pending' DO NOTHING
          RETURNING id`,
         [
@@ -72,6 +74,7 @@ export class AccessRequestsService {
           input.branchCount ?? null,
           input.message ?? null,
           meta.ip,
+          input.planCode ?? null,
         ],
       ),
     );
@@ -104,7 +107,15 @@ export class AccessRequestsService {
     const result = await this.db
       .run({ platform: true, userId: auth.userId }, async (db) => {
         const request = await this.lockPending(db, id);
+        // Trial length comes from the plan picked on the pricing page, if still offered.
+        const plan = request.plan_code
+          ? await db.one<{ trial_days: number }>(
+              `SELECT trial_days FROM plans WHERE code = $1 AND ${OFFERED_SQL}`,
+              [request.plan_code],
+            )
+          : undefined;
         const tenant = await provisionTenant(db, {
+          trialDays: plan?.trial_days ?? TRIAL_DAYS,
           name: request.restaurant_name,
           slug: input.slug,
           ownerEmail: request.email,
@@ -201,8 +212,9 @@ export class AccessRequestsService {
       contact_name: string;
       restaurant_name: string;
       status: string;
+      plan_code: string | null;
     }>(
-      `SELECT email::text AS email, contact_name, restaurant_name, status
+      `SELECT email::text AS email, contact_name, restaurant_name, status, plan_code
          FROM access_requests WHERE id = $1 FOR UPDATE`,
       [id],
     );

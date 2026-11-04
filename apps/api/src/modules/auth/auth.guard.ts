@@ -8,6 +8,8 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { DbContext } from '../../core/db/db-context';
+import { subscriptionRequired } from '../billing/subscription-lifecycle.service';
+import { effectiveStatus, hasAccess, type SubscriptionStatus } from '../billing/subscription-state';
 import { hasPermission } from './access';
 import { ACTIVE_TENANT_STATUSES, AccessService } from './access.service';
 import type { Audience } from './auth.types';
@@ -17,6 +19,7 @@ import {
   PERMISSION_KEY,
   type PermissionRequirement,
   PUBLIC_KEY,
+  SUBSCRIPTION_EXEMPT_KEY,
 } from './decorators';
 import { TokenService } from './token.service';
 
@@ -27,6 +30,8 @@ const unauthenticated = (message = 'Sign in to continue.') =>
  * Global guard, deny by default. Every route needs @Public() or a valid access token, and then:
  * - the session must still be live (revocation and tenant suspension apply on the next request,
  *   even with an unexpired token);
+ * - tenant sessions need an entitled subscription (trial or paid period not over), evaluated
+ *   from the stored dates on every request, unless the route is @AllowInactiveSubscription();
  * - the session audience must match the route (tenant by default; platform needs TOTP);
  * - @RequirePermission is checked against the caller's scopes. Branches of other tenants are
  *   invisible under RLS and answer 404, never 403, so their existence is not revealed.
@@ -69,6 +74,10 @@ export class AuthGuard implements CanActivate {
       });
     }
 
+    const subscriptionExempt = this.reflector.getAllAndOverride<boolean>(
+      SUBSCRIPTION_EXEMPT_KEY,
+      targets,
+    );
     const permission = this.reflector.getAllAndOverride<PermissionRequirement | undefined>(
       PERMISSION_KEY,
       targets,
@@ -83,13 +92,19 @@ export class AuthGuard implements CanActivate {
           user_status: string;
           tenant_status: string | null;
           membership_status: string | null;
+          sub_status: SubscriptionStatus | null;
+          sub_start: Date | null;
+          sub_end: Date | null;
         }>(
           `SELECT s.revoked_at IS NOT NULL AS revoked, s.absolute_expires_at <= now() AS expired,
-                  u.status AS user_status, t.status AS tenant_status, m.status AS membership_status
+                  u.status AS user_status, t.status AS tenant_status, m.status AS membership_status,
+                  sub.status AS sub_status, sub.current_period_start AS sub_start,
+                  sub.current_period_end AS sub_end
              FROM sessions s
              JOIN users u ON u.id = s.user_id
              LEFT JOIN tenants t ON t.id = s.tenant_id
              LEFT JOIN tenant_memberships m ON m.id = s.membership_id
+             LEFT JOIN subscriptions sub ON sub.tenant_id = s.tenant_id
             WHERE s.id = $1 AND s.user_id = $2`,
           [claims.sessionId, claims.userId],
         );
@@ -108,6 +123,20 @@ export class AuthGuard implements CanActivate {
           }
           if (state.membership_status !== 'active') {
             throw unauthenticated('Your access to this restaurant has been removed.');
+          }
+          if (!subscriptionExempt) {
+            // Fail closed: a tenant without a subscription row has no entitlement.
+            const status = state.sub_status
+              ? effectiveStatus(
+                  {
+                    status: state.sub_status,
+                    periodStart: new Date(state.sub_start!),
+                    periodEnd: state.sub_end ? new Date(state.sub_end) : null,
+                  },
+                  new Date(),
+                )
+              : 'expired';
+            if (!hasAccess(status)) throw subscriptionRequired(status);
           }
         }
 

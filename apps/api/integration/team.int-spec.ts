@@ -383,6 +383,37 @@ describe('Team (integration)', () => {
     });
   });
 
+  describe('activity feed', () => {
+    it('shows business-wide managers their team events, with names', async () => {
+      const res = await as('owner', 'get', '/restaurant/activity').expect(200);
+      expect(res.body.data.available).toBe(true);
+      const events = res.body.data.events as {
+        action: string;
+        actorName: string | null;
+        subjectName: string | null;
+      }[];
+      expect(events.length).toBeGreaterThan(0);
+      expect(events.length).toBeLessThanOrEqual(12);
+      const suspended = events.find((e) => e.action === 'member.suspended');
+      expect(suspended).toMatchObject({ actorName: 'admin', subjectName: 'cashierSecond' });
+      expect(events.every((e) => !e.action.startsWith('auth.'))).toBe(true);
+    });
+
+    it('is not offered to branch-limited managers, and closed to staff', async () => {
+      const res = await as('manager', 'get', '/restaurant/activity').expect(200);
+      expect(res.body.data).toEqual({ available: false, events: [] });
+      await as('cashierMain', 'get', '/restaurant/activity').expect(403);
+    });
+
+    it("never shows another business's events", async () => {
+      const res = await as('bravoOwner', 'get', '/restaurant/activity').expect(200);
+      const names = (res.body.data.events as { subjectName: string | null }[]).map(
+        (e) => e.subjectName,
+      );
+      expect(names).not.toContain('cashierSecond');
+    });
+  });
+
   describe('isolation', () => {
     it("cannot see or change another business's members", async () => {
       const res = await as('bravoOwner', 'get', '/team').expect(200);

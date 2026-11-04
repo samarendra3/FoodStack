@@ -31,7 +31,11 @@ export class RestaurantOverviewController {
         name: string;
         status: string;
         trial_ends_at: Date | null;
-      }>('SELECT id, name, status, trial_ends_at FROM tenants WHERE id = $1', [auth.tenantId]);
+      }>(
+        `SELECT t.id, t.name, t.status, s.trial_ends_at
+           FROM tenants t LEFT JOIN subscriptions s ON s.tenant_id = t.id WHERE t.id = $1`,
+        [auth.tenantId],
+      );
       const restaurants = await db.query<{
         id: string;
         name: string;
@@ -66,6 +70,52 @@ export class RestaurantOverviewController {
         branches,
         activeMembers: team ? Number(team.count) : null,
         roles: access.roles,
+      };
+    });
+  }
+
+  @Get('restaurant/activity')
+  @RequirePermission('audit:view')
+  @ApiOperation({
+    summary: 'Recent business events (team changes, approvals) for business-wide managers',
+  })
+  activity(@CurrentAuth() auth: AuthContext) {
+    return this.db.run({ tenantId: auth.tenantId, userId: auth.userId }, async (db) => {
+      const access = await this.access.tenantAccess(db, auth.membershipId!);
+      // The audit log is business-wide; branch-limited managers do not get it.
+      if (!access.tenant.includes('audit:view')) return { available: false, events: [] };
+      const events = await db.query<{
+        id: string;
+        action: string;
+        createdAt: string;
+        actorName: string | null;
+        subjectName: string | null;
+        metadata: Record<string, unknown>;
+      }>(
+        `SELECT a.id, a.action, a.created_at AS "createdAt", actor.full_name AS "actorName",
+                subject.full_name AS "subjectName", a.metadata
+           FROM audit_logs a
+           LEFT JOIN users actor ON actor.id = a.actor_user_id
+           LEFT JOIN tenant_memberships m
+                  ON a.entity_type = 'membership' AND m.id = a.entity_id
+           LEFT JOIN users subject ON subject.id = m.user_id
+          WHERE a.tenant_id = $1
+            AND (a.action LIKE 'member.%' OR a.action IN ('tenant.created', 'access_request.approved'))
+          ORDER BY a.created_at DESC
+          LIMIT 12`,
+        [auth.tenantId],
+      );
+      return {
+        available: true,
+        events: events.map((e) => ({
+          id: e.id,
+          action: e.action,
+          createdAt: e.createdAt,
+          actorName: e.actorName,
+          subjectName: e.subjectName,
+          role: typeof e.metadata.role === 'string' ? e.metadata.role : null,
+          toRole: typeof e.metadata.to === 'string' ? e.metadata.to : null,
+        })),
       };
     });
   }
