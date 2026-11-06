@@ -8,6 +8,7 @@ import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/app.setup';
 import { PasswordHasher } from '../src/core/security/password-hasher';
 import { MailService } from '../src/modules/notifications/mail.service';
+import { REDIS_CLIENT } from '../src/shared/redis/redis.constants';
 import { connect, deliverEmails, waitForEmail } from './helpers';
 
 /**
@@ -521,6 +522,34 @@ describe('Authentication (integration)', () => {
         .send({ challengeToken: fresh, code: '000007' })
         .expect(401);
       expect(one.body.code).toBe('AUTH_MFA_INVALID');
+    });
+  });
+
+  describe('Redis outage (decision: auth fails closed)', () => {
+    it('answers 503 AUTH_UNAVAILABLE on sign-in, MFA and password reset; other routes stay up', async () => {
+      const redis = app.get<{ eval: (...a: unknown[]) => Promise<unknown> }>(REDIS_CLIENT);
+      const spy = jest.spyOn(redis, 'eval').mockRejectedValue(new Error('ECONNREFUSED'));
+      try {
+        const calls = [
+          http().post(`${API}/auth/login`).send({ email: emails.ownerA, password: PASSWORD }),
+          http().post(`${API}/auth/mfa/verify`).send({ challengeToken: 'x', code: '123456' }),
+          http().post(`${API}/auth/password/forgot`).send({ email: emails.ownerA }),
+          http()
+            .post(`${API}/auth/password/reset`)
+            .send({ token: 'x', password: 'Another-Pass-77' }),
+        ];
+        for (const res of await Promise.all(calls)) {
+          expect(res.status).toBe(503);
+          expect(res.body.code).toBe('AUTH_UNAVAILABLE');
+          expect(res.headers['retry-after']).toBe('10');
+        }
+        // Fail open elsewhere: the public plan list still answers.
+        await http().get(`${API}/plans`).expect(200);
+      } finally {
+        spy.mockRestore();
+      }
+      // Recovery: sign-in works again as soon as Redis answers.
+      await login(emails.ownerA!).expect(200);
     });
   });
 

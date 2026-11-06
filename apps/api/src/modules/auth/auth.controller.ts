@@ -1,3 +1,4 @@
+import { FailClosed } from '../../shared/rate-limit/fail-closed';
 import { requestMeta } from '../../common/http/request-meta';
 import {
   Body,
@@ -45,6 +46,7 @@ export class AuthController {
 
   @Public()
   @Post('login')
+  @FailClosed()
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 10, ttl: MINUTE } })
   @ApiOperation({ summary: 'Sign in with email and password (202 when a TOTP step follows)' })
@@ -68,6 +70,7 @@ export class AuthController {
 
   @Public()
   @Post('mfa/verify')
+  @FailClosed()
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 10, ttl: MINUTE } })
   @ApiOperation({ summary: 'Complete sign-in with a TOTP or recovery code' })
@@ -82,6 +85,7 @@ export class AuthController {
 
   @Public()
   @Post('mfa/enroll/start')
+  @FailClosed()
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 10, ttl: MINUTE } })
   @ApiOperation({ summary: 'First sign-in: create an authenticator secret (QR code)' })
@@ -95,6 +99,7 @@ export class AuthController {
 
   @Public()
   @Post('mfa/enroll/confirm')
+  @FailClosed()
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 10, ttl: MINUTE } })
   @ApiOperation({ summary: 'Confirm the authenticator code; returns one-time recovery codes' })
@@ -145,6 +150,7 @@ export class AuthController {
 
   @Public()
   @Post('password/forgot')
+  @FailClosed()
   @HttpCode(HttpStatus.ACCEPTED)
   @Throttle({ default: { limit: 5, ttl: 15 * MINUTE } })
   @ApiOperation({
@@ -160,6 +166,7 @@ export class AuthController {
 
   @Public()
   @Post('password/reset')
+  @FailClosed()
   @HttpCode(HttpStatus.NO_CONTENT)
   @Throttle({ default: { limit: 10, ttl: 15 * MINUTE } })
   @ApiOperation({

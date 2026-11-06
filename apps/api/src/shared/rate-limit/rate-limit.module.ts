@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
-import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { OutageAwareThrottlerGuard } from './fail-closed';
 import type Redis from 'ioredis';
 import { AppConfigService } from '../../config/app-config.service';
 import { REDIS_CLIENT } from '../redis/redis.constants';
@@ -29,6 +30,6 @@ import { RedisThrottlerStorage } from './redis-throttler.storage';
       }),
     }),
   ],
-  providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
+  providers: [{ provide: APP_GUARD, useClass: OutageAwareThrottlerGuard }],
 })
 export class RateLimitModule {}
