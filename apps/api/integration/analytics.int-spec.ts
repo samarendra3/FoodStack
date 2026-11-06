@@ -121,7 +121,7 @@ describe('Analytics (integration)', () => {
     );
     await migrator.query(
       `INSERT INTO user_role_assignments (tenant_id, membership_id, role_id, scope_type, scope_id)
-       SELECT $1, $2, id, $4, $5 FROM roles WHERE tenant_id IS NULL AND code = $3`,
+       SELECT $1, $2, id, $4, $5 FROM roles WHERE (tenant_id IS NULL OR tenant_id = $1) AND code = $3`,
       [tenantId, m.id, role, branchId ? 'branch' : 'tenant', branchId ?? null],
     );
   }
@@ -243,6 +243,16 @@ describe('Analytics (integration)', () => {
     await member('manager', alpha.id, 'branch_manager', hash, alpha.main);
     await member('cashier', alpha.id, 'cashier', hash, alpha.main);
     await member('bravoOwner', bravo.id, 'owner', hash);
+    // Custom role: reports only, no order:read (so no customer-level detail).
+    const [reportsOnly] = await migrator.query(
+      `INSERT INTO roles (tenant_id, code, name, audience) VALUES ($1, 'reports_only', 'Reports only', 'tenant') RETURNING id`,
+      [alpha.id],
+    );
+    await migrator.query(
+      `INSERT INTO role_permissions (role_id, permission_id) SELECT $1, id FROM permissions WHERE code = 'report:view'`,
+      [reportsOnly.id],
+    );
+    await member('reportsOnly', alpha.id, 'reports_only', hash);
 
     const c1 = await customer(alpha, '9000000001');
     const c3 = await customer(alpha, '9000000003');
@@ -370,7 +380,7 @@ describe('Analytics (integration)', () => {
         .post(`${API}/auth/login`)
         .set('X-Forwarded-For', freshIp())
         .send({ email: emails[who], password: PASSWORD });
-    for (const who of ['owner', 'manager', 'cashier', 'bravoOwner']) {
+    for (const who of ['owner', 'manager', 'cashier', 'bravoOwner', 'reportsOnly']) {
       tokens[who] = (await login(who).expect(200)).body.data.accessToken;
     }
     const challengeToken = (await login('admin').expect(202)).body.data.challengeToken as string;
@@ -401,9 +411,16 @@ describe('Analytics (integration)', () => {
         'menu_items',
         'menu_categories',
         'user_role_assignments',
+        'roles',
       ]) {
         await migrator.query(`DELETE FROM ${table} WHERE tenant_id = ANY($1::uuid[])`, [tenants]);
       }
+      // Like every other suite: a leftover Super Admin assignment blocks reverting the
+      // system-role seed migration in database.int-spec.
+      await migrator.query(
+        'DELETE FROM platform_role_assignments WHERE user_id IN (SELECT id FROM users WHERE email = ANY($1::citext[]))',
+        [Object.values(emails)],
+      );
       await migrator.destroy();
     }
   });
@@ -598,6 +615,17 @@ describe('Analytics (integration)', () => {
       await call('manager', 'get', `/analytics/menu${day(D, `&branchId=${ids.second}`)}`).expect(
         403,
       );
+    });
+
+    it('requires order:read as well for customer-level analytics', async () => {
+      // report:view alone: the dashboard works, customer detail does not.
+      await call('reportsOnly', 'get', `/analytics/summary${day(D)}`).expect(200);
+      await call('reportsOnly', 'get', `/analytics/menu${day(D)}`).expect(200);
+      const denied = await call('reportsOnly', 'get', `/analytics/customers${day(D)}`).expect(403);
+      expect(denied.body.code).toBe('REPORT_FORBIDDEN');
+      // Roles holding both still get it.
+      await call('owner', 'get', `/analytics/customers${day(D)}`).expect(200);
+      await call('manager', 'get', `/analytics/customers${day(D)}`).expect(200);
     });
 
     it('blocks roles without report:view', async () => {

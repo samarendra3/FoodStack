@@ -105,6 +105,13 @@ export const envSchema = z
     CACHE_TTL_ANALYTICS_SECONDS: z.coerce.number().int().positive().default(60),
     /** Analytics over a range that ended before today (local time). */
     CACHE_TTL_ANALYTICS_CLOSED_SECONDS: z.coerce.number().int().positive().default(900),
+    /**
+     * Analytics requests running at once per API process (each holds one pooled connection).
+     * Keeps heavy uncached dashboards from starving POS and order traffic. 0 = DATABASE_POOL_MAX / 2.
+     */
+    ANALYTICS_MAX_CONCURRENCY: z.coerce.number().int().nonnegative().default(0),
+    /** How long an analytics request may wait for a slot before a 503 with Retry-After. */
+    ANALYTICS_QUEUE_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
     /** Super Admin platform analytics (tenants, subscriptions, SaaS invoices). */
     CACHE_TTL_PLATFORM_ANALYTICS_SECONDS: z.coerce.number().int().positive().default(300),
     /** After a Redis error, skip the cache for this long instead of paying a timeout per request. */
