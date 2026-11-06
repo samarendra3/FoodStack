@@ -1,3 +1,4 @@
+import { MetricsModule } from './shared/metrics/metrics.module';
 import { Module } from '@nestjs/common';
 import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
 import { LoggerModule } from 'nestjs-pino';
@@ -64,6 +65,7 @@ function isInstalled(pkg: string): boolean {
     CacheModule,
     QueueModule,
     RateLimitModule,
+    MetricsModule,
     HealthModule,
     NotificationsModule,
     AuthModule,

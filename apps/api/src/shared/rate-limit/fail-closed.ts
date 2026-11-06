@@ -1,3 +1,4 @@
+import { rateLimitUnavailable } from '../metrics/metrics';
 import {
   type ExecutionContext,
   Injectable,
@@ -40,6 +41,7 @@ export class OutageAwareThrottlerGuard extends ThrottlerGuard {
         context.getHandler(),
         context.getClass(),
       ]);
+      rateLimitUnavailable.inc({ outcome: failClosed ? 'rejected' : 'allowed' });
       if (failClosed) {
         throw new ServiceUnavailableException({
           code: 'AUTH_UNAVAILABLE',

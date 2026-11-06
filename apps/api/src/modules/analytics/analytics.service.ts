@@ -1,3 +1,4 @@
+import { registerAnalyticsLimiter } from '../../shared/metrics/metrics.module';
 import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { ConcurrencyLimiter, LimiterTimeoutError } from '../../common/utils/concurrency-limiter';
 import { AppConfigService } from '../../config/app-config.service';
@@ -68,6 +69,8 @@ export class AnalyticsService {
     const max =
       configured > 0 ? configured : Math.max(1, Math.floor(config.get('DATABASE_POOL_MAX') / 2));
     this.limiter = new ConcurrencyLimiter(max, config.get('ANALYTICS_QUEUE_TIMEOUT_MS'));
+    const limiter = this.limiter;
+    registerAnalyticsLimiter(() => ({ running: limiter.running, waiting: limiter.waiting, max }));
   }
 
   /** Bounds the pooled connections analytics can hold at once (see ANALYTICS_MAX_CONCURRENCY). */
