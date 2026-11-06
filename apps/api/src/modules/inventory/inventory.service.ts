@@ -167,6 +167,7 @@ export class InventoryService {
         params,
         sortColumns: { createdAt: 'm.created_at', quantity: 'abs(m.quantity_delta)' },
         tiebreak: 'm.id',
+        cursor: { types: { createdAt: 'timestamptz', quantity: 'numeric' }, tiebreakType: 'uuid' },
         query,
         map: (r) => ({
           id: r.id,

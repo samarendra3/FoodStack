@@ -219,6 +219,15 @@ export class OrdersService {
           status: 'o.status',
         },
         tiebreak: 'o.id',
+        cursor: {
+          types: {
+            createdAt: 'timestamptz',
+            orderNumber: 'integer',
+            totalMinor: 'bigint',
+            status: 'text',
+          },
+          tiebreakType: 'uuid',
+        },
         query,
         map: (r) => ({
           ...summary(r),
@@ -254,6 +263,10 @@ export class OrdersService {
         params,
         sortColumns: { createdAt: 'p.created_at', amountMinor: 'p.amount_minor' },
         tiebreak: 'p.id',
+        cursor: {
+          types: { createdAt: 'timestamptz', amountMinor: 'bigint' },
+          tiebreakType: 'uuid',
+        },
         query,
         map: (r) => ({
           id: r.id,
