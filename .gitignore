@@ -20,3 +20,6 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 .idea/
+
+# Local HA/monitoring rehearsal secrets
+infrastructure/docker/ha/secrets.env

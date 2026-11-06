@@ -1,0 +1,55 @@
+# Monitoring (local rehearsal): Prometheus, Alertmanager, Grafana and exporters for PostgreSQL,
+# Redis and PgBouncer. Use it with the HA overlay, which runs the scraped api-ha / worker-ha:
+#   docker compose -f docker-compose.yml -f docker-compose.ha.yml -f docker-compose.monitoring.yml \
+#     --profile ha --profile monitoring up -d --scale api-ha=2 --scale worker-ha=2
+# Grafana http://127.0.0.1:3300 (admin / GRAFANA_ADMIN_PASSWORD), Prometheus http://127.0.0.1:9090,
+# Alertmanager http://127.0.0.1:9093. Everything binds to loopback.
+services:
+  prometheus:
+    profiles: [monitoring]
+    image: prom/prometheus:v3.5.0
+    command: ['--config.file=/etc/prometheus/prometheus.yml', '--storage.tsdb.retention.time=7d']
+    volumes:
+      - ./infrastructure/monitoring/prometheus:/etc/prometheus:ro
+    ports: ['127.0.0.1:9090:9090']
+
+  alertmanager:
+    profiles: [monitoring]
+    image: prom/alertmanager:v0.28.1
+    command: ['--config.file=/etc/alertmanager/alertmanager.yml']
+    volumes:
+      - ./infrastructure/monitoring/alertmanager:/etc/alertmanager:ro
+    ports: ['127.0.0.1:9093:9093']
+
+  grafana:
+    profiles: [monitoring]
+    image: grafana/grafana:12.1.1
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD}
+      GF_AUTH_ANONYMOUS_ENABLED: 'false'
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+    volumes:
+      - ./infrastructure/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infrastructure/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ['127.0.0.1:3300:3000']
+
+  postgres-exporter:
+    profiles: [monitoring]
+    image: prometheuscommunity/postgres-exporter:v0.17.1
+    environment:
+      DATA_SOURCE_URI: postgres:5432/postgres?sslmode=disable
+      DATA_SOURCE_USER: ${DATABASE_MIGRATION_USER}
+      DATA_SOURCE_PASS: ${DATABASE_MIGRATION_PASSWORD}
+
+  redis-exporter:
+    profiles: [monitoring]
+    image: oliver006/redis_exporter:v1.75.0
+    environment:
+      REDIS_ADDR: redis://redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+
+  pgbouncer-exporter:
+    profiles: [monitoring]
+    image: prometheuscommunity/pgbouncer-exporter:v0.11.0
+    command:
+      - '--pgBouncer.connectionString=postgres://${DATABASE_USER}:${DATABASE_PASSWORD}@pgbouncer:6432/pgbouncer?sslmode=disable'

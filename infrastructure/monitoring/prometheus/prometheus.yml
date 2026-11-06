@@ -1,0 +1,26 @@
+# FoodStack Prometheus (local rehearsal). On AWS the same rules run in Amazon Managed Service
+# for Prometheus, fed by an ADOT collector sidecar in each ECS task (infrastructure/aws/README.md).
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files: [/etc/prometheus/alerts.yml]
+
+alerting:
+  alertmanagers:
+    - static_configs: [{ targets: ['alertmanager:9093'] }]
+
+scrape_configs:
+  # Every API replica: Docker DNS returns one A record per replica, so scaling needs no edit.
+  - job_name: api
+    dns_sd_configs: [{ names: ['api-ha'], type: A, port: 9464, refresh_interval: 15s }]
+  - job_name: worker
+    dns_sd_configs: [{ names: ['worker-ha'], type: A, port: 9465, refresh_interval: 15s }]
+  - job_name: postgres
+    static_configs: [{ targets: ['postgres-exporter:9187'] }]
+  - job_name: redis
+    static_configs: [{ targets: ['redis-exporter:9121'] }]
+  - job_name: pgbouncer
+    static_configs: [{ targets: ['pgbouncer-exporter:9127'] }]
+  - job_name: prometheus
+    static_configs: [{ targets: ['localhost:9090'] }]

@@ -1,0 +1,127 @@
+# Alert rules. Thresholds follow the Phase 8 SLO targets (p95 < 300 ms, p99 < 800 ms,
+# errors < 1 %, critical availability >= 99.9 %). `for:` avoids paging on a single scrape.
+groups:
+  - name: foodstack-api
+    rules:
+      - alert: ApiReplicaDown
+        expr: up{job="api"} == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations: { summary: 'API replica {{ $labels.instance }} is not being scraped' }
+      - alert: ApiNoHealthyReplicas
+        expr: sum(up{job="api"}) == 0 or absent(up{job="api"})
+        for: 30s
+        labels: { severity: critical }
+        annotations: { summary: 'No API replica is up' }
+      - alert: ApiHighErrorRate
+        expr: |
+          sum(rate(foodstack_http_requests_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(foodstack_http_requests_total[5m])), 1e-9) > 0.01
+        for: 5m
+        labels: { severity: critical }
+        annotations: { summary: '5xx rate above 1 % for 5 minutes' }
+      - alert: ApiLatencyP95High
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(foodstack_http_request_duration_seconds_bucket{route!~".*health.*"}[5m]))) > 0.3
+        for: 10m
+        labels: { severity: warning }
+        annotations: { summary: 'API p95 latency above 300 ms for 10 minutes' }
+      - alert: ApiLatencyP99High
+        expr: |
+          histogram_quantile(0.99, sum by (le) (rate(foodstack_http_request_duration_seconds_bucket{route!~".*health.*"}[5m]))) > 0.8
+        for: 10m
+        labels: { severity: warning }
+        annotations: { summary: 'API p99 latency above 800 ms for 10 minutes' }
+      - alert: ApiEventLoopLag
+        expr: foodstack_nodejs_eventloop_lag_p99_seconds{app="api"} > 0.2
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          {
+            summary: 'Event-loop p99 lag above 200 ms on {{ $labels.instance }}: CPU saturated, scale out',
+          }
+      - alert: ApiMemoryHigh
+        expr: foodstack_process_resident_memory_bytes{app="api"} > 900e6
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          { summary: 'API RSS above 900 MB for 15 minutes on {{ $labels.instance }} (leak?)' }
+      - alert: AuthFailingClosed
+        expr: increase(foodstack_rate_limit_unavailable_total{outcome="rejected"}[5m]) > 0
+        labels: { severity: critical }
+        annotations:
+          {
+            summary: 'Sign-in, MFA or password reset refused with 503: distributed rate limiting is unavailable',
+          }
+      - alert: DbPoolSaturated
+        expr: foodstack_db_pool_connections{state="waiting_clients"} > 0
+        for: 2m
+        labels: { severity: warning }
+        annotations:
+          { summary: 'Requests waiting for a database connection on {{ $labels.instance }}' }
+      - alert: AnalyticsQueueing
+        expr: foodstack_analytics_limiter{state="waiting"} > 0
+        for: 5m
+        labels: { severity: info }
+        annotations: { summary: 'Analytics requests are queueing behind the concurrency limit' }
+      - alert: CacheFallingBack
+        expr: rate(foodstack_cache_events_total{event="fallbacks"}[5m]) > 0
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: 'Cache serving from PostgreSQL (Redis unavailable or erroring)' }
+
+  - name: foodstack-worker
+    rules:
+      - alert: WorkerDown
+        expr: sum(up{job="worker"}) == 0 or absent(up{job="worker"})
+        for: 2m
+        labels: { severity: critical }
+        annotations: { summary: 'No email worker is up (email waits in the outbox)' }
+      - alert: QueueBacklog
+        expr: max(foodstack_queue_jobs{state="waiting"}) > 100
+        for: 10m
+        labels: { severity: warning }
+        annotations: { summary: 'More than 100 jobs waiting for 10 minutes' }
+      - alert: JobsFailingPermanently
+        expr: sum(increase(foodstack_worker_jobs_total{outcome="failed"}[15m])) > 5
+        labels: { severity: warning }
+        annotations: { summary: 'More than 5 emails failed permanently in 15 minutes' }
+
+  - name: foodstack-data
+    rules:
+      - alert: PostgresDown
+        expr: pg_up == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations: { summary: 'PostgreSQL is unreachable' }
+      - alert: PostgresConnectionsHigh
+        expr: sum(pg_stat_activity_count) / max(pg_settings_max_connections) > 0.8
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: 'PostgreSQL connections above 80 % of max_connections' }
+      - alert: PostgresDeadlocks
+        expr: increase(pg_stat_database_deadlocks{datname!~"template.*|postgres"}[10m]) > 0
+        labels: { severity: warning }
+        annotations: { summary: 'Deadlocks in {{ $labels.datname }}' }
+      - alert: RedisDown
+        expr: redis_up == 0
+        for: 30s
+        labels: { severity: critical }
+        annotations: { summary: 'Redis is unreachable: sign-in fails closed and queues stall' }
+      - alert: RedisMemoryHigh
+        expr: (redis_memory_used_bytes / redis_memory_max_bytes) > 0.8 and redis_memory_max_bytes > 0
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          { summary: 'Redis above 80 % of maxmemory (noeviction: writes fail when full)' }
+      - alert: PgBouncerDown
+        expr: pgbouncer_up == 0 or absent(pgbouncer_up)
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          { summary: 'PgBouncer unreachable or the exporter lacks stats access (stats_users)' }
+      - alert: PgBouncerClientsWaiting
+        expr: max(pgbouncer_pools_client_waiting_connections) > 0
+        for: 2m
+        labels: { severity: warning }
+        annotations: { summary: 'Clients waiting for a PgBouncer server connection' }
