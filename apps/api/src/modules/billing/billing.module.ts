@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
+import { AddonsController, PlatformAddonsController } from './addons.controller';
+import { AddonsService } from './addons.service';
 import {
   BillingController,
   BillingWebhookController,
@@ -19,10 +21,13 @@ import { SubscriptionLifecycleService } from './subscription-lifecycle.service';
     BillingWebhookController,
     PlatformBillingController,
     PublicPlansController,
+    AddonsController,
+    PlatformAddonsController,
   ],
   providers: [
     BillingService,
     PlatformBillingService,
+    AddonsService,
     SubscriptionLifecycleService,
     SubscriptionExpiryScheduler,
     { provide: PAYMENT_GATEWAY, useClass: RazorpayGateway },

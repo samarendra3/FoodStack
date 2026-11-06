@@ -164,7 +164,8 @@ describe('Billing & account (integration)', () => {
   it('lets Super Admins manage plans; owners cannot', async () => {
     const plan = (code: string, name: string, monthly: number, branches: number | null) => ({
       code,
-      name,
+      // Plan names are unique (and the launch catalogue already has Starter/Professional).
+      name: `${name} ${code.slice(-8)}`,
       priceMonthlyMinor: monthly,
       priceYearlyMinor: monthly * 10,
       maxBranches: branches,
@@ -205,7 +206,7 @@ describe('Billing & account (integration)', () => {
       status: 'pending',
       kind: 'new',
       amountMinor: 99900,
-      planName: 'Starter',
+      planName: expect.stringMatching(/^Starter /),
       paidAt: null,
     });
     expect(inv.invoiceNumber).toMatch(/^FS-\d{4}-\d{6}$/);
@@ -279,7 +280,7 @@ describe('Billing & account (integration)', () => {
     const history = (await call('owner', 'get', '/billing/invoices?status=paid').expect(200)).body;
     expect(history.meta.total).toBe(3);
     expect(history.data[0]).toMatchObject({
-      planName: 'Professional',
+      planName: expect.stringMatching(/^Professional /),
       paymentMethod: 'card',
       status: 'paid',
     });

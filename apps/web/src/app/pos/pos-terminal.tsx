@@ -1,11 +1,13 @@
 'use client';
 
-import { Info, ShoppingBag, X } from 'lucide-react';
+import { AlertBanner } from '@foodstack/ui/components/alert-banner';
+import { ShoppingBag, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useState } from 'react';
 import { type Diet, usePosCatalog } from './catalog';
 import { useWorkspaceBranch } from '@/components/workspace/workspace-page';
 import { authErrorMessage } from '@/lib/auth/errors';
+import { useNotify } from '@/lib/notify';
 import { useQuote } from '@/lib/promotions';
 import { type Order, useOrderMutations } from '@/lib/orders';
 import { inr, lineKey, type OrderLine, orderTotals } from './order-math';
@@ -20,6 +22,7 @@ const CHANNEL = { 'dine-in': 'dine_in', takeaway: 'takeaway', delivery: 'deliver
 
 export function PosTerminal() {
   const catalog = usePosCatalog();
+  const notify = useNotify();
   const [category, setCategory] = useState('All');
   const [query, setQuery] = useState('');
   const [diet, setDiet] = useState<Diet | null>(null);
@@ -101,9 +104,11 @@ export function PosTerminal() {
         })),
       });
       setPlaced(order);
+      notify.success(`Order ${order.orderNumber} placed`, 'Sent to the kitchen.');
       setSheetOpen(false);
     } catch (e) {
       setPlaceError(authErrorMessage(e));
+      notify.error(e, 'Order not placed');
     }
   };
 
@@ -143,18 +148,14 @@ export function PosTerminal() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {catalog.tablesAreSample ? (
-        <p className="flex items-center justify-center gap-2 border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-center text-xs text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">
-          <Info className="size-3.5 shrink-0" />
+        <AlertBanner layout="bar" variant="info" className="py-1.5 text-xs">
           Live menu and orders. Table numbers are placeholders until floors &amp; tables are set up.
-        </p>
+        </AlertBanner>
       ) : null}
       {catalog.error ? (
-        <p
-          role="alert"
-          className="border-b border-red-200 bg-red-50 px-4 py-2 text-center text-sm text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300"
-        >
+        <AlertBanner layout="bar" variant="danger" title="The menu could not be loaded">
           {catalog.error}
-        </p>
+        </AlertBanner>
       ) : null}
 
       <div className="flex min-h-0 flex-1">

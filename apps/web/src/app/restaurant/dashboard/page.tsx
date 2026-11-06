@@ -4,18 +4,24 @@ import { cn } from '@foodstack/ui/lib/utils';
 import { useQuery } from '@tanstack/react-query';
 import {
   Armchair,
+  ArrowDownRight,
   ArrowRight,
+  ArrowUpRight,
   BarChart3,
-  CalendarDays,
-  ChevronDown,
+  Ban,
+  Building2,
+  CheckCircle2,
   ClipboardList,
+  Clock,
   Coins,
+  CreditCard,
   Flame,
-  LayoutGrid,
   type LucideIcon,
   NotebookText,
   Plus,
+  Receipt,
   ShoppingCart,
+  Tags,
   UserPlus,
   UsersRound,
   Zap,
@@ -24,14 +30,30 @@ import { motion } from 'motion/react';
 import Link from 'next/link';
 import { type ReactNode, useState } from 'react';
 import { useAuth, useProfile } from '@/components/auth/auth-provider';
+import { AnimatedBar, AnimatedNumber, SpotlightCard } from '@/components/motion/primitives';
+import {
+  type BranchStats,
+  CHANNEL_LABEL,
+  type Compared,
+  type CustomerStats,
+  count,
+  type Filters,
+  inr,
+  METHOD_LABEL,
+  type MenuStats,
+  PRESETS,
+  type Preset,
+  type Summary,
+  type Trend,
+  useAnalytics,
+} from '@/lib/analytics';
 import { canAccessPath, hasPermissionAnywhere } from '@/lib/auth/access';
 import { authErrorMessage } from '@/lib/auth/errors';
 import { useEntitlement } from '@/lib/billing';
-import { useRestaurantOverview } from '../overview';
+import { BarChart } from '../reports/bar-chart';
+import { Donut, LineChart, RankedBars, SERIES } from './charts';
 
 const ease = [0.22, 1, 0.36, 1] as const;
-const card =
-  'rounded-xl border border-slate-200 bg-white shadow-xs dark:border-white/10 dark:bg-slate-900';
 const fullDate = new Intl.DateTimeFormat(undefined, {
   weekday: 'long',
   month: 'long',
@@ -47,106 +69,947 @@ const pillDate = new Intl.DateTimeFormat(undefined, {
 const rise = (i: number) => ({
   initial: { opacity: 0, y: 14 },
   animate: { opacity: 1, y: 0 },
-  transition: { duration: 0.45, delay: 0.04 + i * 0.05, ease },
+  transition: { duration: 0.45, delay: 0.04 + i * 0.04, ease },
 });
 
-interface TeamSummary {
-  members: { status: 'active' | 'invited' | 'suspended' }[];
-}
+const control =
+  'h-9 rounded-md border border-slate-200 bg-white px-2.5 text-sm text-slate-700 shadow-xs focus-visible:ring-2 focus-visible:ring-emerald-500/40 focus-visible:outline-none dark:border-white/10 dark:bg-white/5 dark:text-slate-200 [&>option]:text-slate-900';
 
 export default function RestaurantDashboardPage() {
-  const { client } = useAuth();
   const profile = useProfile();
-  const overview = useRestaurantOverview();
-  const canSeeTeam = hasPermissionAnywhere(profile, 'member:read');
-  const team = useQuery({
-    queryKey: ['restaurant', 'team', profile.activeTenant?.id],
-    queryFn: () => client.request<TeamSummary>('/team'),
-    enabled: canSeeTeam,
-  });
-  const members = team.data?.members;
-  const activeMembers = members?.filter((m) => m.status === 'active').length;
-  const invited = members?.filter((m) => m.status === 'invited').length ?? 0;
+  const canReport = hasPermissionAnywhere(profile, 'report:view');
+  const [filters, setFilters] = useState<Filters>({ preset: 'today' });
+  const [tab, setTab] = useState<'overview' | 'sales'>('overview');
+  const summary = useAnalytics<Summary>('summary', filters, {}, canReport);
 
   return (
-    <div className="mx-auto max-w-[96rem] space-y-5">
+    <div data-own-motion className="mx-auto max-w-[96rem] space-y-5">
       <Welcome />
       <TrialCard />
 
-      {overview.isError ? (
-        <p className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-          {authErrorMessage(overview.error)}
-        </p>
-      ) : null}
-
-      {/* Figures row (design order). Order, table and sales figures appear when those modules
-          record data; until then they say so instead of showing invented numbers. */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          i={0}
-          icon={Coins}
-          tone="emerald"
-          label="Total Revenue"
-          empty="Starts with your first bill"
-        />
-        <StatCard
-          i={1}
-          icon={ShoppingCart}
-          tone="violet"
-          label="Total Orders"
-          empty="Starts with your first order"
-        />
-        <StatCard
-          i={2}
-          icon={Armchair}
-          tone="orange"
-          label="Active Tables"
-          empty="Available with floor plans"
-        />
-        <StatCard
-          i={3}
-          icon={UsersRound}
-          tone="blue"
-          label="Team Members"
-          value={canSeeTeam ? activeMembers : undefined}
-          note={
-            canSeeTeam
-              ? invited
-                ? `${invited} invitation${invited === 1 ? '' : 's'} pending`
-                : 'Everyone has joined'
-              : undefined
-          }
-          empty={canSeeTeam ? undefined : 'Needs team access'}
-          href={canSeeTeam ? '/restaurant/team' : undefined}
-        />
-      </div>
-
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2 2xl:grid-cols-[minmax(0,2.1fr)_minmax(0,1.15fr)_minmax(0,1fr)]">
-        <div className="min-w-0 lg:col-span-2 2xl:col-span-1">
-          <RevenueOverview />
-        </div>
-        <div className="min-w-0">
-          <OrderStatus />
-        </div>
-        <div className="min-w-0">
+      {!canReport ? (
+        <>
+          <TeamCard />
+          <SpotlightCard className="p-5 text-sm text-muted-foreground">
+            Sales analytics are available to owners, admins, branch managers and accountants.
+          </SpotlightCard>
           <QuickActions />
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2 2xl:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,0.95fr)]">
-        <div className="min-w-0">
-          <TopSelling />
-        </div>
-        <div className="min-w-0">
-          <RecentOrders />
-        </div>
-        <div className="min-w-0 lg:col-span-2 2xl:col-span-1">
-          <TableOccupancy />
-        </div>
-      </div>
+        </>
+      ) : (
+        <>
+          <Toolbar
+            filters={filters}
+            onChange={setFilters}
+            summary={summary.data}
+            tab={tab}
+            onTab={setTab}
+          />
+          {summary.isError ? (
+            <p
+              role="alert"
+              className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300"
+            >
+              {authErrorMessage(summary.error)}
+            </p>
+          ) : null}
+          {tab === 'overview' ? (
+            <Overview filters={filters} summary={summary.data} loading={summary.isPending} />
+          ) : (
+            <SalesDetail filters={filters} currency={summary.data?.currencyCode ?? 'INR'} />
+          )}
+        </>
+      )}
     </div>
   );
 }
+
+// ---------------------------------------------------------------- toolbar
+
+function Toolbar({
+  filters,
+  onChange,
+  summary,
+  tab,
+  onTab,
+}: {
+  filters: Filters;
+  onChange: (f: Filters) => void;
+  summary?: Summary;
+  tab: 'overview' | 'sales';
+  onTab: (t: 'overview' | 'sales') => void;
+}) {
+  const set = (patch: Partial<Filters>) => onChange({ ...filters, ...patch });
+  const restaurants = summary?.restaurants ?? [];
+  const branches = summary?.branches ?? [];
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div
+        role="tablist"
+        aria-label="Dashboard view"
+        className="flex rounded-xl border border-slate-200 p-1 text-sm dark:border-white/10"
+      >
+        {(
+          [
+            ['overview', 'Overview'],
+            ['sales', 'Menu & customers'],
+          ] as const
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            role="tab"
+            aria-selected={tab === key}
+            onClick={() => onTab(key)}
+            className={cn(
+              'relative isolate rounded-lg px-3 py-1 font-medium whitespace-nowrap transition-colors',
+              tab === key
+                ? 'text-white'
+                : 'text-slate-600 hover:text-slate-900 dark:text-slate-300',
+            )}
+          >
+            {tab === key ? (
+              <motion.span
+                layoutId="dash-tab"
+                className="absolute inset-0 -z-10 rounded-lg bg-emerald-600"
+                transition={{ type: 'spring', stiffness: 420, damping: 34 }}
+              />
+            ) : null}
+            {label}
+          </button>
+        ))}
+      </div>
+      <form
+        className="flex flex-wrap items-center gap-2"
+        aria-label="Analytics filters"
+        onSubmit={(e) => e.preventDefault()}
+      >
+        <select
+          aria-label="Date range"
+          className={control}
+          value={filters.preset}
+          onChange={(e) => set({ preset: e.target.value as Preset })}
+        >
+          {PRESETS.map(([v, l]) => (
+            <option key={v} value={v}>
+              {l}
+            </option>
+          ))}
+        </select>
+        {filters.preset === 'custom' ? (
+          <>
+            <input
+              type="date"
+              aria-label="From"
+              className={control}
+              value={filters.from ?? ''}
+              max={filters.to}
+              onChange={(e) => set({ from: e.target.value || undefined })}
+            />
+            <input
+              type="date"
+              aria-label="To"
+              className={control}
+              value={filters.to ?? ''}
+              min={filters.from}
+              onChange={(e) => set({ to: e.target.value || undefined })}
+            />
+          </>
+        ) : null}
+        {restaurants.length > 1 ? (
+          <select
+            aria-label="Restaurant"
+            className={control}
+            value={filters.restaurantId ?? summary?.restaurant.id ?? ''}
+            onChange={(e) => set({ restaurantId: e.target.value, branchId: undefined })}
+          >
+            {restaurants.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.name}
+              </option>
+            ))}
+          </select>
+        ) : null}
+        {branches.length > 1 ? (
+          <select
+            aria-label="Branch"
+            className={control}
+            value={filters.branchId ?? ''}
+            onChange={(e) => set({ branchId: e.target.value || undefined })}
+          >
+            <option value="">All branches</option>
+            {branches.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name}
+              </option>
+            ))}
+          </select>
+        ) : null}
+        <select
+          aria-label="Order type"
+          className={control}
+          value={filters.channel ?? ''}
+          onChange={(e) => set({ channel: e.target.value || undefined })}
+        >
+          <option value="">All order types</option>
+          {Object.entries(CHANNEL_LABEL).map(([v, l]) => (
+            <option key={v} value={v}>
+              {l}
+            </option>
+          ))}
+        </select>
+        <select
+          aria-label="Payment method"
+          className={control}
+          value={filters.method ?? ''}
+          onChange={(e) => set({ method: e.target.value || undefined })}
+        >
+          <option value="">All payment methods</option>
+          {Object.entries(METHOD_LABEL).map(([v, l]) => (
+            <option key={v} value={v}>
+              {l}
+            </option>
+          ))}
+        </select>
+      </form>
+      {summary ? (
+        <p className="w-full text-xs text-muted-foreground">
+          {rangeText(summary)} · {summary.timezone}
+          {summary.branches.length === 1 ? ` · ${summary.branches[0]!.name}` : ''} · compared with{' '}
+          {summary.range.previousFrom === summary.range.previousTo
+            ? summary.range.previousFrom
+            : `${summary.range.previousFrom} – ${summary.range.previousTo}`}
+          {summary.range.partial ? ' up to the same time' : ''} · updated{' '}
+          {new Date(summary.generatedAt).toLocaleTimeString()}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+const rangeText = (s: { range: { from: string; to: string } }) =>
+  s.range.from === s.range.to ? s.range.from : `${s.range.from} – ${s.range.to}`;
+
+// ---------------------------------------------------------------- overview
+
+function Overview({
+  filters,
+  summary,
+  loading,
+}: {
+  filters: Filters;
+  summary?: Summary;
+  loading: boolean;
+}) {
+  const cur = summary?.currencyCode ?? 'INR';
+  const money = (v: number) => inr(v, cur);
+  const k = summary?.kpis;
+  const multiBranch = (summary?.branchIds.length ?? 0) > 1;
+  return (
+    <>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <Kpi
+          i={0}
+          icon={Coins}
+          tone="emerald"
+          label="Total revenue"
+          hint="Net sales: completed orders, after discounts, before tax"
+          value={k?.totalRevenue.value}
+          cmp={k?.totalRevenue}
+          format={money}
+          loading={loading}
+        />
+        <Kpi
+          i={1}
+          icon={ShoppingCart}
+          tone="violet"
+          label="Total orders"
+          hint="Orders placed in the period"
+          value={k?.totalOrders.value}
+          cmp={k?.totalOrders}
+          loading={loading}
+        />
+        <Kpi
+          i={2}
+          icon={CheckCircle2}
+          tone="blue"
+          label="Completed orders"
+          hint="Fully paid"
+          value={k?.completedOrders.value}
+          cmp={k?.completedOrders}
+          loading={loading}
+        />
+        <Kpi
+          i={3}
+          icon={Clock}
+          tone="orange"
+          label="Pending orders"
+          hint="Not yet being prepared (kitchen new or accepted)"
+          value={k?.pendingOrders.value}
+          loading={loading}
+        />
+        <Kpi
+          i={4}
+          icon={Ban}
+          tone="slate"
+          label="Cancelled orders"
+          value={k?.cancelledOrders.value}
+          cmp={k?.cancelledOrders}
+          invert
+          loading={loading}
+        />
+        <Kpi
+          i={5}
+          icon={Receipt}
+          tone="emerald"
+          label="Average order value"
+          hint="Net sales ÷ completed orders"
+          value={k?.averageOrderValue.value ?? undefined}
+          empty={k && k.averageOrderValue.value === null ? 'No completed orders' : undefined}
+          cmp={
+            k?.averageOrderValue.value !== null && k?.averageOrderValue.previous !== null && k
+              ? {
+                  value: k.averageOrderValue.value!,
+                  previous: k.averageOrderValue.previous!,
+                  changePct: k.averageOrderValue.changePct,
+                }
+              : undefined
+          }
+          format={money}
+          loading={loading}
+        />
+        <Kpi
+          i={6}
+          icon={UsersRound}
+          tone="blue"
+          label="Customers"
+          hint="Identified customers with a completed order"
+          value={k?.totalCustomers.value}
+          cmp={k?.totalCustomers}
+          loading={loading}
+        />
+        <Kpi
+          i={7}
+          icon={Armchair}
+          tone="orange"
+          label="Active tables"
+          hint="Tables with an open dine-in order right now"
+          value={k?.activeTables.value}
+          loading={loading}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+        <div className="min-w-0 lg:col-span-2">
+          <RevenueTrend filters={filters} currency={cur} />
+        </div>
+        <OrderStatus summary={summary} />
+      </div>
+
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+        <RevenueBreakdown summary={summary} />
+        <PaymentMethods summary={summary} />
+        <QuickActions />
+      </div>
+
+      {multiBranch ? <BranchComparison filters={filters} currency={cur} /> : null}
+    </>
+  );
+}
+
+function RevenueTrend({ filters, currency }: { filters: Filters; currency: string }) {
+  const trend = useAnalytics<Trend>('trend', filters);
+  const t = trend.data;
+  const [metric, setMetric] = useState<'money' | 'orders'>('money');
+  const label = (b: string, long: boolean) => {
+    if (!t) return b;
+    const d = new Date(`${b}:00Z`);
+    const opts: Intl.DateTimeFormatOptions =
+      t.granularity === 'hour'
+        ? { hour: 'numeric', ...(long ? { day: 'numeric', month: 'short' } : {}) }
+        : t.granularity === 'day'
+          ? { day: 'numeric', month: 'short', ...(long ? { weekday: 'short' } : {}) }
+          : { month: 'short', ...(long ? { year: 'numeric' } : {}) };
+    return new Intl.DateTimeFormat('en-IN', { ...opts, timeZone: 'UTC' }).format(d);
+  };
+  const empty = t && t.points.every((p) => !p.netSales && !p.ordersPlaced && !p.collected);
+  return (
+    <SpotlightCard {...rise(8)} className="h-full p-5">
+      <CardHead
+        icon={BarChart3}
+        title={metric === 'money' ? 'Revenue trend' : 'Order trend'}
+        subtitle={
+          metric === 'money'
+            ? 'Net sales and payments collected, local time'
+            : 'Orders placed and cancelled, local time'
+        }
+        aside={
+          <div
+            className="flex rounded-lg border border-slate-200 p-0.5 text-xs dark:border-white/10"
+            role="group"
+            aria-label="Trend metric"
+          >
+            {(
+              [
+                ['money', 'Revenue'],
+                ['orders', 'Orders'],
+              ] as const
+            ).map(([k, l]) => (
+              <button
+                key={k}
+                type="button"
+                aria-pressed={metric === k}
+                onClick={() => setMetric(k)}
+                className={cn(
+                  'rounded-md px-2.5 py-1 font-medium',
+                  metric === k
+                    ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
+                    : 'text-muted-foreground',
+                )}
+              >
+                {l}
+              </button>
+            ))}
+          </div>
+        }
+      />
+      <div className="mt-4">
+        {trend.isError ? (
+          <ErrorNote error={trend.error} />
+        ) : !t ? (
+          <ChartSkeleton />
+        ) : empty ? (
+          <EmptyNote
+            icon={BarChart3}
+            title="No sales in this period"
+            text="Revenue appears here once orders are billed at the POS."
+          />
+        ) : metric === 'money' ? (
+          <LineChart
+            ariaLabel="Net sales and collected payments over time"
+            series={[
+              { key: 'net', label: 'Net sales' },
+              { key: 'collected', label: 'Collected' },
+            ]}
+            points={t.points.map((p) => ({
+              key: p.bucket,
+              label: label(p.bucket, false),
+              long: label(p.bucket, true),
+              values: { net: p.netSales, collected: p.collected - p.refunds },
+            }))}
+            format={(v) => inr(v, currency)}
+            axisFormat={(v) => compactInr(v)}
+          />
+        ) : (
+          <BarChart
+            ariaLabel="Orders placed and cancelled over time"
+            series={[
+              { key: 'placed', label: 'Orders placed', ...SERIES[0] },
+              { key: 'cancelled', label: 'Cancelled', ...SERIES[1] },
+            ]}
+            buckets={t.points.map((p) => ({
+              key: p.bucket,
+              label: label(p.bucket, false),
+              values: { placed: p.ordersPlaced * 100, cancelled: p.cancelled * 100 },
+            }))}
+            format={(v) => count(Math.round(v / 100))}
+          />
+        )}
+      </div>
+    </SpotlightCard>
+  );
+}
+
+const compactInr = (minor: number) =>
+  `₹${new Intl.NumberFormat('en-IN', { notation: 'compact', maximumFractionDigits: 1 }).format(minor / 100)}`;
+
+function OrderStatus({ summary }: { summary?: Summary }) {
+  const o = summary?.orders;
+  return (
+    <SpotlightCard {...rise(9)} className="h-full p-5">
+      <CardHead icon={ClipboardList} title="Order status" subtitle="Orders placed in the period" />
+      <div className="mt-5">
+        {!o ? (
+          <ChartSkeleton short />
+        ) : o.total === 0 ? (
+          <EmptyNote
+            icon={ClipboardList}
+            title="No orders in this period"
+            text="Orders from the POS and waiters appear here."
+          />
+        ) : (
+          <>
+            <Donut
+              ariaLabel="Orders by billing status"
+              center={count(o.total)}
+              caption="orders"
+              parts={[
+                { label: 'Completed (paid)', value: o.completed },
+                { label: 'Open (unpaid)', value: o.open },
+                { label: 'Cancelled', value: o.cancelled },
+              ]}
+            />
+            <dl className="mt-5 grid grid-cols-4 gap-2 border-t pt-4 text-center text-xs">
+              {(
+                [
+                  ['Pending', o.pending],
+                  ['Preparing', o.preparing],
+                  ['Ready', o.ready],
+                  ['Served', o.served],
+                ] as const
+              ).map(([l, v]) => (
+                <div key={l}>
+                  <dt className="text-muted-foreground">{l}</dt>
+                  <dd className="mt-0.5 text-base font-semibold tabular-nums">{count(v)}</dd>
+                </div>
+              ))}
+            </dl>
+            <p className="mt-2 text-center text-[11px] text-muted-foreground">
+              Kitchen status of non-cancelled orders
+            </p>
+          </>
+        )}
+      </div>
+    </SpotlightCard>
+  );
+}
+
+function RevenueBreakdown({ summary }: { summary?: Summary }) {
+  const r = summary?.revenue;
+  const cur = summary?.currencyCode ?? 'INR';
+  const rows: [string, Compared | undefined, string?][] = [
+    ['Gross sales', r?.grossSales, 'Item totals of completed orders'],
+    ['Discounts', r?.discounts],
+    ['Net sales', r?.netSales, 'Gross − discounts, before tax'],
+    ['Tax', r?.tax],
+    ['Billed total', r?.billedTotal],
+    ['Payments collected', r?.collected, 'All payments received, incl. part-payments'],
+    ['Refunds', r?.refunds, 'Refunds issued in the period'],
+    ['Net collected', r?.netCollected, 'Collected − refunds'],
+  ];
+  return (
+    <SpotlightCard {...rise(10)} className="h-full p-5">
+      <CardHead
+        icon={Coins}
+        title="Revenue breakdown"
+        subtitle="Sales by completion time; money by payment and refund time"
+      />
+      <dl className="mt-4 divide-y text-sm">
+        {rows.map(([label, c, hint]) => (
+          <div
+            key={label}
+            className={cn(
+              'flex items-center justify-between gap-3 py-2',
+              (label === 'Net sales' || label === 'Net collected') && 'font-semibold',
+            )}
+          >
+            <dt className="min-w-0">
+              {label}
+              {hint ? (
+                <span className="block text-[11px] font-normal text-muted-foreground">{hint}</span>
+              ) : null}
+            </dt>
+            <dd className="text-right tabular-nums">
+              {c ? (
+                <>
+                  {label === 'Discounts' || label === 'Refunds' ? (c.value ? '−' : '') : ''}
+                  {inr(Math.abs(c.value), cur)}
+                  {c.value < 0 ? <span className="sr-only"> (negative)</span> : null}
+                </>
+              ) : (
+                <span className="inline-block h-4 w-16 animate-pulse rounded bg-muted" />
+              )}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </SpotlightCard>
+  );
+}
+
+function PaymentMethods({ summary }: { summary?: Summary }) {
+  const cur = summary?.currencyCode ?? 'INR';
+  const rows = summary?.byMethod ?? [];
+  const any = rows.some((m) => m.collectedMinor || m.refundsMinor);
+  return (
+    <SpotlightCard {...rise(11)} className="h-full p-5">
+      <CardHead icon={CreditCard} title="Payment methods" subtitle="Net collected per method" />
+      <div className="mt-4">
+        {!summary ? (
+          <ChartSkeleton short />
+        ) : !any ? (
+          <EmptyNote
+            icon={CreditCard}
+            title="No payments in this period"
+            text="Cash, card and UPI payments appear here."
+          />
+        ) : (
+          <>
+            <RankedBars
+              ariaLabel="Net collected by payment method"
+              format={(v) => inr(v, cur)}
+              rows={rows.map((m) => ({
+                key: m.method,
+                label: METHOD_LABEL[m.method] ?? m.method,
+                value: Math.max(0, m.netMinor),
+                note: `${count(m.orders)} order${m.orders === 1 ? '' : 's'}${m.refundsMinor ? ` · ${inr(m.refundsMinor, cur)} refunded` : ''}`,
+              }))}
+            />
+            <p className="mt-4 text-[11px] text-muted-foreground">
+              An order paid by two methods counts under both.
+            </p>
+          </>
+        )}
+      </div>
+      {summary ? (
+        <div className="mt-5 border-t pt-4">
+          <p className="mb-3 text-sm font-medium">By order type</p>
+          <RankedBars
+            ariaLabel="Net sales by order type"
+            colorIndex={2}
+            format={(v) => inr(v, cur)}
+            rows={summary.byChannel
+              .filter((c) => c.orders || c.netSalesMinor)
+              .map((c) => ({
+                key: c.channel,
+                label: CHANNEL_LABEL[c.channel] ?? c.channel,
+                value: c.netSalesMinor,
+                note: `${count(c.orders)} orders`,
+              }))}
+          />
+        </div>
+      ) : null}
+    </SpotlightCard>
+  );
+}
+
+function BranchComparison({ filters, currency }: { filters: Filters; currency: string }) {
+  const q = useAnalytics<BranchStats>('branches', filters);
+  const d = q.data;
+  return (
+    <SpotlightCard {...rise(12)} className="p-5">
+      <CardHead icon={Building2} title="Branch performance" subtitle="Ranked by net sales" />
+      <div className="mt-4">
+        {q.isError ? (
+          <ErrorNote error={q.error} />
+        ) : !d ? (
+          <ChartSkeleton short />
+        ) : (
+          <div className="grid gap-6 lg:grid-cols-2">
+            <BarChart
+              ariaLabel="Net sales per branch"
+              series={[{ key: 'net', label: 'Net sales', ...SERIES[0] }]}
+              buckets={d.rows.map((r) => ({
+                key: r.id,
+                label: r.name,
+                values: { net: r.netSales.value },
+              }))}
+              format={(v) => inr(v, currency)}
+            />
+            <div className="overflow-x-auto rounded-xl border">
+              <table className="w-full min-w-[34rem] text-sm">
+                <thead className="bg-muted/60 text-left text-xs font-semibold text-muted-foreground">
+                  <tr>
+                    <th className="px-3 py-2">#</th>
+                    <th className="px-3 py-2">Branch</th>
+                    <th className="px-3 py-2 text-right">Net sales</th>
+                    <th className="px-3 py-2 text-right">Change</th>
+                    <th className="px-3 py-2 text-right">Orders</th>
+                    <th className="px-3 py-2 text-right">Avg order</th>
+                    <th className="px-3 py-2 text-right">Share</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {d.rows.map((r) => (
+                    <tr key={r.id} className="border-t">
+                      <td className="px-3 py-2 tabular-nums">{r.rank}</td>
+                      <td className="px-3 py-2 font-medium">{r.name}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {inr(r.netSales.value, currency)}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <Delta pct={r.netSales.changePct} />
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {count(r.ordersPlaced.value)}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {r.averageOrderValueMinor === null
+                          ? '—'
+                          : inr(r.averageOrderValueMinor, currency)}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {r.sharePct === null ? '—' : `${r.sharePct}%`}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+    </SpotlightCard>
+  );
+}
+
+// ---------------------------------------------------------------- menu & customers
+
+function SalesDetail({ filters, currency }: { filters: Filters; currency: string }) {
+  const [sort, setSort] = useState<'revenue' | 'quantity'>('revenue');
+  const [page, setPage] = useState(1);
+  const menu = useAnalytics<MenuStats>('menu', filters, { sort, page, pageSize: 10 });
+  const m = menu.data;
+  const money = (v: number) => inr(v, currency);
+  return (
+    <>
+      <CustomersRow filters={filters} currency={currency} />
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+        <SpotlightCard {...rise(1)} className="p-5">
+          <CardHead icon={Flame} title="Top-selling items" subtitle="By quantity sold" />
+          <div className="mt-4">
+            {!m ? (
+              <ChartSkeleton short />
+            ) : m.topSelling.length === 0 ? (
+              <EmptyNote
+                icon={Flame}
+                title="No items sold in this period"
+                text="Best sellers rank here once orders are completed."
+              />
+            ) : (
+              <RankedBars
+                ariaLabel="Top-selling items by quantity"
+                format={count}
+                rows={m.topSelling.map((i) => ({
+                  key: i.menuItemId,
+                  label: i.name,
+                  value: i.quantity,
+                  note: i.deleted ? 'removed' : undefined,
+                }))}
+              />
+            )}
+          </div>
+        </SpotlightCard>
+        <SpotlightCard {...rise(2)} className="p-5">
+          <CardHead
+            icon={Tags}
+            title="Category sales"
+            subtitle="Item revenue after discounts, before tax"
+          />
+          <div className="mt-4">
+            {!m ? (
+              <ChartSkeleton short />
+            ) : m.categories.length === 0 ? (
+              <EmptyNote
+                icon={Tags}
+                title="No category sales yet"
+                text="Categories rank here once orders are completed."
+              />
+            ) : (
+              <RankedBars
+                ariaLabel="Revenue by menu category"
+                colorIndex={1}
+                format={money}
+                rows={m.categories.map((c) => ({
+                  key: c.categoryId,
+                  label: c.name,
+                  value: c.revenue,
+                  note: c.sharePct === null ? undefined : `${c.sharePct}%`,
+                }))}
+              />
+            )}
+          </div>
+        </SpotlightCard>
+        <SpotlightCard {...rise(3)} className="p-5">
+          <CardHead
+            icon={NotebookText}
+            title="Needs attention"
+            subtitle="Lowest sellers and items with no sales"
+          />
+          <div className="mt-4 space-y-4 text-sm">
+            {!m ? (
+              <ChartSkeleton short />
+            ) : (
+              <>
+                {m.lowPerforming ? (
+                  <RankedBars
+                    ariaLabel="Lowest-selling items"
+                    colorIndex={3}
+                    format={count}
+                    rows={m.lowPerforming.map((i) => ({
+                      key: i.menuItemId,
+                      label: i.name,
+                      value: i.quantity,
+                    }))}
+                  />
+                ) : (
+                  <p className="text-xs text-muted-foreground">{m.lowPerformingNote}</p>
+                )}
+                <div>
+                  <p className="font-medium">
+                    Not sold in this period ({count(m.unsold.length)}
+                    {m.unsold.length === 50 ? '+' : ''})
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {m.unsold.length
+                      ? m.unsold
+                          .slice(0, 12)
+                          .map((u) => u.name)
+                          .join(', ') + (m.unsold.length > 12 ? '…' : '')
+                      : 'Every available item sold at least once.'}
+                  </p>
+                </div>
+              </>
+            )}
+          </div>
+        </SpotlightCard>
+      </div>
+
+      <SpotlightCard {...rise(4)} className="p-5">
+        <CardHead
+          icon={ClipboardList}
+          title="Item performance"
+          subtitle={
+            m
+              ? `${count(m.totals.itemsSold)} sold · ${count(m.totals.distinctItems)} items · ${money(m.totals.revenueMinor)}`
+              : undefined
+          }
+          aside={
+            <select
+              aria-label="Sort items"
+              className={control}
+              value={sort}
+              onChange={(e) => {
+                setSort(e.target.value as 'revenue' | 'quantity');
+                setPage(1);
+              }}
+            >
+              <option value="revenue">By revenue</option>
+              <option value="quantity">By quantity</option>
+            </select>
+          }
+        />
+        <div className="mt-4 overflow-x-auto rounded-xl border">
+          <table className="w-full min-w-[36rem] text-sm">
+            <thead className="bg-muted/60 text-left text-xs font-semibold text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2">Item</th>
+                <th className="px-3 py-2">Category</th>
+                <th className="px-3 py-2 text-right">Quantity</th>
+                <th className="px-3 py-2 text-right">Orders</th>
+                <th className="px-3 py-2 text-right">Revenue</th>
+              </tr>
+            </thead>
+            <tbody>
+              {!m ? (
+                Array.from({ length: 5 }, (_, i) => (
+                  <tr key={i} className="border-t">
+                    <td colSpan={5} className="px-3 py-2">
+                      <div className="h-4 animate-pulse rounded bg-muted" />
+                    </td>
+                  </tr>
+                ))
+              ) : m.items.rows.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-3 py-6 text-center text-muted-foreground">
+                    No items sold in this period.
+                  </td>
+                </tr>
+              ) : (
+                m.items.rows.map((i) => (
+                  <tr key={i.menuItemId} className="border-t">
+                    <td className="px-3 py-2 font-medium">
+                      {i.name}
+                      {i.deleted ? (
+                        <span className="ml-1.5 text-xs text-muted-foreground">(removed)</span>
+                      ) : null}
+                    </td>
+                    <td className="px-3 py-2 text-muted-foreground">{i.categoryName ?? '—'}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{count(i.quantity)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{count(i.orders)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{money(i.revenue)}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+        {m && m.items.total > m.items.pageSize ? (
+          <div className="mt-3 flex items-center justify-end gap-2 text-sm">
+            <span className="text-muted-foreground">
+              Page {m.items.page} of {Math.ceil(m.items.total / m.items.pageSize)}
+            </span>
+            <button
+              type="button"
+              className={control}
+              disabled={page <= 1}
+              onClick={() => setPage((p) => p - 1)}
+            >
+              Previous
+            </button>
+            <button
+              type="button"
+              className={control}
+              disabled={page * m.items.pageSize >= m.items.total}
+              onClick={() => setPage((p) => p + 1)}
+            >
+              Next
+            </button>
+          </div>
+        ) : null}
+      </SpotlightCard>
+    </>
+  );
+}
+
+function CustomersRow({ filters, currency }: { filters: Filters; currency: string }) {
+  const q = useAnalytics<CustomerStats>('customers', filters);
+  const c = q.data;
+  const pct = (v: number | null) => (v === null ? '—' : `${v}%`);
+  const tiles: [string, string | undefined, string][] = [
+    ['Customers', c && count(c.totalCustomers.value), 'With a completed order'],
+    ['New', c && count(c.newCustomers), 'First order in this period'],
+    ['Returning', c && count(c.returningCustomers), 'Ordered before this period'],
+    ['Repeat purchase rate', c && pct(c.repeatPurchaseRatePct), '2+ orders in this period'],
+    [
+      'Average spend',
+      c && (c.averageSpendMinor === null ? '—' : inr(c.averageSpendMinor, currency)),
+      'Net sales per customer',
+    ],
+    [
+      'Orders with a customer',
+      c && pct(c.identifiedOrderSharePct),
+      c ? `${count(c.identifiedOrders)} of ${count(c.completedOrders)} completed` : '',
+    ],
+  ];
+  return (
+    <SpotlightCard {...rise(0)} className="p-5">
+      <CardHead
+        icon={UsersRound}
+        title="Customers"
+        subtitle="Only orders with a customer name and phone count — walk-in orders are never guessed"
+      />
+      {q.isError ? (
+        <div className="mt-4">
+          <ErrorNote error={q.error} />
+        </div>
+      ) : (
+        <dl className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-6">
+          {tiles.map(([label, value, hint]) => (
+            <div key={label}>
+              <dt className="text-xs text-muted-foreground">{label}</dt>
+              <dd className="mt-1 text-xl font-semibold tabular-nums">
+                {value ?? <span className="inline-block h-6 w-12 animate-pulse rounded bg-muted" />}
+              </dd>
+              <dd className="text-[11px] text-muted-foreground">{hint}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </SpotlightCard>
+  );
+}
+
+// ---------------------------------------------------------------- shared pieces
 
 function Welcome() {
   const profile = useProfile();
@@ -165,97 +1028,111 @@ function Welcome() {
           Welcome back, {profile.user.fullName}
         </h1>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          Here&apos;s what&apos;s happening at{' '}
-          <span className="font-medium text-slate-700 dark:text-slate-200">{restaurant}</span>{' '}
-          today.
+          Here&apos;s how{' '}
+          <span className="font-medium text-slate-700 dark:text-slate-200">{restaurant}</span> is
+          doing.
         </p>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <Link
-          href="/restaurant/branches"
-          className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 shadow-xs transition-colors hover:bg-slate-50 dark:border-white/10 dark:bg-white/5 dark:text-slate-200 dark:hover:bg-white/10"
-        >
-          <span className="size-2 rounded-full bg-emerald-500" aria-hidden />
-          {restaurant}
-          <ChevronDown className="size-4 text-slate-400" aria-hidden />
-        </Link>
-        <span className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 shadow-xs dark:border-white/10 dark:bg-white/5 dark:text-slate-200">
-          <CalendarDays className="size-4 text-slate-400" aria-hidden />
-          {pillDate.format(today)}
-        </span>
       </div>
     </motion.section>
   );
 }
 
 const TONES = {
-  emerald: { tile: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15' },
-  violet: { tile: 'bg-violet-50 text-violet-600 dark:bg-violet-500/15' },
-  orange: { tile: 'bg-orange-50 text-orange-500 dark:bg-orange-500/15' },
-  blue: { tile: 'bg-blue-50 text-blue-600 dark:bg-blue-500/15' },
+  emerald: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15',
+  violet: 'bg-violet-50 text-violet-600 dark:bg-violet-500/15',
+  orange: 'bg-orange-50 text-orange-500 dark:bg-orange-500/15',
+  blue: 'bg-blue-50 text-blue-600 dark:bg-blue-500/15',
+  slate: 'bg-slate-100 text-slate-500 dark:bg-white/10 dark:text-slate-300',
 };
 
-function StatCard({
+function Delta({ pct, invert = false }: { pct: number | null | undefined; invert?: boolean }) {
+  if (pct === null || pct === undefined)
+    return <span className="text-xs text-muted-foreground">—</span>;
+  const up = pct > 0;
+  const good = pct === 0 ? null : invert ? !up : up;
+  const Icon = up ? ArrowUpRight : ArrowDownRight;
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-0.5 text-xs font-medium tabular-nums',
+        good === null
+          ? 'text-muted-foreground'
+          : good
+            ? 'text-emerald-700 dark:text-emerald-400'
+            : 'text-red-600 dark:text-red-400',
+      )}
+    >
+      {pct !== 0 ? <Icon className="size-3.5" aria-hidden /> : null}
+      {up ? '+' : ''}
+      {pct}%<span className="sr-only">{up ? ' increase' : pct < 0 ? ' decrease' : ''}</span>
+    </span>
+  );
+}
+
+function Kpi({
   i,
   icon: Icon,
   tone,
   label,
+  hint,
   value,
-  note,
+  cmp,
+  format,
   empty,
-  href,
+  invert,
+  loading,
 }: {
   i: number;
   icon: LucideIcon;
   tone: keyof typeof TONES;
   label: string;
+  hint?: string;
   value?: number;
-  note?: string;
-  /** Shown instead of a number when the figure does not exist yet. */
+  cmp?: Compared;
+  format?: (v: number) => string;
   empty?: string;
-  href?: string;
+  invert?: boolean;
+  loading: boolean;
 }) {
-  const t = TONES[tone];
-  const loading = value === undefined && !empty;
-  const body = (
-    <motion.div
-      {...rise(i)}
-      className={cn(card, 'relative flex h-full flex-row-reverse items-start gap-4 p-5')}
-    >
-      <span className={cn('flex size-9 shrink-0 items-center justify-center rounded-lg', t.tile)}>
+  return (
+    <SpotlightCard {...rise(i)} className="flex h-full flex-row-reverse items-start gap-4 p-5">
+      <span
+        className={cn('flex size-9 shrink-0 items-center justify-center rounded-lg', TONES[tone])}
+      >
         <Icon className="size-[18px]" aria-hidden />
       </span>
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium text-slate-500 dark:text-slate-400">{label}</p>
+        <p className="text-sm font-medium text-slate-500 dark:text-slate-400" title={hint}>
+          {label}
+        </p>
         {value !== undefined ? (
           <>
             <p className="mt-1 text-2xl leading-none font-semibold tracking-tight tabular-nums">
-              {value}
+              {format ? format(value) : <AnimatedNumber value={value} />}
             </p>
-            {note ? <p className="mt-1.5 truncate text-xs text-slate-500">{note}</p> : null}
+            <p className="mt-1.5 flex items-center gap-1.5 truncate text-xs text-slate-500">
+              {cmp ? (
+                <>
+                  <Delta pct={cmp.changePct} invert={invert} />
+                  <span>vs {format ? format(cmp.previous) : count(cmp.previous)}</span>
+                </>
+              ) : (
+                hint
+              )}
+            </p>
           </>
         ) : loading ? (
-          <div className="mt-2 h-7 w-14 animate-pulse rounded bg-slate-100 dark:bg-white/10" />
+          <div className="mt-2 h-7 w-20 animate-pulse rounded bg-slate-100 dark:bg-white/10" />
         ) : (
           <>
             <p className="mt-1 text-2xl leading-none font-semibold text-slate-300 dark:text-slate-600">
               —
             </p>
-            <p className="mt-1.5 truncate text-xs text-slate-500">{empty}</p>
+            <p className="mt-1.5 truncate text-xs text-slate-500">{empty ?? 'No data'}</p>
           </>
         )}
       </div>
-    </motion.div>
-  );
-  return href ? (
-    <Link
-      href={href}
-      className="block rounded-xl transition-colors hover:[&>div]:border-slate-300 dark:hover:[&>div]:border-white/20 focus-visible:ring-2 focus-visible:ring-emerald-500/50 focus-visible:outline-none"
-    >
-      {body}
-    </Link>
-  ) : (
-    body
+    </SpotlightCard>
   );
 }
 
@@ -286,17 +1163,6 @@ function CardHead({
   );
 }
 
-function SoonLink({ label }: { label: string }) {
-  return (
-    <span
-      title="Coming soon"
-      className="inline-flex cursor-not-allowed items-center gap-1 text-sm font-semibold text-slate-400"
-    >
-      {label} <ArrowRight className="size-4" aria-hidden />
-    </span>
-  );
-}
-
 function EmptyNote({ icon: Icon, title, text }: { icon: LucideIcon; title: string; text: string }) {
   return (
     <div className="flex flex-col items-center justify-center px-4 py-8 text-center">
@@ -309,151 +1175,57 @@ function EmptyNote({ icon: Icon, title, text }: { icon: LucideIcon; title: strin
   );
 }
 
-const RANGES = {
-  Today: [
-    '9 AM',
-    '10 AM',
-    '11 AM',
-    '12 PM',
-    '1 PM',
-    '2 PM',
-    '3 PM',
-    '4 PM',
-    '5 PM',
-    '6 PM',
-    '7 PM',
-    '8 PM',
-    '9 PM',
-  ],
-  'This Week': ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
-  'This Month': ['Week 1', 'Week 2', 'Week 3', 'Week 4'],
-  'This Year': ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
-} as const;
-type Range = keyof typeof RANGES;
-
-function RevenueOverview() {
-  const [range, setRange] = useState<Range>('Today');
-  const labels = RANGES[range];
+function ErrorNote({ error }: { error: unknown }) {
   return (
-    <motion.section {...rise(4)} className={cn(card, 'h-full p-5')}>
-      <CardHead
-        icon={BarChart3}
-        title="Revenue Overview"
-        subtitle="Track your sales, orders and growth."
-        aside={
-          <div className="flex w-full overflow-x-auto rounded-xl border border-slate-200 p-1 text-sm [scrollbar-width:none] sm:w-auto dark:border-white/10">
-            {(Object.keys(RANGES) as Range[]).map((r) => (
-              <button
-                key={r}
-                type="button"
-                onClick={() => setRange(r)}
-                aria-pressed={range === r}
-                className={cn(
-                  'relative isolate rounded-lg px-2.5 py-1 font-medium whitespace-nowrap transition-colors sm:px-3',
-                  range === r
-                    ? 'text-white'
-                    : 'text-slate-600 hover:text-slate-900 dark:text-slate-300',
-                )}
-              >
-                {range === r ? (
-                  <motion.span
-                    layoutId="revenue-range"
-                    className="absolute inset-0 -z-10 rounded-lg bg-emerald-600"
-                    transition={{ type: 'spring', stiffness: 420, damping: 34 }}
-                  />
-                ) : null}
-                {r}
-              </button>
-            ))}
-          </div>
-        }
-      />
-      <div className="relative mt-5 h-60">
-        {/* Empty chart frame: grid and time axis, no values until sales exist. */}
-        <div className="absolute inset-x-0 top-0 bottom-7 flex flex-col justify-between">
-          {Array.from({ length: 6 }, (_, k) => (
-            <span
-              key={k}
-              className="border-t border-dashed border-slate-200 dark:border-white/10"
-            />
-          ))}
-        </div>
-        <div className="absolute inset-x-0 bottom-0 flex justify-between text-[11px] text-slate-400">
-          {labels.map((l, k) => (
-            <span key={l} className={cn(labels.length > 8 && k % 2 === 1 && 'hidden sm:inline')}>
-              {l}
-            </span>
-          ))}
-        </div>
-        <div className="absolute inset-x-0 top-0 bottom-7 flex items-center justify-center">
-          <div className="rounded-xl bg-white/90 dark:bg-slate-900/90">
-            <EmptyNote
-              icon={BarChart3}
-              title={`No sales recorded ${range === 'Today' ? 'today' : range.toLowerCase()}`}
-              text="Revenue appears here as soon as orders are billed at the POS."
-            />
-          </div>
-        </div>
-      </div>
-    </motion.section>
+    <p
+      role="alert"
+      className="rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-300"
+    >
+      {authErrorMessage(error)}
+    </p>
   );
 }
 
-function Donut({ center, caption }: { center: string; caption: string }) {
+function ChartSkeleton({ short = false }: { short?: boolean }) {
   return (
-    <div className="relative size-40 shrink-0">
-      <svg viewBox="0 0 140 140" className="size-full -rotate-90">
-        <circle
-          cx="70"
-          cy="70"
-          r="52"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="18"
-          className="text-slate-100 dark:text-white/10"
-        />
-      </svg>
-      <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="text-3xl font-bold text-slate-300 tabular-nums dark:text-slate-600">
-          {center}
-        </span>
-        <span className="text-sm text-slate-500">{caption}</span>
-      </div>
+    <div
+      className={cn('flex animate-pulse items-end gap-2', short ? 'h-32' : 'h-56')}
+      aria-busy="true"
+      aria-label="Loading chart"
+    >
+      {[40, 65, 50, 80, 60, 90, 70, 55].map((h, i) => (
+        <div key={i} className="flex-1 rounded-t bg-muted" style={{ height: `${h}%` }} />
+      ))}
     </div>
   );
 }
 
-function Legend({ items }: { items: { label: string; color: string }[] }) {
-  return (
-    <ul className="w-full space-y-3 text-sm">
-      {items.map((it) => (
-        <li key={it.label} className="flex items-center gap-2.5">
-          <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: it.color }} />
-          <span className="flex-1 text-slate-600 dark:text-slate-300">{it.label}</span>
-          <span className="font-semibold text-slate-300 tabular-nums dark:text-slate-600">—</span>
-        </li>
-      ))}
-    </ul>
-  );
+interface TeamSummary {
+  members: { status: 'active' | 'invited' | 'suspended' }[];
 }
 
-function OrderStatus() {
+function TeamCard() {
+  const { client } = useAuth();
+  const profile = useProfile();
+  const canSeeTeam = hasPermissionAnywhere(profile, 'member:read');
+  const team = useQuery({
+    queryKey: ['restaurant', 'team', profile.activeTenant?.id],
+    queryFn: () => client.request<TeamSummary>('/team'),
+    enabled: canSeeTeam,
+  });
+  if (!canSeeTeam) return null;
+  const active = team.data?.members.filter((m) => m.status === 'active').length;
   return (
-    <motion.section {...rise(5)} className={cn(card, 'h-full p-5')}>
-      <CardHead title="Order Status" />
-      <div className="mt-5 flex flex-col items-center gap-5 sm:flex-row lg:flex-col xl:flex-row 2xl:flex-col">
-        <Donut center="—" caption="Orders" />
-        <Legend
-          items={[
-            { label: 'Completed', color: '#10B981' },
-            { label: 'Preparing', color: '#F59E0B' },
-            { label: 'Pending', color: '#3B82F6' },
-            { label: 'Cancelled', color: '#94A3B8' },
-          ]}
-        />
-      </div>
-      <p className="mt-4 text-center text-xs text-slate-500">Live once the POS takes orders.</p>
-    </motion.section>
+    <Link href="/restaurant/team" className="block max-w-sm rounded-xl">
+      <Kpi
+        i={0}
+        icon={UsersRound}
+        tone="blue"
+        label="Team members"
+        value={active}
+        loading={team.isPending}
+      />
+    </Link>
   );
 }
 
@@ -461,8 +1233,16 @@ function QuickActions() {
   const profile = useProfile();
   const actions: { label: string; icon: LucideIcon; href?: string }[] = [
     { label: 'New Order', icon: Plus, href: canAccessPath(profile, '/pos') ? '/pos' : undefined },
-    { label: 'Add Table', icon: Armchair },
-    { label: 'Add Item', icon: NotebookText },
+    {
+      label: 'Orders',
+      icon: ClipboardList,
+      href: canAccessPath(profile, '/restaurant/orders') ? '/restaurant/orders' : undefined,
+    },
+    {
+      label: 'Menu',
+      icon: NotebookText,
+      href: canAccessPath(profile, '/restaurant/menu') ? '/restaurant/menu' : undefined,
+    },
     {
       label: 'Add Staff',
       icon: UserPlus,
@@ -470,30 +1250,29 @@ function QuickActions() {
     },
   ];
   return (
-    <motion.section {...rise(6)} className={cn(card, 'h-full p-5')}>
-      <CardHead icon={Zap} title="Quick Actions" />
+    <SpotlightCard {...rise(13)} className="h-full p-5">
+      <CardHead icon={Zap} title="Quick actions" />
       <div className="mt-4 grid grid-cols-2 gap-3">
         {actions.map((a) => {
+          const base =
+            'group/qa relative flex min-h-24 flex-col items-center justify-center gap-2 rounded-lg p-3 text-center transition-all duration-200';
           const inner = (
             <>
-              <a.icon className="size-7" strokeWidth={1.75} aria-hidden />
+              <a.icon
+                className="size-6 transition-transform duration-300 group-hover/qa:-translate-y-0.5 group-hover/qa:scale-110"
+                strokeWidth={1.75}
+                aria-hidden
+              />
               <span className="text-sm font-medium">{a.label}</span>
-              {!a.href ? (
-                <span className="absolute top-2 right-2 rounded-full bg-slate-200/70 px-1.5 py-0.5 text-[9px] font-semibold text-slate-500 uppercase dark:bg-white/10">
-                  Soon
-                </span>
-              ) : null}
             </>
           );
-          const base =
-            'relative flex min-h-24 flex-col items-center justify-center gap-2 rounded-lg p-3 text-center transition-all';
           return a.href ? (
             <Link
               key={a.label}
               href={a.href}
               className={cn(
                 base,
-                'bg-emerald-50 text-emerald-700 hover:-translate-y-0.5 hover:bg-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-300',
+                'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100 ring-inset hover:bg-emerald-100 active:scale-[0.97] dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-500/20 dark:hover:bg-emerald-500/15',
               )}
             >
               {inner}
@@ -509,79 +1288,7 @@ function QuickActions() {
           );
         })}
       </div>
-    </motion.section>
-  );
-}
-
-function TopSelling() {
-  return (
-    <motion.section {...rise(7)} className={cn(card, 'h-full p-5')}>
-      <CardHead
-        icon={Flame}
-        title="Top Selling Items"
-        aside={
-          <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-500 dark:border-white/10">
-            This Month <ChevronDown className="size-4" aria-hidden />
-          </span>
-        }
-      />
-      <EmptyNote
-        icon={Flame}
-        title="No best sellers yet"
-        text="Your most-ordered dishes rank here once orders come in from your menu."
-      />
-    </motion.section>
-  );
-}
-
-function RecentOrders() {
-  return (
-    <motion.section {...rise(8)} className={cn(card, 'h-full p-5')}>
-      <CardHead icon={ClipboardList} title="Recent Orders" aside={<SoonLink label="View All" />} />
-      <div className="mt-4 overflow-x-auto rounded-xl border border-slate-100 dark:border-white/10">
-        <table className="w-full min-w-[30rem] text-sm">
-          <thead className="bg-slate-50 text-left text-xs font-semibold text-slate-600 dark:bg-white/5 dark:text-slate-300">
-            <tr>
-              <th className="px-4 py-2.5">Order ID</th>
-              <th className="px-4 py-2.5">Table</th>
-              <th className="px-4 py-2.5">Customer</th>
-              <th className="px-4 py-2.5 text-right">Amount</th>
-              <th className="px-4 py-2.5">Status</th>
-            </tr>
-          </thead>
-        </table>
-      </div>
-      <EmptyNote
-        icon={ClipboardList}
-        title="No orders yet"
-        text="Orders taken at the POS or by waiters will be listed here."
-      />
-    </motion.section>
-  );
-}
-
-function TableOccupancy() {
-  return (
-    <motion.section {...rise(9)} className={cn(card, 'h-full p-5')}>
-      <CardHead
-        icon={LayoutGrid}
-        title="Table Occupancy"
-        aside={<SoonLink label="View Floor Plan" />}
-      />
-      <div className="mt-5 flex flex-col items-center gap-6 sm:flex-row">
-        <Donut center="—" caption="Tables" />
-        <Legend
-          items={[
-            { label: 'Occupied', color: '#10B981' },
-            { label: 'Available', color: '#6EE7B7' },
-            { label: 'Reserved', color: '#94A3B8' },
-          ]}
-        />
-      </div>
-      <p className="mt-4 text-center text-xs text-slate-500">
-        Set up floors and tables to see live occupancy.
-      </p>
-    </motion.section>
+    </SpotlightCard>
   );
 }
 
@@ -590,7 +1297,6 @@ function TrialCard() {
   const ent = useEntitlement();
   const e = ent.data;
   if (!e?.isTrial || !e.trialEndsAt) return null;
-  // Share of the trial used, from the server's remaining-day count (no clock reads in render).
   const total = e.trialStartedAt
     ? Math.max(
         1,
@@ -602,7 +1308,7 @@ function TrialCard() {
   const used = Math.min(1, Math.max(0, 1 - e.remainingDays / total));
   const soon = e.remainingDays <= 3;
   return (
-    <section className={cn(card, 'flex flex-col gap-4 p-5 sm:flex-row sm:items-center')}>
+    <SpotlightCard {...rise(0)} className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center">
       <div className="flex items-baseline gap-2">
         <span
           className={cn(
@@ -610,7 +1316,7 @@ function TrialCard() {
             soon ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400',
           )}
         >
-          {e.remainingDays}
+          <AnimatedNumber value={e.remainingDays} />
         </span>
         <span className="text-sm text-muted-foreground">
           day{e.remainingDays === 1 ? '' : 's'} left in your free trial
@@ -625,9 +1331,9 @@ function TrialCard() {
           aria-valuemin={0}
           aria-valuemax={100}
         >
-          <div
-            className={cn('h-full rounded-full', soon ? 'bg-red-500' : 'bg-emerald-500')}
-            style={{ width: `${Math.round(used * 100)}%` }}
+          <AnimatedBar
+            value={Math.round(used * 100)}
+            className={soon ? 'bg-red-500' : 'bg-emerald-500'}
           />
         </div>
         <p className="text-xs text-muted-foreground">
@@ -642,6 +1348,6 @@ function TrialCard() {
           View plans <ArrowRight className="size-4" />
         </Link>
       ) : null}
-    </section>
+    </SpotlightCard>
   );
 }

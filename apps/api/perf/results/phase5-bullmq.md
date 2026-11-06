@@ -1,0 +1,24 @@
+# Phase 5 BullMQ benchmark (measured)
+
+Machine: Intel(R) Core(TM) i5-10310U CPU @ 1.70GHz, 8 logical CPUs, 8 GiB RAM. PostgreSQL 18 and Redis 8 in Docker on the same host. One Node process runs the API producer module and one worker context. Each email is its own committed transaction (20 concurrent producers) → after-commit publish → BullMQ → worker claim → send → mark sent. The SMTP transport is in-process (no mail server); "50 ms SMTP" adds an artificial delay per send. Failures are simulated on the first attempt only and retried with the production backoff (2 s, exponential). 3 iterations per scenario. Run 2026-11-04T12:57:31.658Z.
+
+| Scenario                                         | Iter. | Emails | Jobs/s (end to end) | Processing avg / p50 / p95 / p99 (ms) | Queue wait avg / p95 (ms) | Retry rate | Failure rate | Attempts/email | Process RSS peak Δ (MB) | Redis peak Δ / retained (MB) |
+| ------------------------------------------------ | ----: | -----: | ------------------: | ------------------------------------- | ------------------------- | ---------: | -----------: | -------------: | ----------------------: | ---------------------------- |
+| Pipeline only (no SMTP latency)                  |     1 |   1000 |                62.5 | 78.0 / 69 / 139 / 188                 | 983 / 1392                |       0.0% |         0.0% |           1.00 |                    23.4 | 1.4 / 2.5                    |
+| Pipeline only (no SMTP latency)                  |     2 |   1000 |                42.5 | 117.2 / 105 / 200 / 353               | 1595 / 2639               |       0.0% |         0.0% |           1.00 |                     0.0 | 1.3 / 2.4                    |
+| Pipeline only (no SMTP latency)                  |     3 |   1000 |                26.7 | 186.1 / 169 / 331 / 408               | 2662 / 4779               |       0.0% |         0.0% |           1.00 |                     0.0 | 0.1 / 0.5                    |
+| 50 ms SMTP, concurrency 5                        |     1 |    300 |                25.5 | 193.4 / 165 / 466 / 559               | 2717 / 4765               |       0.0% |         0.0% |           1.00 |                     1.7 | 0.2 / 0.4                    |
+| 50 ms SMTP, concurrency 5                        |     2 |    300 |                35.4 | 139.6 / 133 / 209 / 430               | 2088 / 3024               |       0.0% |         0.0% |           1.00 |                     0.2 | 0.2 / 0.1                    |
+| 50 ms SMTP, concurrency 5                        |     3 |    300 |                35.9 | 137.4 / 125 / 236 / 387               | 2034 / 3129               |       0.0% |         0.0% |           1.00 |                     2.6 | 0.0 / 0.2                    |
+| 50 ms SMTP, concurrency 20                       |     1 |    300 |                67.8 | 283.5 / 269 / 412 / 460               | 145 / 228                 |       0.0% |         0.0% |           1.00 |                     1.9 | 0.3 / 0.5                    |
+| 50 ms SMTP, concurrency 20                       |     2 |    300 |                53.4 | 361.8 / 359 / 516 / 536               | 274 / 461                 |       0.0% |         0.0% |           1.00 |                     3.0 | 0.2 / 0.2                    |
+| 50 ms SMTP, concurrency 20                       |     3 |    300 |                51.3 | 370.2 / 366 / 562 / 608               | 267 / 442                 |       0.0% |         0.0% |           1.00 |                     2.0 | 0.0 / 0.2                    |
+| 50 ms SMTP, conc. 20, 10% first-attempt failures |     1 |    300 |                42.6 | 300.3 / 303 / 431 / 469               | 379 / 2664                |       8.3% |         0.0% |           1.08 |                     3.8 | 0.1 / 0.2                    |
+| 50 ms SMTP, conc. 20, 10% first-attempt failures |     2 |    300 |                31.6 | 440.0 / 407 / 671 / 783               | 713 / 3367                |       9.7% |         0.0% |           1.10 |                     0.1 | 0.3 / 0.4                    |
+| 50 ms SMTP, conc. 20, 10% first-attempt failures |     3 |    300 |                34.2 | 403.1 / 383 / 673 / 702               | 566 / 3010                |       8.3% |         0.0% |           1.08 |                     0.4 | 0.1 / 0.2                    |
+
+Notes:
+
+- Jobs/s is emails fully delivered per second from the first enqueue to the last `sent` row (includes the producer transactions).
+- Processing time is BullMQ `finishedOn - processedOn` (claim, decrypt, send, mark sent: three short transactions plus the send). Queue wait is `processedOn - timestamp`; for retried jobs it includes the backoff delay.
+- Memory: RSS of the single test process (API module + worker), peak minus start. Redis: `used_memory` peak minus start, and what remains after completion (completed jobs are retained 24 h / last 1,000).

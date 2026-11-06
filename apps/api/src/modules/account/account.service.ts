@@ -8,6 +8,8 @@ import {
 import { z } from 'zod';
 import { type Db, DbContext } from '../../core/db/db-context';
 import { PasswordHasher } from '../../core/security/password-hasher';
+import { CacheNs } from '../../shared/cache/cache.keys';
+import { CacheService } from '../../shared/cache/cache.service';
 import { AccessService } from '../auth/access.service';
 import { newPasswordSchema } from '../auth/auth.schemas';
 import type { AuthContext, RequestMeta } from '../auth/auth.types';
@@ -115,11 +117,12 @@ export class AccountService {
     private readonly db: DbContext,
     private readonly access: AccessService,
     private readonly hasher: PasswordHasher,
+    private readonly cache: CacheService,
   ) {}
 
   profile(auth: AuthContext) {
     return this.run(auth, async (db) => {
-      const access = await this.access.tenantAccess(db, auth.membershipId!);
+      const access = await this.access.forRequest(db, auth);
       const tenant = await db.one<{ id: string; name: string; status: string; created_at: Date }>(
         'SELECT id, name, status, created_at FROM tenants WHERE id = $1',
         [auth.tenantId],
@@ -182,7 +185,7 @@ export class AccountService {
 
   updateRestaurant(auth: AuthContext, input: UpdateRestaurantInput, meta: RequestMeta) {
     return this.run(auth, async (db) => {
-      const access = await this.access.tenantAccess(db, auth.membershipId!);
+      const access = await this.access.forRequest(db, auth);
       if (!access.tenant.includes('restaurant:manage')) {
         throw new ForbiddenException({
           code: 'PROFILE_FORBIDDEN',
@@ -202,6 +205,9 @@ export class AccountService {
         `UPDATE restaurants SET ${sets.join(', ')}, updated_at = now(), version = version + 1 WHERE id = $1`,
         params,
       );
+      // Name and currency appear in the cached menu and inventory payloads.
+      this.cache.invalidateAfterCommit(db, CacheNs.menu(auth.tenantId!, restaurant.id));
+      this.cache.invalidateAfterCommit(db, CacheNs.inventory(auth.tenantId!, restaurant.id));
       await this.audit(db, auth, meta, 'restaurant.profile_updated', restaurant.id, {
         fields: Object.keys(input),
       });

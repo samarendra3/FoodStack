@@ -17,6 +17,13 @@ import { ListIndexes1798000014000 } from './migrations/1798000014000-ListIndexes
 import { Subscriptions1798000015000 } from './migrations/1798000015000-Subscriptions';
 import { SubscriptionLifecycle1798000016000 } from './migrations/1798000016000-SubscriptionLifecycle';
 import { PlanCatalogue1798000017000 } from './migrations/1798000017000-PlanCatalogue';
+import { PlanManagement1798000018000 } from './migrations/1798000018000-PlanManagement';
+import { Addons1798000019000 } from './migrations/1798000019000-Addons';
+import { PaymentSessions1798000020000 } from './migrations/1798000020000-PaymentSessions';
+import { OrderUsageCounters1798000021000 } from './migrations/1798000021000-OrderUsageCounters';
+import { PerRestaurantUsage1798000022000 } from './migrations/1798000022000-PerRestaurantUsage';
+import { EmailOutbox1798000023000 } from './migrations/1798000023000-EmailOutbox';
+import { AnalyticsIndexes1798000024000 } from './migrations/1798000024000-AnalyticsIndexes';
 
 /**
  * All migrations in order, for code that cannot load them by file glob (the e2e test setup).
@@ -42,4 +49,11 @@ export const ALL_MIGRATIONS = [
   Subscriptions1798000015000,
   SubscriptionLifecycle1798000016000,
   PlanCatalogue1798000017000,
+  PlanManagement1798000018000,
+  Addons1798000019000,
+  PaymentSessions1798000020000,
+  OrderUsageCounters1798000021000,
+  PerRestaurantUsage1798000022000,
+  EmailOutbox1798000023000,
+  AnalyticsIndexes1798000024000,
 ];

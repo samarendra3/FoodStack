@@ -8,7 +8,7 @@ import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/app.setup';
 import { PasswordHasher } from '../src/core/security/password-hasher';
 import { MailService } from '../src/modules/notifications/mail.service';
-import { connect } from './helpers';
+import { connect, deliverEmails, waitForEmail } from './helpers';
 
 /**
  * End-to-end authentication against real PostgreSQL (as the RLS-restricted API role) and Redis:
@@ -494,12 +494,14 @@ describe('Authentication (integration)', () => {
 
   describe('password reset', () => {
     it('answers identically for unknown emails and sends nothing', async () => {
+      await deliverEmails(app); // earlier tests' mail
       const before = mail.outbox.length;
       await http()
         .post(`${API}/auth/password/forgot`)
         .set('X-Forwarded-For', freshIp())
         .send({ email: `ghost-${suffix()}@example.test` })
         .expect(202);
+      await deliverEmails(app);
       expect(mail.outbox.length).toBe(before);
     });
 
@@ -510,7 +512,7 @@ describe('Authentication (integration)', () => {
         .set('X-Forwarded-For', freshIp())
         .send({ email: emails.kitchenA })
         .expect(202);
-      const message = mail.outbox.findLast((m) => m.to === emails.kitchenA!.toLowerCase())!;
+      const message = (await waitForEmail(app, (m) => m.to === emails.kitchenA!.toLowerCase()))!;
       const resetToken = /token=([A-Za-z0-9_-]+)/.exec(message.text)![1]!;
 
       const weak = await http()
@@ -549,7 +551,7 @@ describe('Authentication (integration)', () => {
           .set('X-Forwarded-For', freshIp())
           .send({ email })
           .expect(202);
-        const message = mail.outbox.findLast((m) => m.to === email.toLowerCase())!;
+        const message = (await waitForEmail(app, (m) => m.to === email.toLowerCase()))!;
         return /token=([A-Za-z0-9_-]+)/.exec(message.text)![1]!;
       };
 

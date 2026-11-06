@@ -404,6 +404,173 @@ describe('Subscription lifecycle (integration)', () => {
     await call('bravoOwner', 'get', '/team').expect(200);
   });
 
+  describe('subscription requests and payment sessions', () => {
+    const checkout = async (who: string) =>
+      (
+        await call(who, 'post', '/billing/subscription/checkout')
+          .send({ planId: plan, billingCycle: 'monthly' })
+          .expect(201)
+      ).body.data as { invoice: { id: string }; orderId: string };
+    const pending = async (who: string) =>
+      (await call(who, 'get', '/billing/subscription').expect(200)).body.data.pendingInvoice;
+    const succeeded = async (tenantId: string) =>
+      (
+        await migrator.query(
+          `SELECT count(*)::int AS n FROM subscription_events WHERE tenant_id = $1 AND event = 'payment_succeeded'`,
+          [tenantId],
+        )
+      )[0].n as number;
+
+    it('shows a failed attempt as payment failed and lets the owner retry the same request', async () => {
+      const co = await checkout('alphaOwner');
+      expect(await pending('alphaOwner')).toMatchObject({ paymentStatus: 'pending_payment' });
+      await call('alphaOwner', 'post', '/billing/subscription/checkout/failed')
+        .send({ invoiceId: co.invoice.id, reason: 'Insufficient funds' })
+        .expect(204);
+      expect(await pending('alphaOwner')).toMatchObject({
+        id: co.invoice.id,
+        paymentStatus: 'payment_failed',
+        failureReason: 'Insufficient funds',
+      });
+      // Retrying reuses the same request and gateway order, and restarts the session window.
+      await migrator.query(
+        `UPDATE subscription_invoices SET checkout_started_at = now() - interval '2 hours' WHERE id = $1`,
+        [co.invoice.id],
+      );
+      const retry = await checkout('alphaOwner');
+      expect(retry).toMatchObject({ invoice: { id: co.invoice.id }, orderId: co.orderId });
+      const [inv] = await migrator.query(
+        `SELECT checkout_started_at > now() - interval '1 minute' AS fresh FROM subscription_invoices WHERE id = $1`,
+        [co.invoice.id],
+      );
+      expect(inv.fresh).toBe(true);
+
+      const before = await succeeded(alpha);
+      const paymentId = `pay_${suffix()}`;
+      const paid = (
+        await call('alphaOwner', 'post', '/billing/subscription/checkout/verify')
+          .send({
+            invoiceId: co.invoice.id,
+            orderId: co.orderId,
+            paymentId,
+            signature: hmacHex(KEY_SECRET, `${co.orderId}|${paymentId}`),
+          })
+          .expect(200)
+      ).body.data;
+      expect(paid).toMatchObject({ paymentStatus: 'paid', transactionId: paymentId });
+
+      // The gateway then reports the same payment twice more (different event ids): no second
+      // activation, no second history entry.
+      const captured = (event: string) => ({
+        event,
+        payload: {
+          payment: {
+            entity: {
+              id: paymentId,
+              order_id: co.orderId,
+              amount: paid.amountMinor,
+              currency: 'INR',
+            },
+          },
+        },
+      });
+      await webhook(captured('payment.captured')).expect(200);
+      await webhook(captured('order.paid')).expect(200);
+      expect(await succeeded(alpha)).toBe(before + 1);
+      expect(await pending('alphaOwner')).toBeNull();
+    });
+
+    it('expires an abandoned checkout, frees the slot, and still applies a late verified payment', async () => {
+      const co = await checkout('bravoOwner');
+      await migrator.query(
+        `UPDATE subscription_invoices SET checkout_started_at = now() - interval '25 hours' WHERE id = $1`,
+        [co.invoice.id],
+      );
+      // An offline request (no gateway order) is never expired by the sweep.
+      const db = app.get(DbContext);
+      expect(await db.run({ platform: true }, (d) => lifecycle.expireAbandonedCheckouts(d))).toBe(
+        1,
+      );
+      const [inv] = await migrator.query(`SELECT * FROM subscription_invoices WHERE id = $1`, [
+        co.invoice.id,
+      ]);
+      expect(inv.status).toBe('expired');
+      expect(await events(bravo)).toContain('checkout_expired');
+      expect(await pending('bravoOwner')).toBeNull();
+      // Running the sweep again changes nothing.
+      expect(await db.run({ platform: true }, (d) => lifecycle.expireAbandonedCheckouts(d))).toBe(
+        0,
+      );
+
+      // The customer did pay at the bank: the verified webhook still activates, exactly once.
+      const before = await succeeded(bravo);
+      const late = {
+        event: 'payment.captured',
+        payload: {
+          payment: {
+            entity: {
+              id: `pay_${suffix()}`,
+              order_id: co.orderId,
+              amount: Number(inv.amount_minor),
+              currency: 'INR',
+            },
+          },
+        },
+      };
+      await webhook(late).expect(200);
+      await webhook(late).expect(200);
+      const [after] = await migrator.query(`SELECT * FROM subscription_invoices WHERE id = $1`, [
+        co.invoice.id,
+      ]);
+      expect(after).toMatchObject({ status: 'paid', expired_at: null });
+      expect(await succeeded(bravo)).toBe(before + 1);
+    });
+
+    it('shows Super Admin every request with owner, plan, amount, payment status and transaction', async () => {
+      const all = await call(
+        'admin',
+        'get',
+        `/platform/billing/subscriptions?group=active&search=lcalpha&limit=10`,
+      ).expect(200);
+      const row = all.body.data.find((s: { tenantId: string }) => s.tenantId === alpha);
+      expect(row).toMatchObject({
+        status: 'active',
+        ownerName: 'alphaOwner',
+        ownerEmail: emails.alphaOwner,
+        planName: expect.any(String),
+        billingCycle: 'monthly',
+        lastInvoice: {
+          paymentStatus: 'paid',
+          amountMinor: expect.any(Number),
+          currencyCode: 'INR',
+          transactionId: expect.stringMatching(/^pay_/),
+        },
+      });
+      // A new request shows under Pending Requests, and failed attempts can be filtered.
+      const co = await checkout('alphaOwner');
+      await call('alphaOwner', 'post', '/billing/subscription/checkout/failed')
+        .send({ invoiceId: co.invoice.id, reason: 'Timeout' })
+        .expect(204);
+      const pendingTab = await call(
+        'admin',
+        'get',
+        `/platform/billing/subscriptions?group=pending&paymentStatus=payment_failed&search=lcalpha`,
+      ).expect(200);
+      expect(pendingTab.body.data.map((s: { tenantId: string }) => s.tenantId)).toEqual([alpha]);
+      const failed = await call('admin', 'get', '/platform/billing/invoices?status=failed').expect(
+        200,
+      );
+      expect(failed.body.data.map((i: { id: string }) => i.id)).toContain(co.invoice.id);
+      expect(failed.body.data.find((i: { id: string }) => i.id === co.invoice.id)).toMatchObject({
+        ownerName: 'alphaOwner',
+        paymentStatus: 'payment_failed',
+      });
+      // Restaurants never see the platform list.
+      await call('alphaOwner', 'get', '/platform/billing/subscriptions').expect(403);
+      await call('alphaOwner', 'post', `/billing/invoices/${co.invoice.id}/cancel`).expect(204);
+    });
+  });
+
   describe('Super Admin controls', () => {
     it('is platform-only', async () => {
       await call('alphaOwner', 'get', '/platform/billing/subscriptions').expect(403);

@@ -20,10 +20,12 @@ import { OrdersModule } from './modules/orders/orders.module';
 import { PlatformModule } from './modules/platform/platform.module';
 import { PromotionsModule } from './modules/promotions/promotions.module';
 import { ReportsModule } from './modules/reports/reports.module';
+import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { TenantsModule } from './modules/tenants/tenants.module';
 import { TeamModule } from './modules/team/team.module';
 import { QueueModule } from './queues/queue.module';
 import { RateLimitModule } from './shared/rate-limit/rate-limit.module';
+import { CacheModule } from './shared/cache/cache.module';
 import { RedisModule } from './shared/redis/redis.module';
 
 /** pino-pretty is a dev dependency; production images (even run with NODE_ENV=development) lack it. */
@@ -59,6 +61,7 @@ function isInstalled(pkg: string): boolean {
     }),
     DatabaseModule,
     RedisModule,
+    CacheModule,
     QueueModule,
     RateLimitModule,
     HealthModule,
@@ -71,6 +74,7 @@ function isInstalled(pkg: string): boolean {
     MenuModule,
     InventoryModule,
     ReportsModule,
+    AnalyticsModule,
     PromotionsModule,
     OrdersModule,
     CustomersModule,

@@ -1,15 +1,15 @@
 /**
- * Queue names reserved by the architecture (docs/system-architecture.md §6).
- * Processors are added by the owning business modules in later phases.
+ * Registered BullMQ queues. Only queues with a producer and a worker are registered (each one
+ * holds a Redis connection per process). `default`, `orders`, `inventory` and `reports` were
+ * removed in Phase 5: nothing used them. Add a name here together with its first job.
  */
 export const QueueName = {
-  Default: 'default',
   Notifications: 'notifications',
-  Orders: 'orders',
-  Inventory: 'inventory',
-  Reports: 'reports',
 } as const;
 
 export type QueueName = (typeof QueueName)[keyof typeof QueueName];
 
 export const ALL_QUEUES: QueueName[] = Object.values(QueueName);
+
+/** Job names on the notifications queue. */
+export const EMAIL_JOB = 'email';

@@ -3,9 +3,8 @@ import { AppConfigService } from '../../config/app-config.service';
 import { type Db, DbContext } from '../../core/db/db-context';
 import type { AuthContext, RequestMeta } from '../auth/auth.types';
 import { issueUserToken, writeAudit } from '../auth/user-tokens';
-import { MailService } from '../notifications/mail.service';
+import { EmailOutboxService } from '../notifications/email-outbox.service';
 import { OFFERED_SQL } from '../billing/plan-catalogue';
-import { TRIAL_DAYS } from '../billing/subscription-state';
 import { provisionTenant } from '../tenants/provision-tenant';
 import {
   type AccessRequestInput,
@@ -48,7 +47,7 @@ export class AccessRequestsService {
 
   constructor(
     private readonly db: DbContext,
-    private readonly mail: MailService,
+    private readonly mail: EmailOutboxService,
     private readonly config: AppConfigService,
   ) {}
 
@@ -107,15 +106,16 @@ export class AccessRequestsService {
     const result = await this.db
       .run({ platform: true, userId: auth.userId }, async (db) => {
         const request = await this.lockPending(db, id);
-        // Trial length comes from the plan picked on the pricing page, if still offered.
+        // Trial length: the plan picked on the pricing page if it offers a trial and is still
+        // sold, otherwise the Free Trial plan's length (applied in provisionTenant).
         const plan = request.plan_code
-          ? await db.one<{ trial_days: number }>(
-              `SELECT trial_days FROM plans WHERE code = $1 AND ${OFFERED_SQL}`,
+          ? await db.one<{ trial_days: number; allow_trial: boolean }>(
+              `SELECT trial_days, allow_trial FROM plans WHERE code = $1 AND ${OFFERED_SQL}`,
               [request.plan_code],
             )
           : undefined;
         const tenant = await provisionTenant(db, {
-          trialDays: plan?.trial_days ?? TRIAL_DAYS,
+          trialDays: plan?.allow_trial ? plan.trial_days : undefined,
           name: request.restaurant_name,
           slug: input.slug,
           ownerEmail: request.email,
@@ -146,6 +146,24 @@ export class AccessRequestsService {
         const token = tenant.ownerHasPassword
           ? null
           : (await issueUserToken(db, tenant.ownerId, 'password_reset', SET_PASSWORD_TTL_MS)).token;
+        // Queued with the approval: no welcome email for a rolled-back approval.
+        const appUrl = this.config.get('APP_URL');
+        const name = request.contact_name;
+        const restaurant = request.restaurant_name;
+        const link = token ? `${appUrl}/welcome?token=${token}` : `${appUrl}/login`;
+        await this.mail.queue(
+          db,
+          'access_request.approved',
+          {
+            to: request.email,
+            subject: `Your FoodStack account for ${restaurant} is ready`,
+            text: token
+              ? `Hi ${name},\n\nGood news: ${restaurant} is approved and your 14-day trial has started.\n\nCreate your password and you're in (link valid for 72 hours):\n${link}\n\nWelcome to FoodStack!`
+              : `Hi ${name},\n\nGood news: ${restaurant} is approved and your 14-day trial has started.\n\nSign in with your existing FoodStack password:\n${link}\n\nWelcome to FoodStack!`,
+            html: `<p>Hi ${escapeHtml(name)},</p><p>Good news: <strong>${escapeHtml(restaurant)}</strong> is approved and your 14-day trial has started.</p><p><a href="${link}">${token ? 'Create your password' : 'Sign in'}</a>${token ? ' (link valid for 72 hours)' : ''}.</p><p>Welcome to FoodStack!</p>`,
+          },
+          tenant.tenantId,
+        );
         return { tenant, token, request };
       })
       .catch((error: unknown) => {
@@ -158,18 +176,6 @@ export class AccessRequestsService {
         throw error;
       });
 
-    const appUrl = this.config.get('APP_URL');
-    const name = result.request.contact_name;
-    const restaurant = result.request.restaurant_name;
-    const link = result.token ? `${appUrl}/welcome?token=${result.token}` : `${appUrl}/login`;
-    await this.safeSend({
-      to: result.request.email,
-      subject: `Your FoodStack account for ${restaurant} is ready`,
-      text: result.token
-        ? `Hi ${name},\n\nGood news: ${restaurant} is approved and your 14-day trial has started.\n\nCreate your password and you're in (link valid for 72 hours):\n${link}\n\nWelcome to FoodStack!`
-        : `Hi ${name},\n\nGood news: ${restaurant} is approved and your 14-day trial has started.\n\nSign in with your existing FoodStack password:\n${link}\n\nWelcome to FoodStack!`,
-      html: `<p>Hi ${escapeHtml(name)},</p><p>Good news: <strong>${escapeHtml(restaurant)}</strong> is approved and your 14-day trial has started.</p><p><a href="${link}">${result.token ? 'Create your password' : 'Sign in'}</a>${result.token ? ' (link valid for 72 hours)' : ''}.</p><p>Welcome to FoodStack!</p>`,
-    });
     return {
       tenantId: result.tenant.tenantId,
       slug: input.slug,
@@ -179,7 +185,7 @@ export class AccessRequestsService {
   }
 
   async reject(id: string, input: RejectInput, auth: AuthContext, meta: RequestMeta) {
-    const request = await this.db.run({ platform: true, userId: auth.userId }, async (db) => {
+    await this.db.run({ platform: true, userId: auth.userId }, async (db) => {
       const row = await this.lockPending(db, id);
       await db.query(
         `UPDATE access_requests SET status = 'rejected', review_note = $2,
@@ -196,13 +202,17 @@ export class AccessRequestsService {
         entityId: id,
         ...meta,
       });
-      return row;
-    });
-    await this.safeSend({
-      to: request.email,
-      subject: 'About your FoodStack request',
-      text: `Hi ${request.contact_name},\n\nThank you for your interest in FoodStack. We are not able to set up ${request.restaurant_name} right now.\n\nReply to this email if you have any questions.`,
-      html: `<p>Hi ${escapeHtml(request.contact_name)},</p><p>Thank you for your interest in FoodStack. We are not able to set up <strong>${escapeHtml(request.restaurant_name)}</strong> right now.</p><p>Reply to this email if you have any questions.</p>`,
+      await this.mail.queue(
+        db,
+        'access_request.rejected',
+        {
+          to: row.email,
+          subject: 'About your FoodStack request',
+          text: `Hi ${row.contact_name},\n\nThank you for your interest in FoodStack. We are not able to set up ${row.restaurant_name} right now.\n\nReply to this email if you have any questions.`,
+          html: `<p>Hi ${escapeHtml(row.contact_name)},</p><p>Thank you for your interest in FoodStack. We are not able to set up <strong>${escapeHtml(row.restaurant_name)}</strong> right now.</p><p>Reply to this email if you have any questions.</p>`,
+        },
+        null,
+      );
     });
   }
 
@@ -233,34 +243,31 @@ export class AccessRequestsService {
   /** Tells every Super Admin a request arrived. Best effort: never fails the submission. */
   private async notifyAdmins(input: AccessRequestInput): Promise<void> {
     try {
-      const admins = await this.db.run({ platform: true }, (db) =>
-        db.query<{ email: string }>(
+      await this.db.run({ platform: true }, async (db) => {
+        const admins = await db.query<{ email: string }>(
           `SELECT DISTINCT u.email::text AS email
              FROM platform_role_assignments a
              JOIN roles r ON r.id = a.role_id AND r.code = 'super_admin'
              JOIN users u ON u.id = a.user_id AND u.status = 'active'`,
-        ),
-      );
-      const link = `${this.config.get('APP_URL')}/platform/requests`;
-      for (const admin of admins) {
-        await this.safeSend({
-          to: admin.email,
-          subject: `New restaurant request: ${input.restaurantName}`,
-          text: `${input.contactName} (${input.email}) asked to join FoodStack with ${input.restaurantName}.\n\nReview it here: ${link}`,
-          html: `<p><strong>${escapeHtml(input.contactName)}</strong> (${escapeHtml(input.email)}) asked to join FoodStack with <strong>${escapeHtml(input.restaurantName)}</strong>.</p><p><a href="${link}">Review the request</a></p>`,
-        });
-      }
+        );
+        const link = `${this.config.get('APP_URL')}/platform/requests`;
+        for (const admin of admins) {
+          await this.mail.queue(
+            db,
+            'access_request.received',
+            {
+              to: admin.email,
+              subject: `New restaurant request: ${input.restaurantName}`,
+              text: `${input.contactName} (${input.email}) asked to join FoodStack with ${input.restaurantName}.\n\nReview it here: ${link}`,
+              html: `<p><strong>${escapeHtml(input.contactName)}</strong> (${escapeHtml(input.email)}) asked to join FoodStack with <strong>${escapeHtml(input.restaurantName)}</strong>.</p><p><a href="${link}">Review the request</a></p>`,
+            },
+            null,
+          );
+        }
+      });
     } catch (error) {
-      this.logger.warn(`Could not notify admins about an access request: ${String(error)}`);
-    }
-  }
-
-  private async safeSend(message: Parameters<MailService['send']>[0]): Promise<void> {
-    try {
-      await this.mail.send(message);
-    } catch (error) {
-      // The decision is saved either way; a mail outage must not undo it.
-      this.logger.warn(`Email to ${message.to} failed: ${String(error)}`);
+      // No recipient or content in the log line.
+      this.logger.warn(`Could not queue the access-request notification: ${(error as Error).name}`);
     }
   }
 }

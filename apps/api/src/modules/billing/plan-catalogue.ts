@@ -22,7 +22,16 @@ export const FEATURE_KEYS = [
 export type FeatureKey = (typeof FEATURE_KEYS)[number];
 
 export const PLAN_ICONS = ['rocket', 'sparkles', 'building', 'store', 'crown'] as const;
-export const PLAN_BADGES = ['popular', 'recommended'] as const;
+export const PLAN_BADGES = ['popular', 'recommended', 'best_value'] as const;
+export const PLAN_TYPES = ['free_trial', 'paid', 'enterprise'] as const;
+export const PLAN_CYCLE_OPTIONS = ['monthly', 'yearly', 'both'] as const;
+export type PlanType = (typeof PLAN_TYPES)[number];
+
+/** One line on a plan card: included (enabled) or shown as not included. */
+export interface FeatureItem {
+  label: string;
+  enabled: boolean;
+}
 
 export interface PlanRow {
   id: string;
@@ -38,7 +47,13 @@ export interface PlanRow {
   max_menu_items: number | null;
   max_storage_mb: number | null;
   features: string[];
+  feature_items: FeatureItem[];
   feature_flags: Partial<Record<FeatureKey, boolean>>;
+  plan_type: PlanType;
+  allow_trial: boolean;
+  billing_cycles: (typeof PLAN_CYCLE_OPTIONS)[number];
+  cta_label: string | null;
+  admin_notes: string | null;
   trial_days: number;
   is_active: boolean;
   is_public: boolean;
@@ -71,6 +86,10 @@ export function publicPlanDto(p: PlanRow) {
     description: p.description,
     icon: p.icon,
     badge: p.badge,
+    planType: p.plan_type,
+    ctaLabel: p.cta_label,
+    billingCycles: p.billing_cycles,
+    allowTrial: p.allow_trial,
     currencyCode: p.currency_code.trim(),
     customPricing: p.custom_pricing,
     priceMonthlyMinor: monthly,
@@ -85,6 +104,7 @@ export function publicPlanDto(p: PlanRow) {
       storageMb: p.max_storage_mb,
     },
     features: p.features,
+    featureItems: p.feature_items,
     featureFlags: p.feature_flags,
     sortOrder: p.sort_order,
   };
@@ -95,6 +115,7 @@ export function planDto(p: PlanRow) {
     ...publicPlanDto(p),
     isActive: p.is_active,
     isPublic: p.is_public,
+    adminNotes: p.admin_notes,
     archivedAt: p.archived_at ? new Date(p.archived_at).toISOString() : null,
     createdAt: new Date(p.created_at).toISOString(),
     updatedAt: new Date(p.updated_at).toISOString(),
@@ -137,6 +158,13 @@ export function planSnapshot(
     features: p.features,
     featureFlags: p.feature_flags,
   };
+}
+
+/** Whether a plan can be bought in the given cycle (Free Trial plans are never sold). */
+export function sellsCycle(p: PlanRow, cycle: 'monthly' | 'yearly'): boolean {
+  return (
+    p.plan_type !== 'free_trial' && (p.billing_cycles === 'both' || p.billing_cycles === cycle)
+  );
 }
 
 /** SQL filter for plans offered to new customers. */

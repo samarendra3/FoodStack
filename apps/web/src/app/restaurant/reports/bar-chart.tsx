@@ -29,11 +29,14 @@ export function BarChart({
   buckets,
   format,
   className,
+  ariaLabel = 'Stock movement value per period',
 }: {
   series: Series[];
   buckets: Bucket[];
   format: (v: number) => string;
   className?: string;
+  /** Names the chart for screen readers. */
+  ariaLabel?: string;
 }) {
   const [hover, setHover] = useState<number | null>(null);
   const max = Math.max(1, ...buckets.flatMap((b) => series.map((s) => b.values[s.key] ?? 0)));
@@ -68,7 +71,7 @@ export function BarChart({
           width={W}
           height={H}
           role="img"
-          aria-label="Stock movement value per period"
+          aria-label={ariaLabel}
           className="max-w-none"
         >
           {ticks.map((t) => (

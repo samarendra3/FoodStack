@@ -48,6 +48,32 @@ describe('RazorpayGateway', () => {
     });
   });
 
+  it('maps refunds and lost chargebacks to a reversal of the original payment', () => {
+    const signed = (event: object) => {
+      const body = Buffer.from(JSON.stringify(event));
+      return gw.parseWebhook(body, hmacHex('hook-secret', body), 'evt_r');
+    };
+    expect(
+      signed({
+        event: 'refund.processed',
+        payload: { refund: { entity: { payment_id: 'pay_7' } } },
+      }),
+    ).toMatchObject({ outcome: 'reversed', paymentId: 'pay_7' });
+    expect(
+      signed({
+        event: 'payment.dispute.lost',
+        payload: { dispute: { entity: { payment_id: 'pay_8' } } },
+      }),
+    ).toMatchObject({ outcome: 'reversed', paymentId: 'pay_8' });
+    // An opened dispute is not yet a reversal.
+    expect(
+      signed({
+        event: 'payment.dispute.created',
+        payload: { dispute: { entity: { payment_id: 'pay_8' } } },
+      }),
+    ).toMatchObject({ outcome: 'other' });
+  });
+
   it('compares signatures safely regardless of length', () => {
     expect(safeEqualHex('abcd', 'abcd')).toBe(true);
     expect(safeEqualHex('abcd', 'abc')).toBe(false);

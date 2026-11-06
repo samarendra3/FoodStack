@@ -1,6 +1,7 @@
 'use client';
 
 import { ApiError } from '@foodstack/api-client';
+import { ToastProvider } from '@foodstack/ui/components/toast';
 import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useState, type ReactNode } from 'react';
 import { AuthProvider } from '@/components/auth/auth-provider';
@@ -33,7 +34,9 @@ export function Providers({ children }: { children: ReactNode }) {
   });
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>{children}</AuthProvider>
+      <ToastProvider>
+        <AuthProvider>{children}</AuthProvider>
+      </ToastProvider>
     </QueryClientProvider>
   );
 }

@@ -1,6 +1,9 @@
 import { Controller, Get } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { DbContext } from '../../core/db/db-context';
+import { CacheService } from '../../shared/cache/cache.service';
+import { PlatformAnalyticsService } from '../analytics/platform-analytics.service';
+import { QueueMonitorService } from '../notifications/queue-monitor.service';
 import type { AuthContext } from '../auth/auth.types';
 import { AllowAudience, CurrentAuth, RequirePermission } from '../auth/decorators';
 
@@ -12,7 +15,42 @@ import { AllowAudience, CurrentAuth, RequirePermission } from '../auth/decorator
 @AllowAudience('platform')
 @Controller('platform')
 export class PlatformController {
-  constructor(private readonly db: DbContext) {}
+  constructor(
+    private readonly db: DbContext,
+    private readonly cache: CacheService,
+    private readonly queues: QueueMonitorService,
+    private readonly analytics: PlatformAnalyticsService,
+  ) {}
+
+  @Get('analytics')
+  @RequirePermission('platform:dashboard_view')
+  @ApiOperation({
+    summary:
+      'Tenant growth, subscription distribution and paid SaaS invoice revenue (platform data only)',
+  })
+  platformAnalytics(@CurrentAuth() auth: AuthContext) {
+    return this.analytics.overview(auth.userId);
+  }
+
+  @Get('queues')
+  @RequirePermission('platform:dashboard_view')
+  @ApiOperation({
+    summary:
+      'Email queue and outbox: job counts, processing and wait times, retries, worker health (no job data)',
+  })
+  queueStats() {
+    return this.queues.snapshot();
+  }
+
+  @Get('cache')
+  @RequirePermission('platform:dashboard_view')
+  @ApiOperation({
+    summary:
+      'Cache metrics for this API instance: hits, misses, fallbacks, Redis latency and memory',
+  })
+  cacheStats() {
+    return this.cache.stats();
+  }
 
   @Get('dashboard')
   @RequirePermission('platform:dashboard_view')

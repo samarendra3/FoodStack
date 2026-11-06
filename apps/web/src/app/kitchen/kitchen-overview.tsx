@@ -1,5 +1,6 @@
 'use client';
 
+import { AlertBanner } from '@foodstack/ui/components/alert-banner';
 import { cn } from '@foodstack/ui/lib/utils';
 import { Activity, ArrowRight, CheckCircle2, Clock, UtensilsCrossed } from 'lucide-react';
 import { motion } from 'motion/react';
@@ -153,12 +154,9 @@ export function KitchenEmptyState({
 
 export function KitchenError({ message }: { message: string }) {
   return (
-    <p
-      role="alert"
-      className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300"
-    >
+    <AlertBanner variant="danger" title="Orders could not be loaded">
       {message}
-    </p>
+    </AlertBanner>
   );
 }
 

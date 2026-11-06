@@ -8,6 +8,8 @@ import {
 import { likeTerm, Paged, runPaged } from '../../common/pagination/paged';
 import { type Db, DbContext } from '../../core/db/db-context';
 import { hasPermission } from '../auth/access';
+import { CacheEntry, CacheNs } from '../../shared/cache/cache.keys';
+import { CacheService } from '../../shared/cache/cache.service';
 import { SubscriptionLifecycleService } from '../billing/subscription-lifecycle.service';
 import { AccessService } from '../auth/access.service';
 import type { AuthContext, RequestMeta, TenantAccess } from '../auth/auth.types';
@@ -72,47 +74,58 @@ export class MenuService {
     private readonly db: DbContext,
     private readonly access: AccessService,
     private readonly subscriptions: SubscriptionLifecycleService,
+    private readonly cache: CacheService,
   ) {}
 
   /** Categories with item counts, without items (for list screens that page items). */
   categories(auth: AuthContext, restaurantId?: string) {
     return this.run(auth, async (db, access) => {
       const restaurant = await this.restaurant(db, access, 'menu:read', restaurantId);
-      const rows = await db.query<{
-        id: string;
-        name: string;
-        sort_order: number;
-        is_active: boolean;
-        item_count: string;
-      }>(
-        `SELECT c.id, c.name, c.sort_order, c.is_active,
+      // Access is checked above for this exact restaurant; only the data part is cached.
+      const data = await this.cache.getOrLoad(
+        CacheNs.menu(auth.tenantId!, restaurant.id),
+        CacheEntry.menuCategories,
+        this.cache.ttl('menuCategories'),
+        () => this.loadCategories(db, restaurant),
+      );
+      return { ...data, canManage: canUse(access, 'menu:manage', restaurant.id) };
+    });
+  }
+
+  private async loadCategories(db: Db, restaurant: Restaurant) {
+    const rows = await db.query<{
+      id: string;
+      name: string;
+      sort_order: number;
+      is_active: boolean;
+      item_count: string;
+    }>(
+      `SELECT c.id, c.name, c.sort_order, c.is_active,
                 (SELECT count(*) FROM menu_items i WHERE i.category_id = c.id AND i.deleted_at IS NULL) AS item_count
            FROM menu_categories c
           WHERE c.restaurant_id = $1 AND c.deleted_at IS NULL
           ORDER BY c.sort_order, lower(c.name)`,
-        [restaurant.id],
-      );
-      const total = await db.one<{ n: string }>(
-        'SELECT count(*) AS n FROM menu_items WHERE restaurant_id = $1 AND deleted_at IS NULL',
-        [restaurant.id],
-      );
-      return {
-        restaurant: {
-          id: restaurant.id,
-          name: restaurant.name,
-          currencyCode: restaurant.currency_code.trim(),
-        },
-        categories: rows.map((c) => ({
-          id: c.id,
-          name: c.name,
-          sortOrder: c.sort_order,
-          isActive: c.is_active,
-          itemCount: Number(c.item_count),
-        })),
-        itemCount: Number(total?.n ?? 0),
-        canManage: canUse(access, 'menu:manage', restaurant.id),
-      };
-    });
+      [restaurant.id],
+    );
+    const total = await db.one<{ n: string }>(
+      'SELECT count(*) AS n FROM menu_items WHERE restaurant_id = $1 AND deleted_at IS NULL',
+      [restaurant.id],
+    );
+    return {
+      restaurant: {
+        id: restaurant.id,
+        name: restaurant.name,
+        currencyCode: restaurant.currency_code.trim(),
+      },
+      categories: rows.map((c) => ({
+        id: c.id,
+        name: c.name,
+        sortOrder: c.sort_order,
+        isActive: c.is_active,
+        itemCount: Number(c.item_count),
+      })),
+      itemCount: Number(total?.n ?? 0),
+    };
   }
 
   /** Paged menu items with their portions. */
@@ -174,61 +187,70 @@ export class MenuService {
   get(auth: AuthContext, restaurantId?: string) {
     return this.run(auth, async (db, access) => {
       const restaurant = await this.restaurant(db, access, 'menu:read', restaurantId);
-      const categories = await db.query<{
-        id: string;
-        name: string;
-        sort_order: number;
-        is_active: boolean;
-        item_count: string;
-      }>(
-        `SELECT c.id, c.name, c.sort_order, c.is_active,
+      const data = await this.cache.getOrLoad(
+        CacheNs.menu(auth.tenantId!, restaurant.id),
+        CacheEntry.menuCatalogue,
+        this.cache.ttl('menu'),
+        () => this.loadCatalogue(db, restaurant),
+      );
+      return { ...data, canManage: canUse(access, 'menu:manage', restaurant.id) };
+    });
+  }
+
+  private async loadCatalogue(db: Db, restaurant: Restaurant) {
+    const categories = await db.query<{
+      id: string;
+      name: string;
+      sort_order: number;
+      is_active: boolean;
+      item_count: string;
+    }>(
+      `SELECT c.id, c.name, c.sort_order, c.is_active,
                 (SELECT count(*) FROM menu_items i
                   WHERE i.category_id = c.id AND i.deleted_at IS NULL) AS item_count
            FROM menu_categories c
           WHERE c.restaurant_id = $1 AND c.deleted_at IS NULL
           ORDER BY c.sort_order, lower(c.name)`,
-        [restaurant.id],
-      );
-      const items = await db.query<ItemRow>(
-        `${ITEM_SELECT} WHERE restaurant_id = $1 AND deleted_at IS NULL
+      [restaurant.id],
+    );
+    const items = await db.query<ItemRow>(
+      `${ITEM_SELECT} WHERE restaurant_id = $1 AND deleted_at IS NULL
           ORDER BY sort_order, lower(name)`,
-        [restaurant.id],
-      );
-      const variantRows = await db.query<{
-        id: string;
-        menu_item_id: string;
-        name: string;
-        price_minor: string;
-      }>(
-        `SELECT v.id, v.menu_item_id, v.name, v.price_minor FROM menu_item_variants v
+      [restaurant.id],
+    );
+    const variantRows = await db.query<{
+      id: string;
+      menu_item_id: string;
+      name: string;
+      price_minor: string;
+    }>(
+      `SELECT v.id, v.menu_item_id, v.name, v.price_minor FROM menu_item_variants v
            JOIN menu_items i ON i.id = v.menu_item_id
           WHERE i.restaurant_id = $1 AND v.deleted_at IS NULL
           ORDER BY v.sort_order, v.created_at`,
-        [restaurant.id],
-      );
-      const byItem = new Map<string, MenuVariant[]>();
-      for (const v of variantRows) {
-        const list = byItem.get(v.menu_item_id) ?? [];
-        list.push({ id: v.id, name: v.name, priceMinor: Number(v.price_minor) });
-        byItem.set(v.menu_item_id, list);
-      }
-      return {
-        restaurant: {
-          id: restaurant.id,
-          name: restaurant.name,
-          currencyCode: restaurant.currency_code.trim(),
-        },
-        categories: categories.map((c): MenuCategory => ({
-          id: c.id,
-          name: c.name,
-          sortOrder: c.sort_order,
-          isActive: c.is_active,
-          itemCount: Number(c.item_count),
-        })),
-        items: items.map((i) => ({ ...toItem(i), variants: byItem.get(i.id) ?? [] })),
-        canManage: canUse(access, 'menu:manage', restaurant.id),
-      };
-    });
+      [restaurant.id],
+    );
+    const byItem = new Map<string, MenuVariant[]>();
+    for (const v of variantRows) {
+      const list = byItem.get(v.menu_item_id) ?? [];
+      list.push({ id: v.id, name: v.name, priceMinor: Number(v.price_minor) });
+      byItem.set(v.menu_item_id, list);
+    }
+    return {
+      restaurant: {
+        id: restaurant.id,
+        name: restaurant.name,
+        currencyCode: restaurant.currency_code.trim(),
+      },
+      categories: categories.map((c): MenuCategory => ({
+        id: c.id,
+        name: c.name,
+        sortOrder: c.sort_order,
+        isActive: c.is_active,
+        itemCount: Number(c.item_count),
+      })),
+      items: items.map((i) => ({ ...toItem(i), variants: byItem.get(i.id) ?? [] })),
+    };
   }
 
   createCategory(auth: AuthContext, input: CreateCategoryInput, meta: RequestMeta) {
@@ -518,9 +540,18 @@ export class MenuService {
 
   // ---- helpers ----
 
+  /**
+   * Every menu write resolves its restaurant through restaurant('menu:manage'),
+   * categoryForManage or itemForManage, which call this: the menu cache of that restaurant is
+   * invalidated once the write commits (nothing happens on rollback).
+   */
+  private menuChanged(db: Db, restaurantId: string): void {
+    this.cache.invalidateAfterCommit(db, CacheNs.menu(db.tenantId(), restaurantId));
+  }
+
   private run<T>(auth: AuthContext, work: (db: Db, access: TenantAccess) => Promise<T>) {
     return this.db.run({ tenantId: auth.tenantId, userId: auth.userId }, async (db) =>
-      work(db, await this.access.tenantAccess(db, auth.membershipId!)),
+      work(db, await this.access.forRequest(db, auth)),
     );
   }
 
@@ -551,6 +582,7 @@ export class MenuService {
       [id],
     );
     if (!row) throw notFound('Restaurant');
+    if (perm === 'menu:manage') this.menuChanged(db, row.id);
     return row;
   }
 
@@ -561,6 +593,7 @@ export class MenuService {
     );
     if (!row) throw notFound('Category');
     if (!canUse(access, 'menu:manage', row.restaurant_id)) throw forbidden();
+    this.menuChanged(db, row.restaurant_id);
     return row;
   }
 
@@ -577,6 +610,7 @@ export class MenuService {
     );
     if (!row) throw notFound('Item');
     if (!canUse(access, 'menu:manage', row.restaurant_id)) throw forbidden();
+    this.menuChanged(db, row.restaurant_id);
     return row;
   }
 

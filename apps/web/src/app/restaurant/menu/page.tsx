@@ -1,6 +1,7 @@
 'use client';
 
 import { Button } from '@foodstack/ui/components/button';
+import { DeleteConfirmDialog } from '@foodstack/ui/components/confirm-dialog';
 import { cn } from '@foodstack/ui/lib/utils';
 import {
   BookOpen,
@@ -31,6 +32,7 @@ import {
   useMenuMutations,
 } from '@/lib/menu';
 import { type Column, DataTable } from '@/components/data-table/data-table';
+import { useNotify } from '@/lib/notify';
 import { usePagedList } from '@/lib/paged';
 import { ImportDialog } from './import-dialog';
 import { MenuTabs } from './menu-tabs';
@@ -40,12 +42,14 @@ type Dialog =
   | { kind: 'item'; item?: MenuItem }
   | { kind: 'delete-item'; item: MenuItem }
   | { kind: 'delete-category'; category: MenuCategory }
+  | { kind: 'delete-items'; items: MenuItem[] }
   | { kind: 'import' };
 
 export default function MenuPage() {
   const cats = useMenuCategories();
   const m = useMenuMutations();
   const [dialog, setDialog] = useState<Dialog | null>(null);
+  const notify = useNotify();
   const [rowError, setRowError] = useState<string | null>(null);
   const list = usePagedList<PagedItem>('menu', '/menu/items', {
     sortBy: 'category',
@@ -279,15 +283,7 @@ export default function MenuPage() {
                     {
                       label: 'Delete',
                       destructive: true,
-                      run: async (rows) => {
-                        if (
-                          !window.confirm(
-                            `Delete ${rows.length} items? They disappear from the POS.`,
-                          )
-                        )
-                          return;
-                        for (const r of rows) await m.deleteItem.mutateAsync(r.id);
-                      },
+                      run: (rows) => setDialog({ kind: 'delete-items', items: rows }),
                     },
                   ]
                 : undefined
@@ -338,7 +334,7 @@ export default function MenuPage() {
       ) : null}
 
       <AnimatePresence>
-        {dialog && data ? (
+        {dialog && data && !dialog.kind.startsWith('delete') ? (
           <Modal onClose={() => setDialog(null)} wide={dialog.kind === 'import'}>
             {dialog.kind === 'import' ? (
               <ImportLoader onDone={() => setDialog(null)} />
@@ -352,28 +348,67 @@ export default function MenuPage() {
                 defaultCategory={categoryId || undefined}
                 onDone={() => setDialog(null)}
               />
-            ) : dialog.kind === 'delete-item' ? (
-              <ConfirmDelete
-                title={`Delete ${dialog.item.name}?`}
-                body="It disappears from the POS. Past orders keep their record of it."
-                run={() => m.deleteItem.mutateAsync(dialog.item.id)}
-                onDone={() => setDialog(null)}
-              />
-            ) : (
-              <ConfirmDelete
-                title={`Delete ${dialog.category.name}?`}
-                body={
-                  dialog.category.itemCount > 0
-                    ? 'This category still has items. Move or delete them first.'
-                    : 'The empty category is removed.'
-                }
-                run={() => m.deleteCategory.mutateAsync(dialog.category.id)}
-                onDone={() => setDialog(null)}
-              />
-            )}
+            ) : null}
           </Modal>
         ) : null}
       </AnimatePresence>
+      <DeleteConfirmDialog
+        open={dialog?.kind === 'delete-item'}
+        onClose={() => setDialog(null)}
+        entity="menu item"
+        title={dialog?.kind === 'delete-item' ? `Delete ${dialog.item.name}?` : undefined}
+        confirmLabel="Delete Item"
+        description="It disappears from the POS. Past orders keep their record of it."
+        errorMessage={authErrorMessage}
+        onConfirm={async () => {
+          if (dialog?.kind !== 'delete-item') return;
+          await m.deleteItem.mutateAsync(dialog.item.id);
+          notify.success('Menu item deleted', dialog.item.name);
+        }}
+      />
+      <DeleteConfirmDialog
+        open={dialog?.kind === 'delete-items'}
+        onClose={() => setDialog(null)}
+        entity="menu items"
+        title={
+          dialog?.kind === 'delete-items' ? `Delete ${dialog.items.length} menu items?` : undefined
+        }
+        confirmLabel="Delete Items"
+        description="They disappear from the POS. Past orders keep their record of them."
+        details={
+          dialog?.kind === 'delete-items'
+            ? dialog.items
+                .slice(0, 5)
+                .map((i) => ({ label: i.name, value: formatMoney(i.priceMinor, i.currencyCode) }))
+            : undefined
+        }
+        errorMessage={authErrorMessage}
+        onConfirm={async () => {
+          if (dialog?.kind !== 'delete-items') return;
+          for (const r of dialog.items) await m.deleteItem.mutateAsync(r.id);
+          notify.success(`${dialog.items.length} menu items deleted`);
+        }}
+      />
+      <DeleteConfirmDialog
+        open={dialog?.kind === 'delete-category'}
+        onClose={() => setDialog(null)}
+        entity="category"
+        title={dialog?.kind === 'delete-category' ? `Delete ${dialog.category.name}?` : undefined}
+        confirmLabel="Delete Category"
+        description={
+          dialog?.kind === 'delete-category' && dialog.category.itemCount > 0
+            ? 'This category still has items. Move or delete them first.'
+            : 'The empty category is removed.'
+        }
+        confirmDisabled={dialog?.kind === 'delete-category' && dialog.category.itemCount > 0}
+        errorMessage={authErrorMessage}
+        onConfirm={async () => {
+          if (dialog?.kind !== 'delete-category') return;
+          await m.deleteCategory.mutateAsync(dialog.category.id);
+          notify.success('Category deleted', dialog.category.name);
+        }}
+      />
+      <AnimatePresence></AnimatePresence>
     </div>
   );
 }
@@ -881,49 +916,6 @@ function ItemForm(p: {
         </Button>
       </div>
     </form>
-  );
-}
-
-function ConfirmDelete(p: {
-  title: string;
-  body: string;
-  run: () => Promise<unknown>;
-  onDone: () => void;
-}) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  return (
-    <div className="space-y-4">
-      <h2 className="text-lg font-semibold">{p.title}</h2>
-      <p className="text-sm text-muted-foreground">{p.body}</p>
-      {error ? (
-        <p role="alert" className="text-sm text-red-600">
-          {error}
-        </p>
-      ) : null}
-      <div className="flex justify-end gap-2">
-        <Button variant="ghost" onClick={p.onDone}>
-          Cancel
-        </Button>
-        <Button
-          variant="destructive"
-          disabled={busy}
-          onClick={async () => {
-            setBusy(true);
-            setError(null);
-            try {
-              await p.run();
-              p.onDone();
-            } catch (err) {
-              setError(authErrorMessage(err));
-              setBusy(false);
-            }
-          }}
-        >
-          {busy ? <Loader2 className="animate-spin" /> : <Trash2 />} Delete
-        </Button>
-      </div>
-    </div>
   );
 }
 

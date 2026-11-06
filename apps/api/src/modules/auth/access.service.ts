@@ -1,7 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import type { Db } from '../../core/db/db-context';
 import { accessibleBranches, buildTenantAccess, resolveHomePath } from './access';
-import type { Assignment, Audience, BranchRef, SessionProfile, TenantAccess } from './auth.types';
+import type {
+  Assignment,
+  Audience,
+  BranchRef,
+  SessionProfile,
+  TenantAccess,
+  AuthContext,
+} from './auth.types';
 
 export const ACTIVE_TENANT_STATUSES = ['trial', 'active'];
 
@@ -20,6 +27,16 @@ interface MembershipRow {
  */
 @Injectable()
 export class AccessService {
+  /**
+   * The caller's permissions for this request: the set AuthGuard already computed (same request,
+   * validated session) when there is one, otherwise a fresh database look-up. Requires scope
+   * { tenantId }.
+   */
+  forRequest(db: Db, auth: AuthContext): Promise<TenantAccess> {
+    if (auth.access && auth.audience === 'tenant') return Promise.resolve(auth.access);
+    return this.tenantAccess(db, auth.membershipId!);
+  }
+
   /** Requires scope { tenantId }. */
   async tenantAccess(db: Db, membershipId: string): Promise<TenantAccess> {
     const assignments = await db.query<{

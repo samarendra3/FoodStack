@@ -2,7 +2,7 @@
 
 import { buttonVariants } from '@foodstack/ui/components/button';
 import { cn } from '@foodstack/ui/lib/utils';
-import { ArrowRight, Check, RefreshCw, Sparkles } from 'lucide-react';
+import { ArrowRight, Check, RefreshCw, Sparkles, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import Link from 'next/link';
 import { useState } from 'react';
@@ -11,6 +11,8 @@ import {
   formatMoney,
   PLAN_ICONS,
   type PublicPlan,
+  planCta,
+  cycleFor,
   planHighlights,
   usePublicPlans,
 } from '@/lib/plans';
@@ -86,31 +88,45 @@ function Price({ plan, billing, dark }: { plan: PublicPlan; billing: Billing; da
     );
   }
 
+  if (plan.planType === 'free_trial') {
+    return (
+      <div className="flex h-[4.5rem] flex-col justify-end">
+        <p className="font-display text-4xl leading-none xl:text-[2.75rem] font-extrabold tracking-tight">
+          Free
+        </p>
+        <p className={cn('mt-2 text-sm', muted)}>For {plan.trialDays} days · no card needed</p>
+      </div>
+    );
+  }
+
+  // A plan sold in one cycle only shows that cycle, whatever the toggle says.
+  const shown = cycleFor(plan, billing);
   // Yearly is shown as its monthly equivalent, with the yearly total underneath.
-  const perMonth = billing === 'monthly' ? monthly : Math.round(yearly / 12);
+  const perMonth = shown === 'monthly' ? monthly : Math.round(yearly / 12 / 100) * 100;
   return (
     <div className="flex h-[4.5rem] flex-col justify-end">
       <div className="flex items-end gap-1.5">
         <AnimatePresence mode="popLayout" initial={false}>
           <motion.span
-            key={`${billing}-${perMonth}`}
+            key={`${shown}-${perMonth}`}
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -12 }}
             transition={{ duration: 0.2 }}
-            className="font-display tabular text-5xl leading-none font-extrabold tracking-tight"
+            className="font-display tabular text-4xl leading-none xl:text-[2.75rem] font-extrabold tracking-tight"
           >
             {formatMoney(perMonth, plan.currencyCode)}
           </motion.span>
         </AnimatePresence>
-        <span className={cn('pb-1 text-sm', muted)}>/ month</span>
+        <span className={cn('pb-1 text-sm whitespace-nowrap', muted)}>/ month</span>
       </div>
       <p className={cn('mt-2 text-sm', muted)}>
-        {billing === 'yearly'
+        {shown === 'yearly'
           ? `Billed yearly, ${formatMoney(yearly, plan.currencyCode)}${
               plan.yearlySavingsPercent ? ` · save ${plan.yearlySavingsPercent}%` : ''
             }`
           : 'Billed monthly'}
+        {shown !== billing ? ` (${shown} only)` : ''}
       </p>
     </div>
   );
@@ -118,7 +134,8 @@ function Price({ plan, billing, dark }: { plan: PublicPlan; billing: Billing; da
 
 function PlanCard({ plan, billing }: { plan: PublicPlan; billing: Billing }) {
   const Icon = PLAN_ICONS[plan.icon] ?? Sparkles;
-  const dark = plan.badge !== null;
+  // The highlighted (dark) card is the "Most popular" one; other badges just label the card.
+  const dark = plan.badge === 'popular';
   const custom = plan.customPricing;
   return (
     <StaggerItem
@@ -126,8 +143,8 @@ function PlanCard({ plan, billing }: { plan: PublicPlan; billing: Billing }) {
       className={cn(
         'relative mx-auto flex w-full max-w-md flex-col rounded-2xl p-7 transition-shadow sm:p-8 lg:max-w-none',
         dark
-          ? 'bg-slate-950 text-white shadow-2xl shadow-emerald-900/30 ring-2 ring-emerald-500 lg:py-11'
-          : 'bg-card shadow-lg shadow-slate-900/5 ring-1 ring-border hover:shadow-xl',
+          ? 'bg-slate-950 text-white shadow-lg shadow-emerald-900/10 ring-2 ring-emerald-500'
+          : 'bg-card shadow-sm shadow-slate-900/5 ring-1 ring-border hover:shadow-md',
       )}
     >
       {plan.badge ? (
@@ -136,7 +153,7 @@ function PlanCard({ plan, billing }: { plan: PublicPlan; billing: Billing }) {
             aria-hidden
             className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-400 to-transparent"
           />
-          <span className="absolute -top-3.5 left-1/2 inline-flex -translate-x-1/2 items-center gap-1.5 rounded-lg bg-primary px-3 py-1 text-xs font-bold text-primary-foreground shadow-lg shadow-primary/30">
+          <span className="absolute -top-3.5 left-1/2 inline-flex -translate-x-1/2 items-center gap-1.5 rounded-lg bg-primary px-3 py-1 text-xs font-bold text-primary-foreground shadow-sm shadow-primary/20">
             <Sparkles className="size-3.5" />
             {BADGE_LABEL[plan.badge]}
           </span>
@@ -170,30 +187,53 @@ function PlanCard({ plan, billing }: { plan: PublicPlan; billing: Billing }) {
           buttonVariants({ size: 'lg' }),
           'mt-8 h-12 w-full rounded-lg font-semibold',
           dark
-            ? 'bg-emerald-500 text-white shadow-md shadow-emerald-500/20 hover:bg-emerald-400'
+            ? 'bg-emerald-500 text-white shadow-sm hover:bg-emerald-400'
             : custom
               ? 'bg-secondary text-secondary-foreground hover:bg-secondary/90'
               : 'bg-card text-foreground ring-1 ring-border hover:bg-muted',
         )}
       >
-        {custom ? 'Contact sales' : `Start ${plan.trialDays}-day free trial`} <ArrowRight />
+        {planCta(plan)} <ArrowRight />
       </Link>
 
       <div className={cn('my-8 h-px', dark ? 'bg-white/10' : 'bg-border')} aria-hidden />
 
       <p className="text-sm font-semibold">Includes</p>
       <ul className="mt-4 space-y-3.5 text-sm">
-        {planHighlights(plan).map((feature) => (
-          <li key={feature} className="flex items-start gap-3">
+        {planHighlights(plan).map((f) => (
+          <li key={f.label} className="flex items-start gap-3">
             <span
               className={cn(
                 'mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full',
-                dark ? 'bg-emerald-500 text-white' : 'bg-accent text-primary',
+                !f.enabled
+                  ? dark
+                    ? 'bg-white/10 text-slate-500'
+                    : 'bg-muted text-muted-foreground'
+                  : dark
+                    ? 'bg-emerald-500 text-white'
+                    : 'bg-accent text-primary',
               )}
             >
-              <Check className="size-3" strokeWidth={3} />
+              {f.enabled ? (
+                <Check className="size-3" strokeWidth={3} />
+              ) : (
+                <X className="size-3" strokeWidth={3} />
+              )}
             </span>
-            <span className={dark ? 'text-slate-200' : 'text-foreground/85'}>{feature}</span>
+            <span
+              className={cn(
+                f.enabled
+                  ? dark
+                    ? 'text-slate-200'
+                    : 'text-foreground/85'
+                  : dark
+                    ? 'text-slate-500 line-through'
+                    : 'text-muted-foreground line-through',
+              )}
+            >
+              {f.label}
+              {f.enabled ? null : <span className="sr-only"> (not included)</span>}
+            </span>
           </li>
         ))}
       </ul>
@@ -275,7 +315,7 @@ export function PricingSection() {
         ) : (
           <Stagger
             gap={0.12}
-            className={cn('mt-14 grid items-stretch gap-6 lg:mt-16 lg:items-center', cols)}
+            className={cn('mt-14 grid items-stretch gap-6 lg:mt-16 lg:items-stretch', cols)}
           >
             {list.map((plan) => (
               <PlanCard key={plan.id} plan={plan} billing={billing} />

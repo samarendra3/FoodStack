@@ -37,6 +37,7 @@ import {
   usePopover,
   useSignOut,
 } from '@/components/shell/header-widgets';
+import { OrderUsageBanner } from '@/components/subscription/order-usage-banner';
 import { TrialReminderBanner } from '@/components/subscription/subscription-gate';
 import { hasPermissionAnywhere } from '@/lib/auth/access';
 import { initials, roleLabel } from '@/lib/auth/roles';
@@ -169,7 +170,18 @@ export function RestaurantShell({ children }: { children: ReactNode }) {
             </div>
           </header>
           <TrialReminderBanner />
-          <main className="min-w-0 flex-1 px-4 py-5 sm:px-6">{children}</main>
+          <OrderUsageBanner />
+          <main className="min-w-0 flex-1 px-4 py-5 sm:px-6">
+            <motion.div
+              key={pathname}
+              className="fs-stagger"
+              initial={{ opacity: 0, y: 10, filter: 'blur(6px)' }}
+              animate={{ opacity: 1, y: 0, filter: 'blur(0px)', transitionEnd: { filter: 'none' } }}
+              transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+            >
+              {children}
+            </motion.div>
+          </main>
         </div>
       </div>
     </MotionConfig>
@@ -331,19 +343,28 @@ function Item({
       href={item.href!}
       aria-current={active ? 'page' : undefined}
       className={cn(
-        'group relative flex h-9 items-center gap-2.5 rounded-md text-sm transition-colors focus-visible:ring-2 focus-visible:ring-emerald-500/60 focus-visible:outline-none',
+        'group relative isolate flex h-9 items-center gap-2.5 rounded-md text-sm transition-colors focus-visible:ring-2 focus-visible:ring-emerald-500/60 focus-visible:outline-none',
         collapsed ? 'mx-auto w-10 justify-center' : 'px-2.5',
         active
-          ? 'bg-emerald-50 font-medium text-emerald-700 dark:bg-white/[0.08] dark:text-white'
+          ? 'font-medium text-emerald-700 dark:text-white'
           : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-white/[0.04] hover:text-slate-900 dark:hover:text-slate-100',
       )}
     >
+      {active ? (
+        // One shared element glides between items as the route changes.
+        <motion.span
+          layoutId="restaurant-nav-active"
+          aria-hidden
+          className="absolute inset-0 -z-10 rounded-md bg-emerald-50 ring-1 ring-emerald-100 dark:bg-white/[0.08] dark:ring-white/[0.06]"
+          transition={{ type: 'spring', stiffness: 500, damping: 38 }}
+        />
+      ) : null}
       <Icon
         className={cn(
-          'size-[18px] shrink-0',
+          'size-[18px] shrink-0 transition-transform duration-200 group-hover:scale-110',
           active
             ? 'text-emerald-600 dark:text-emerald-400'
-            : 'text-slate-500 dark:text-slate-400 group-hover:text-slate-600 dark:text-slate-500 dark:group-hover:text-slate-300',
+            : 'text-slate-400 group-hover:text-slate-600 dark:text-slate-500 dark:group-hover:text-slate-300',
         )}
         strokeWidth={active ? 2.2 : 1.9}
         aria-hidden

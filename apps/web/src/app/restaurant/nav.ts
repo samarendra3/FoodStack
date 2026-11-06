@@ -1,5 +1,6 @@
 import type { SessionProfile } from '@foodstack/types';
 import {
+  PackagePlus,
   Armchair,
   ArrowLeftRight,
   BadgePercent,
@@ -222,6 +223,13 @@ export const RESTAURANT_NAV: readonly NavGroup[] = [
         href: '/restaurant/payments',
         icon: CreditCard,
         anyPermission: ['order:read'],
+      },
+      {
+        id: 'usage-addons',
+        label: 'Usage & Add-ons',
+        href: '/restaurant/addons',
+        icon: PackagePlus,
+        anyPermission: ['restaurant:read'],
       },
       { id: 'refunds', label: 'Refunds & Voids', icon: Undo2, anyPermission: BRANCH_OPS },
       { id: 'expenses', label: 'Expenses', icon: Receipt, anyPermission: MANAGE },

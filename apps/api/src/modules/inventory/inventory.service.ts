@@ -8,6 +8,8 @@ import {
 import { likeTerm, runPaged } from '../../common/pagination/paged';
 import { type Db, DbContext } from '../../core/db/db-context';
 import { accessibleBranches, hasPermission } from '../auth/access';
+import { CacheEntry, CacheNs } from '../../shared/cache/cache.keys';
+import { CacheService } from '../../shared/cache/cache.service';
 import { AccessService } from '../auth/access.service';
 import type { AuthContext, BranchRef, RequestMeta, TenantAccess } from '../auth/auth.types';
 import { writeAudit } from '../auth/user-tokens';
@@ -18,6 +20,7 @@ import type {
   MovementInput,
   UpdateStockItemInput,
 } from './inventory.schemas';
+import { dayFrom, dayTo } from '../orders/orders.service';
 
 const forbidden = (message = 'You cannot manage this stock.') =>
   new ForbiddenException({ code: 'INVENTORY_FORBIDDEN', message });
@@ -33,24 +36,51 @@ export class InventoryService {
   constructor(
     private readonly db: DbContext,
     private readonly access: AccessService,
+    private readonly cache: CacheService,
   ) {}
 
   /** Header data for the inventory screen: branch, permissions and stock counts (no rows). */
   summary(auth: AuthContext, branchId?: string) {
     return this.run(auth, async (db, access) => {
       const { branch, branches } = this.readableBranch(access, branchId);
-      const restaurant = await db.one<{ id: string; name: string; currency_code: string }>(
-        'SELECT id, name, currency_code FROM restaurants WHERE id = $1',
-        [branch.restaurantId],
+      // Branch access is checked above; the aggregate for that branch is cached, the caller's
+      // branch list and permissions are not.
+      const data = await this.cache.getOrLoad(
+        CacheNs.inventory(auth.tenantId!, branch.restaurantId),
+        CacheEntry.inventorySummary(branch.id),
+        this.cache.ttl('inventorySummary'),
+        () => this.loadSummary(db, branch),
       );
-      const c = await db.one<{
-        total: string;
-        low: string;
-        out: string;
-        value: string | null;
-        categories: string[] | null;
-      }>(
-        `SELECT count(*) AS total,
+      return {
+        restaurant: data.restaurant,
+        branch: { id: branch.id, name: branch.name },
+        branches: branches
+          .filter((b) => b.restaurantId === branch.restaurantId)
+          .map((b) => ({ id: b.id, name: b.name })),
+        counts: data.counts,
+        stockValueMinor: data.stockValueMinor,
+        categories: data.categories,
+        canManageItems: hasPermission(access, 'inventory:manage', {
+          restaurantId: branch.restaurantId,
+        }),
+        canRecordMovements: hasPermission(access, 'inventory:manage', { branchId: branch.id }),
+      };
+    });
+  }
+
+  private async loadSummary(db: Db, branch: BranchRef) {
+    const restaurant = await db.one<{ id: string; name: string; currency_code: string }>(
+      'SELECT id, name, currency_code FROM restaurants WHERE id = $1',
+      [branch.restaurantId],
+    );
+    const c = await db.one<{
+      total: string;
+      low: string;
+      out: string;
+      value: string | null;
+      categories: string[] | null;
+    }>(
+      `SELECT count(*) AS total,
                 count(*) FILTER (WHERE coalesce(s.quantity, 0) > 0 AND coalesce(s.quantity, 0) <= i.low_stock_threshold) AS low,
                 count(*) FILTER (WHERE coalesce(s.quantity, 0) <= 0) AS out,
                 sum(coalesce(s.quantity, 0) * i.cost_per_unit_minor) AS value,
@@ -58,31 +88,22 @@ export class InventoryService {
            FROM inventory_items i
            LEFT JOIN inventory_stock s ON s.item_id = i.id AND s.branch_id = $2
           WHERE i.restaurant_id = $1 AND i.deleted_at IS NULL`,
-        [branch.restaurantId, branch.id],
-      );
-      return {
-        restaurant: restaurant && {
-          id: restaurant.id,
-          name: restaurant.name,
-          currencyCode: restaurant.currency_code.trim(),
-        },
-        branch: { id: branch.id, name: branch.name },
-        branches: branches
-          .filter((b) => b.restaurantId === branch.restaurantId)
-          .map((b) => ({ id: b.id, name: b.name })),
-        counts: {
-          total: Number(c?.total ?? 0),
-          low: Number(c?.low ?? 0),
-          out: Number(c?.out ?? 0),
-        },
-        stockValueMinor: Math.round(Number(c?.value ?? 0)),
-        categories: (c?.categories ?? []).sort(),
-        canManageItems: hasPermission(access, 'inventory:manage', {
-          restaurantId: branch.restaurantId,
-        }),
-        canRecordMovements: hasPermission(access, 'inventory:manage', { branchId: branch.id }),
-      };
-    });
+      [branch.restaurantId, branch.id],
+    );
+    return {
+      restaurant: restaurant && {
+        id: restaurant.id,
+        name: restaurant.name,
+        currencyCode: restaurant.currency_code.trim(),
+      },
+      counts: {
+        total: Number(c?.total ?? 0),
+        low: Number(c?.low ?? 0),
+        out: Number(c?.out ?? 0),
+      },
+      stockValueMinor: Math.round(Number(c?.value ?? 0)),
+      categories: (c?.categories ?? []).sort(),
+    };
   }
 
   /** Paged stock items with quantities at one branch. */
@@ -132,8 +153,10 @@ export class InventoryService {
       };
       if (query.type) add('m.type = ?', query.type);
       if (query.itemId) add('m.item_id = ?', query.itemId);
-      if (query.from) add('(m.created_at AT TIME ZONE b.timezone)::date >= ?::date', query.from);
-      if (query.to) add('(m.created_at AT TIME ZONE b.timezone)::date <= ?::date', query.to);
+      // Local-day bounds in the branch time zone, compared to the raw timestamp so the
+      // (tenant_id, branch_id, created_at) index serves the range (see orders dayFrom / dayTo).
+      if (query.from) add(dayFrom('m.created_at', '$1'), query.from);
+      if (query.to) add(dayTo('m.created_at', '$1'), query.to);
       if (query.search) add('(i.name ILIKE ? OR m.note ILIKE ?)', likeTerm(query.search));
       return runPaged<MovementRow, unknown>(db, {
         select: `m.id, m.item_id, i.name AS item_name, i.unit, m.type, m.quantity_delta, m.quantity_after,
@@ -230,6 +253,7 @@ export class InventoryService {
   createItem(auth: AuthContext, input: CreateStockItemInput, meta: RequestMeta) {
     return this.run(auth, async (db, access) => {
       const restaurantId = this.restaurantForItems(access, input.restaurantId);
+      this.inventoryChanged(db, restaurantId);
       const row = await this.unique(() =>
         db.one<{ id: string }>(
           `INSERT INTO inventory_items (tenant_id, restaurant_id, name, category, unit,
@@ -310,6 +334,7 @@ export class InventoryService {
         [itemId],
       );
       if (!item) throw notFound('Stock item');
+      this.inventoryChanged(db, item.restaurant_id);
       if (item.restaurant_id !== branch.restaurantId) {
         throw new BadRequestException({
           code: 'ITEM_OTHER_RESTAURANT',
@@ -418,7 +443,7 @@ export class InventoryService {
 
   private run<T>(auth: AuthContext, work: (db: Db, access: TenantAccess) => Promise<T>) {
     return this.db.run({ tenantId: auth.tenantId, userId: auth.userId }, async (db) =>
-      work(db, await this.access.tenantAccess(db, auth.membershipId!)),
+      work(db, await this.access.forRequest(db, auth)),
     );
   }
 
@@ -451,7 +476,13 @@ export class InventoryService {
     if (!hasPermission(access, 'inventory:manage', { restaurantId: row.restaurant_id })) {
       throw forbidden('Only restaurant-wide managers can change the stock item list.');
     }
+    this.inventoryChanged(db, row.restaurant_id);
     return row;
+  }
+
+  /** Invalidates the restaurant's inventory aggregates once the write commits (not on rollback). */
+  private inventoryChanged(db: Db, restaurantId: string): void {
+    this.cache.invalidateAfterCommit(db, CacheNs.inventory(db.tenantId(), restaurantId));
   }
 
   private async unique<T>(work: () => Promise<T>): Promise<T> {

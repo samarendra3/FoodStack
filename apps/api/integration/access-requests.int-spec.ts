@@ -8,7 +8,7 @@ import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/app.setup';
 import { PasswordHasher } from '../src/core/security/password-hasher';
 import { MailService } from '../src/modules/notifications/mail.service';
-import { connect } from './helpers';
+import { connect, waitForEmail } from './helpers';
 
 /**
  * "Get started" requests: public submission (CSRF, honeypot, duplicates), the Super Admin review
@@ -141,9 +141,10 @@ describe('Access requests (integration)', () => {
         branch_count: 2,
       });
       expect(row.ip).not.toBeNull();
-      // Notification is best-effort and asynchronous.
-      await new Promise((r) => setTimeout(r, 300));
-      expect(mail.outbox.some((m) => m.subject.includes(body.restaurantName as string))).toBe(true);
+      // Notification is best-effort and asynchronous (queued after the submission).
+      expect(
+        await waitForEmail(app, (m) => m.subject.includes(body.restaurantName as string)),
+      ).toBeDefined();
     });
 
     it('requires the CSRF header', async () => {
@@ -249,7 +250,7 @@ describe('Access requests (integration)', () => {
       expect(req).toMatchObject({ status: 'approved', created_tenant_id: res.body.data.tenantId });
 
       // Owner sets a password from the emailed link, then lands on the restaurant dashboard.
-      const message = mail.outbox.find((m) => m.to === body.email);
+      const message = await waitForEmail(app, (m) => m.to === body.email);
       expect(message!.text).toContain('/welcome?token=');
       const token = /token=([A-Za-z0-9_-]+)/.exec(message!.text)![1]!;
       await http()
@@ -336,7 +337,7 @@ describe('Access requests (integration)', () => {
         [id],
       );
       expect(row).toEqual({ status: 'rejected', review_note: 'Outside our service area' });
-      expect(mail.outbox.some((m) => m.to === body.email)).toBe(true);
+      expect(await waitForEmail(app, (m) => m.to === body.email)).toBeDefined();
       // The same person can ask again later.
       await submit(body).expect(202);
       const rows = await migrator.query(

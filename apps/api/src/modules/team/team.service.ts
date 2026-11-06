@@ -13,7 +13,7 @@ import { SubscriptionLifecycleService } from '../billing/subscription-lifecycle.
 import { AccessService } from '../auth/access.service';
 import type { AuthContext, RequestMeta, TenantAccess } from '../auth/auth.types';
 import { issueUserToken, writeAudit } from '../auth/user-tokens';
-import { MailService } from '../notifications/mail.service';
+import { EmailOutboxService } from '../notifications/email-outbox.service';
 import { upsertUser } from '../tenants/provision-tenant';
 import type { ChangeRoleInput, InviteInput } from './team.schemas';
 
@@ -75,7 +75,7 @@ export class TeamService {
   constructor(
     private readonly db: DbContext,
     private readonly access: AccessService,
-    private readonly mail: MailService,
+    private readonly mail: EmailOutboxService,
     private readonly config: AppConfigService,
     private readonly subscriptions: SubscriptionLifecycleService,
   ) {}
@@ -145,9 +145,17 @@ export class TeamService {
         ? null
         : (await issueUserToken(db, user.id, 'password_reset', SET_PASSWORD_TTL_MS)).token;
       const tenantName = await this.tenantName(db, auth);
-      return { membershipId: membership!.id, token, tenantName, needsPassword: !user.hasPassword };
+      await this.sendInvite(
+        db,
+        auth.tenantId!,
+        input.email,
+        input.fullName,
+        tenantName,
+        input.role,
+        token,
+      );
+      return { membershipId: membership!.id, needsPassword: !user.hasPassword };
     });
-    await this.sendInvite(input.email, input.fullName, result.tenantName, input.role, result.token);
     return { membershipId: result.membershipId, invitationSent: result.needsPassword };
   }
 
@@ -221,7 +229,7 @@ export class TeamService {
 
   /** New set-password link for someone who has not set a password yet. */
   async resendInvite(auth: AuthContext, membershipId: string, meta: RequestMeta) {
-    const result = await this.run(auth, async (db, caller) => {
+    await this.run(auth, async (db, caller) => {
       const target = await this.editableTarget(db, caller, membershipId, 'member:invite');
       if (target.has_password) {
         throw new ConflictException({
@@ -245,22 +253,23 @@ export class TeamService {
         entityId: membershipId,
         ...meta,
       });
-      return { target, token, tenantName: await this.tenantName(db, auth) };
+      await this.sendInvite(
+        db,
+        auth.tenantId!,
+        target.email,
+        target.full_name,
+        await this.tenantName(db, auth),
+        target.assignments[0]?.role ?? 'member',
+        token,
+      );
     });
-    await this.sendInvite(
-      result.target.email,
-      result.target.full_name,
-      result.tenantName,
-      result.target.assignments[0]?.role ?? 'member',
-      result.token,
-    );
   }
 
   // ---------------------------------------------------------------------------------------
 
   private run<T>(auth: AuthContext, work: (db: Db, caller: Caller) => Promise<T>): Promise<T> {
     return this.db.run({ tenantId: auth.tenantId, userId: auth.userId }, async (db) => {
-      const access = await this.access.tenantAccess(db, auth.membershipId!);
+      const access = await this.access.forRequest(db, auth);
       return work(db, { auth, access, isOwner: access.roles.includes('owner') });
     });
   }
@@ -442,7 +451,10 @@ export class TeamService {
     return t?.name ?? 'your restaurant';
   }
 
+  /** Queues the invitation in the caller's transaction: sent only if the invitation commits. */
   private async sendInvite(
+    db: Db,
+    tenantId: string,
     email: string,
     name: string,
     tenantName: string,
@@ -452,19 +464,19 @@ export class TeamService {
     const appUrl = this.config.get('APP_URL');
     const link = token ? `${appUrl}/welcome?token=${token}` : `${appUrl}/login`;
     const roleName = role.replace(/_/g, ' ');
-    try {
-      await this.mail.send({
+    await this.mail.queue(
+      db,
+      'team.invitation',
+      {
         to: email,
         subject: `You've been added to ${tenantName} on FoodStack`,
         text: token
           ? `Hi ${name},\n\nYou've been added to ${tenantName} on FoodStack as ${roleName}.\n\nCreate your password to get started (link valid for 72 hours):\n${link}`
           : `Hi ${name},\n\nYou've been added to ${tenantName} on FoodStack as ${roleName}.\n\nSign in with your existing FoodStack password:\n${link}`,
         html: `<p>Hi ${escapeHtml(name)},</p><p>You've been added to <strong>${escapeHtml(tenantName)}</strong> on FoodStack as ${escapeHtml(roleName)}.</p><p><a href="${link}">${token ? 'Create your password' : 'Sign in'}</a>${token ? ' (link valid for 72 hours)' : ''}.</p>`,
-      });
-    } catch (error) {
-      // The person is on the team either way; "Resend invite" can try again.
-      this.logger.warn(`Invitation email to ${email} failed: ${String(error)}`);
-    }
+      },
+      tenantId,
+    );
   }
 }
 

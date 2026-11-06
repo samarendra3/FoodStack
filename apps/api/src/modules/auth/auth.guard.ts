@@ -12,7 +12,7 @@ import { subscriptionRequired } from '../billing/subscription-lifecycle.service'
 import { effectiveStatus, hasAccess, type SubscriptionStatus } from '../billing/subscription-state';
 import { hasPermission } from './access';
 import { ACTIVE_TENANT_STATUSES, AccessService } from './access.service';
-import type { Audience } from './auth.types';
+import type { Audience, TenantAccess } from './auth.types';
 import {
   AUDIENCE_KEY,
   type AuthedRequest,
@@ -83,6 +83,8 @@ export class AuthGuard implements CanActivate {
       targets,
     );
 
+    // Kept for the request so services reuse it instead of looking permissions up again.
+    let computedAccess: TenantAccess | undefined;
     await this.db.run(
       { userId: claims.userId, sessionId: claims.sessionId, tenantId: claims.tenantId },
       async (db) => {
@@ -148,6 +150,7 @@ export class AuthGuard implements CanActivate {
         }
 
         const access = await this.access.tenantAccess(db, claims.membershipId!);
+        computedAccess = access;
         const branchId = permission.branchParam
           ? String(req.params[permission.branchParam] ?? '')
           : undefined;
@@ -172,6 +175,7 @@ export class AuthGuard implements CanActivate {
       tenantId: claims.tenantId,
       membershipId: claims.membershipId,
       mfaVerified,
+      ...(computedAccess ? { access: computedAccess } : {}),
     };
     return true;
   }

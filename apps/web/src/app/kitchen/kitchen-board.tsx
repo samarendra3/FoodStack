@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useEffect, useState } from 'react';
+import { useNotify } from '@/lib/notify';
 import {
   type KitchenFeed,
   type KitchenTicket,
@@ -180,6 +181,7 @@ function TicketCard({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const notify = useNotify();
   const minutes = Math.max(0, Math.floor((now - Date.parse(t.createdAt)) / 60000));
   const late = t.status !== 'completed' && minutes >= 20;
   const warn = t.status !== 'completed' && minutes >= 12;
@@ -302,8 +304,9 @@ function TicketCard({
               setError(null);
               try {
                 await onAdvance(t.id, next.to);
-              } catch {
+              } catch (e) {
                 setError('Could not update — try again.');
+                notify.error(e, `Ticket ${t.orderNumber} not updated`);
               } finally {
                 setBusy(false);
               }

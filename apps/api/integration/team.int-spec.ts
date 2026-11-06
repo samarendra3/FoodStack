@@ -6,8 +6,7 @@ import type { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/app.setup';
 import { PasswordHasher } from '../src/core/security/password-hasher';
-import { MailService } from '../src/modules/notifications/mail.service';
-import { connect } from './helpers';
+import { connect, waitForEmail } from './helpers';
 
 /**
  * Team management: who sees whom, who may give which role at which branch, invitations that
@@ -28,7 +27,6 @@ interface Tenant {
 describe('Team (integration)', () => {
   let app: NestExpressApplication;
   let migrator: DataSource;
-  let mail: MailService;
   let passwordHash: string;
   let alpha: Tenant;
   let bravo: Tenant;
@@ -55,6 +53,11 @@ describe('Team (integration)', () => {
       `INSERT INTO tenants (slug, name) VALUES ($1, $2) RETURNING id`,
       [`${label}-${suffix()}`, `${label} Foods`],
     );
+    // These tests are about team management, not plan limits: lift the Free Trial staff limit
+    // (new trials start on that plan's terms; plan limits are covered by the billing suites).
+    await migrator.query(`UPDATE subscriptions SET plan_snapshot = NULL WHERE tenant_id = $1`, [
+      t.id,
+    ]);
     const [r] = await migrator.query(
       `INSERT INTO restaurants (tenant_id, name, slug, currency_code, country_code, timezone)
        VALUES ($1, $2, $3, 'INR', 'IN', 'Asia/Kolkata') RETURNING id`,
@@ -99,8 +102,8 @@ describe('Team (integration)', () => {
   }
 
   /** Reads the set-password token from the latest email to `to`. */
-  function linkToken(to: string): string {
-    const message = [...mail.outbox].reverse().find((m) => m.to === to.toLowerCase());
+  async function linkToken(to: string): Promise<string> {
+    const message = await waitForEmail(app, (m) => m.to === to.toLowerCase());
     expect(message).toBeDefined();
     return /token=([A-Za-z0-9_-]+)/.exec(message!.text)![1]!;
   }
@@ -125,7 +128,6 @@ describe('Team (integration)', () => {
     app = moduleRef.createNestApplication<NestExpressApplication>({ logger: false });
     configureApp(app);
     await app.init();
-    mail = app.get(MailService);
 
     for (const who of ['owner', 'admin', 'manager', 'cashierMain', 'bravoOwner']) await signIn(who);
   });
@@ -203,7 +205,7 @@ describe('Team (integration)', () => {
       await http()
         .post(`${API}/auth/password/reset`)
         .set('X-FoodStack-CSRF', '1')
-        .send({ token: linkToken(email), password: PASSWORD })
+        .send({ token: await linkToken(email), password: PASSWORD })
         .expect(204);
       const signedIn = await login(email).expect(200);
       expect(signedIn.body.data.profile).toMatchObject({
@@ -222,9 +224,7 @@ describe('Team (integration)', () => {
         .send({ email: emails.cashierMain, fullName: 'Shared Cashier', role: 'restaurant_admin' })
         .expect(201);
       expect(res.body.data.invitationSent).toBe(false);
-      const message = [...mail.outbox]
-        .reverse()
-        .find((m) => m.to === emails.cashierMain!.toLowerCase());
+      const message = await waitForEmail(app, (m) => m.to === emails.cashierMain!.toLowerCase());
       expect(message!.text).toContain('/login');
     });
 
@@ -280,13 +280,13 @@ describe('Team (integration)', () => {
       await as('owner', 'post', '/team/invite')
         .send({ email, fullName: 'Instant Waiter', role: 'waiter', branchId: alpha.main })
         .expect(201);
-      const message = [...mail.outbox].reverse().find((m) => m.to === email);
+      const message = await waitForEmail(app, (m) => m.to === email);
       expect(message!.text).toContain('/welcome?token=');
       expect(message!.subject).toContain('alpha Foods');
 
       const res = await http()
         .post(`${API}/auth/password/reset`)
-        .send({ token: linkToken(email), password: PASSWORD, signIn: true })
+        .send({ token: await linkToken(email), password: PASSWORD, signIn: true })
         .expect(200);
       expect(res.body.data.accessToken).toMatch(/^ey/);
       expect(res.body.data.profile).toMatchObject({ roles: ['waiter'], homePath: '/waiter' });
@@ -305,9 +305,9 @@ describe('Team (integration)', () => {
       const res = await as('owner', 'post', '/team/invite')
         .send({ email, fullName: 'Pending', role: 'waiter', branchId: alpha.main })
         .expect(201);
-      const first = linkToken(email);
+      const first = await linkToken(email);
       await as('owner', 'post', `/team/${res.body.data.membershipId}/resend-invite`).expect(204);
-      expect(linkToken(email)).not.toBe(first);
+      expect(await linkToken(email)).not.toBe(first);
       const joined = await as('owner', 'post', `/team/${memberships.waiterMain}/resend-invite`)
         .send()
         .expect(409);

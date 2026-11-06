@@ -13,6 +13,8 @@ import { AccessService } from '../auth/access.service';
 import type { AuthContext, RequestMeta, TenantAccess } from '../auth/auth.types';
 import { writeAudit } from '../auth/user-tokens';
 import { PromotionsService } from '../promotions/promotions.service';
+import { CacheNs } from '../../shared/cache/cache.keys';
+import { CacheService } from '../../shared/cache/cache.service';
 import {
   type CreateOrderInput,
   KITCHEN_STATUSES,
@@ -67,6 +69,7 @@ export class OrdersService {
     private readonly access: AccessService,
     private readonly promotions: PromotionsService,
     private readonly subscriptions: SubscriptionLifecycleService,
+    private readonly cache: CacheService,
   ) {}
 
   create(
@@ -83,13 +86,21 @@ export class OrdersService {
         'You cannot take orders at this branch.',
       );
       if (clientRequestId) {
+        // Concurrent retries of one request wait here, then find the order the first one
+        // created, instead of racing to the unique index (which would fail with an error).
+        await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+          `order-request:${auth.tenantId}:${clientRequestId}`,
+        ]);
         const existing = await db.one<{ id: string }>(
           'SELECT id FROM orders WHERE client_request_id = $1',
           [clientRequestId],
         );
         if (existing) return this.detail(db, existing.id);
       }
-      await this.subscriptions.assertWithinLimit(db, auth.tenantId!, 'ordersPerMonth');
+      // Reserves this month's slot atomically (rolled back if the order fails below).
+      await this.subscriptions.assertWithinLimit(db, auth.tenantId!, 'ordersPerMonth', 1, {
+        branchId: input.branchId,
+      });
 
       const q = await this.promotions.quoteInTx(db, input);
       if (input.couponCode && q.coupon?.status !== 'applied') {
@@ -139,28 +150,35 @@ export class OrdersService {
           auth.userId,
         ],
       );
-      for (const [i, l] of q.lines.entries()) {
-        await db.query(
-          `INSERT INTO order_items (tenant_id, order_id, menu_item_id, variant_id, category_id, name,
-                                    variant_name, unit_price_minor, quantity, line_total_minor,
-                                    discount_minor, note)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-          [
-            auth.tenantId,
-            order!.id,
-            l.menuItemId,
-            l.variantId ?? null,
-            l.categoryId,
-            l.name,
-            l.variantName,
-            l.unitPriceMinor,
-            l.quantity,
-            l.lineTotalMinor,
-            l.discountMinor,
-            input.lines[i]!.note || null,
-          ],
-        );
-      }
+      // All lines in one statement. WITH ORDINALITY keeps the cart order: ids are uuidv7
+      // (monotonic within the session), which is what order details sort by.
+      await db.query(
+        `INSERT INTO order_items (tenant_id, order_id, menu_item_id, variant_id, category_id, name,
+                                  variant_name, unit_price_minor, quantity, line_total_minor,
+                                  discount_minor, note)
+         SELECT $1, $2, l.menu_item_id, l.variant_id, l.category_id, l.name, l.variant_name,
+                l.unit_price_minor, l.quantity, l.line_total_minor, l.discount_minor, l.note
+           FROM unnest($3::uuid[], $4::uuid[], $5::uuid[], $6::text[], $7::text[], $8::bigint[],
+                       $9::int[], $10::bigint[], $11::bigint[], $12::text[])
+                WITH ORDINALITY AS l(menu_item_id, variant_id, category_id, name, variant_name,
+                                     unit_price_minor, quantity, line_total_minor, discount_minor,
+                                     note, n)
+          ORDER BY l.n`,
+        [
+          auth.tenantId,
+          order!.id,
+          q.lines.map((l) => l.menuItemId),
+          q.lines.map((l) => l.variantId ?? null),
+          q.lines.map((l) => l.categoryId),
+          q.lines.map((l) => l.name),
+          q.lines.map((l) => l.variantName),
+          q.lines.map((l) => l.unitPriceMinor),
+          q.lines.map((l) => l.quantity),
+          q.lines.map((l) => l.lineTotalMinor),
+          q.lines.map((l) => l.discountMinor),
+          q.lines.map((_, i) => input.lines[i]!.note || null),
+        ],
+      );
       await this.saveDiscounts(db, auth.tenantId!, order!.id, q.applied);
       await this.audit(db, auth, meta, 'order.created', order!.id, {
         number: number!.last_number,
@@ -177,8 +195,8 @@ export class OrdersService {
       const { where, params, add } = filters('o.branch_id', branches);
       if (query.status) add('o.status = ?', query.status);
       if (query.channel) add('o.channel = ?', query.channel);
-      if (query.from) add('(o.created_at AT TIME ZONE b.timezone)::date >= ?::date', query.from);
-      if (query.to) add('(o.created_at AT TIME ZONE b.timezone)::date <= ?::date', query.to);
+      if (query.from) add(dayFrom('o.created_at', 'ANY($1::uuid[])'), query.from);
+      if (query.to) add(dayTo('o.created_at', 'ANY($1::uuid[])'), query.to);
       if (query.search) {
         const term = query.search.replace(/^#/, '');
         params.push(likeTerm(term), /^\d{1,9}$/.test(term) ? Number(term) : null);
@@ -188,7 +206,7 @@ export class OrdersService {
         );
       }
       return runPaged<ListRow, unknown>(db, {
-        select: `o.*, b.name AS branch_name, c.name AS customer_name, c.phone AS customer_phone,
+        select: `${LIST_COLUMNS}, b.name AS branch_name, c.name AS customer_name, c.phone AS customer_phone,
                  (SELECT coalesce(sum(quantity), 0) FROM order_items i
                    WHERE i.order_id = o.id AND i.status = 'active') AS item_count`,
         from: 'orders o JOIN branches b ON b.id = o.branch_id LEFT JOIN customers c ON c.id = o.customer_id',
@@ -220,8 +238,8 @@ export class OrdersService {
       if (query.method) add('p.method = ?', query.method);
       if (query.refunded === 'yes') where.push('p.refunded_minor > 0');
       if (query.refunded === 'no') where.push('p.refunded_minor = 0');
-      if (query.from) add('(p.created_at AT TIME ZONE b.timezone)::date >= ?::date', query.from);
-      if (query.to) add('(p.created_at AT TIME ZONE b.timezone)::date <= ?::date', query.to);
+      if (query.from) add(dayFrom('p.created_at', 'ANY($1::uuid[])'), query.from);
+      if (query.to) add(dayTo('p.created_at', 'ANY($1::uuid[])'), query.to);
       if (query.search) {
         const term = query.search.replace(/^#/, '');
         params.push(likeTerm(term), /^\d{1,9}$/.test(term) ? Number(term) : null);
@@ -317,6 +335,7 @@ export class OrdersService {
                            updated_at = now(), version = version + 1 WHERE id = $1`,
         [id, reason, auth.userId],
       );
+      await this.subscriptions.releaseOrderSlot(db, id);
       await this.audit(db, auth, meta, 'order.cancelled', id, { reason });
       return this.detail(db, id);
     });
@@ -491,7 +510,7 @@ export class OrdersService {
 
   private run<T>(auth: AuthContext, work: (db: Db, access: TenantAccess) => Promise<T>) {
     return this.db.run({ tenantId: auth.tenantId, userId: auth.userId }, async (db) =>
-      work(db, await this.access.tenantAccess(db, auth.membershipId!)),
+      work(db, await this.access.forRequest(db, auth)),
     );
   }
 
@@ -562,11 +581,13 @@ export class OrdersService {
         'Payments already exceed the new total. Refund first.',
       );
     }
-    for (const [i, l] of lines.entries()) {
-      await db.query('UPDATE order_items SET discount_minor = $2 WHERE id = $1', [
-        l.id,
-        q.lines[i]!.discountMinor,
-      ]);
+    if (lines.length) {
+      await db.query(
+        `UPDATE order_items i SET discount_minor = u.discount_minor
+           FROM unnest($1::uuid[], $2::bigint[]) AS u(id, discount_minor)
+          WHERE i.id = u.id`,
+        [lines.map((l) => l.id), lines.map((_, i) => q.lines[i]!.discountMinor)],
+      );
     }
     // Applied offers are recalculated, so the previous set is replaced.
     await db.query('DELETE FROM order_discounts WHERE order_id = $1', [order.id]);
@@ -595,13 +616,22 @@ export class OrdersService {
       discountMinor: number;
     }[],
   ) {
-    for (const a of applied) {
-      await db.query(
-        `INSERT INTO order_discounts (tenant_id, order_id, promotion_id, name, coupon_code, discount_minor)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [tenantId, orderId, a.promotionId, a.name, a.couponCode, a.discountMinor],
-      );
-    }
+    if (applied.length === 0) return;
+    await db.query(
+      `INSERT INTO order_discounts (tenant_id, order_id, promotion_id, name, coupon_code, discount_minor)
+       SELECT $1, $2, d.promotion_id, d.name, d.coupon_code, d.discount_minor
+         FROM unnest($3::uuid[], $4::text[], $5::text[], $6::bigint[])
+              WITH ORDINALITY AS d(promotion_id, name, coupon_code, discount_minor, n)
+        ORDER BY d.n`,
+      [
+        tenantId,
+        orderId,
+        applied.map((a) => a.promotionId),
+        applied.map((a) => a.name),
+        applied.map((a) => a.couponCode),
+        applied.map((a) => a.discountMinor),
+      ],
+    );
   }
 
   private async upsertCustomer(
@@ -722,6 +752,9 @@ export class OrdersService {
     id: string,
     metadata: object,
   ) {
+    // Every order write (create, void, cancel, payment, refund, kitchen status) is audited
+    // here, so this is the one place that retires the tenant's analytics after COMMIT.
+    this.cache.invalidateAfterCommit(db, CacheNs.analytics(auth.tenantId!));
     return writeAudit(db, {
       action,
       tenantId: auth.tenantId,
@@ -739,6 +772,53 @@ export class OrdersService {
 /** Tax on the discounted subtotal, rounded half up to the minor unit. */
 export function taxOf(amountMinor: number, rateBp: number): number {
   return Math.round((amountMinor * rateBp) / 10_000);
+}
+
+/** Columns `summary()` reads; lists select only these. */
+const LIST_COLUMNS = [
+  'id',
+  'branch_id',
+  'order_number',
+  'channel',
+  'status',
+  'kitchen_status',
+  'table_label',
+  'note',
+  'coupon_code',
+  'currency_code',
+  'tax_rate_bp',
+  'subtotal_minor',
+  'discount_minor',
+  'tax_minor',
+  'total_minor',
+  'paid_minor',
+  'refunded_minor',
+  'cancel_reason',
+  'created_at',
+  'completed_at',
+  'cancelled_at',
+]
+  .map((c) => `o.${c}`)
+  .join(', ');
+
+/**
+ * Local-day date filters (YYYY-MM-DD placeholder `?`), time-zone correct per branch and usable
+ * by the (tenant_id, branch_id, created_at) indexes. Two conditions each:
+ *  - an exact one against the row's own branch time zone (`b.timezone`, from the join), and
+ *  - a constant bound over every requested branch's time zone (`branchMatch` selects them):
+ *    an uncorrelated sub-select, evaluated once, which PostgreSQL can use as an index range key.
+ * Comparing raw `created_at` (never converting each row) is what makes this index-friendly.
+ */
+export function dayFrom(column: string, branchMatch: string) {
+  return `${column} >= (?::date::timestamp AT TIME ZONE b.timezone)
+      AND ${column} >= (SELECT min(?::date::timestamp AT TIME ZONE tz.timezone)
+                         FROM branches tz WHERE tz.id = ${branchMatch})`;
+}
+
+export function dayTo(column: string, branchMatch: string) {
+  return `${column} < ((?::date + 1)::timestamp AT TIME ZONE b.timezone)
+      AND ${column} < (SELECT max((?::date + 1)::timestamp AT TIME ZONE tz.timezone)
+                        FROM branches tz WHERE tz.id = ${branchMatch})`;
 }
 
 function summary(o: OrderRow) {
@@ -796,7 +876,7 @@ function filters(branchColumn: string, branches: string[]) {
   const params: unknown[] = [branches];
   const add = (sql: string, value: unknown) => {
     params.push(value);
-    where.push(sql.replace('?', '$' + params.length));
+    where.push(sql.split('?').join('$' + params.length));
   };
   return { where, params, add };
 }

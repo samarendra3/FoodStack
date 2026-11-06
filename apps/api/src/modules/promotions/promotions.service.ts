@@ -317,7 +317,7 @@ export class PromotionsService {
 
   private run<T>(auth: AuthContext, work: (db: Db, access: TenantAccess) => Promise<T>) {
     return this.db.run({ tenantId: auth.tenantId, userId: auth.userId }, async (db) =>
-      work(db, await this.access.tenantAccess(db, auth.membershipId!)),
+      work(db, await this.access.forRequest(db, auth)),
     );
   }
 

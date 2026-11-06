@@ -10,6 +10,7 @@ import { authErrorMessage } from '@/lib/auth/errors';
 import heroImage from '../../../../public/images/cta-bg-image.png';
 import { card, ease, RestaurantsPanel } from '../restaurants-panel';
 import { StatCard, StatCardSkeleton } from '../stat-card';
+import { PlatformAnalyticsPanel } from './platform-analytics';
 
 interface PlatformDashboard {
   tenants: { total: number; byStatus: Record<string, number>; newLast7Days: number };
@@ -100,6 +101,8 @@ export default function PlatformDashboardPage() {
           )}
         </div>
       )}
+
+      <PlatformAnalyticsPanel />
 
       <RestaurantsPanel preview />
     </div>

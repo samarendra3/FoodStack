@@ -39,6 +39,8 @@ import {
   invoicesQuerySchema,
   type MarkPaidInput,
   markPaidSchema,
+  type PlansQuery,
+  plansQuerySchema,
   type PlatformInvoicesQuery,
   platformInvoicesQuerySchema,
   type PlatformSubscriptionsQuery,
@@ -182,6 +184,34 @@ export class PlatformBillingController {
     return this.billing.listPlans(auth);
   }
 
+  @Get('plans/page')
+  @RequirePermission('platform:billing_manage')
+  @ApiOperation({ summary: 'Plans for the admin table: search, filter, sort, paged' })
+  plansPage(
+    @CurrentAuth() auth: AuthContext,
+    @Query(new ZodValidationPipe(plansQuerySchema)) query: PlansQuery,
+  ) {
+    return this.billing.plansPage(auth, query);
+  }
+
+  @Get('plans/:id')
+  @RequirePermission('platform:billing_manage')
+  @ApiOperation({ summary: 'One plan, including internal notes' })
+  plan(@CurrentAuth() auth: AuthContext, @Param('id', ParseUUIDPipe) id: string) {
+    return this.billing.plan(auth, id);
+  }
+
+  @Post('plans/:id/duplicate')
+  @RequirePermission('platform:billing_manage')
+  @ApiOperation({ summary: 'Copy a plan as a hidden, inactive draft' })
+  duplicatePlan(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: Request,
+  ) {
+    return this.billing.duplicatePlan(auth, id, requestMeta(req));
+  }
+
   @Post('plans')
   @RequirePermission('platform:billing_manage')
   @ApiOperation({ summary: 'Create a plan' })
@@ -215,6 +245,18 @@ export class PlatformBillingController {
     @Req() req: Request,
   ) {
     return this.billing.archivePlan(auth, id, requestMeta(req));
+  }
+
+  @Post('plans/:id/restore')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('platform:billing_manage')
+  @ApiOperation({ summary: 'Restore an archived plan (as inactive and hidden)' })
+  restorePlan(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: Request,
+  ) {
+    return this.billing.restorePlan(auth, id, requestMeta(req));
   }
 
   @Delete('plans/:id')
