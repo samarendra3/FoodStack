@@ -1,0 +1,95 @@
+# Deploy an application version to dev, staging or prod. Runs only when started by hand
+# (workflow_dispatch); nothing deploys automatically on push.
+#   1. Build the production image and push it to ECR, tagged with the commit SHA (immutable).
+#   2. Run the migration task (one-off ECS task, schema owner, direct to RDS). Stop on failure.
+#   3. Roll the worker, then the API, to the new image (rolling, with circuit-breaker rollback).
+#   4. Wait for both services to be stable and smoke-test /health/live through the ALB.
+# Production uses the protected GitHub environment `production` (required reviewers), and the
+# OIDC role in bootstrap/ only trusts that environment, so every prod deploy needs an explicit approval.
+# Infrastructure changes (terraform apply) are NOT done here: an administrator applies them.
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        type: choice
+        options: [dev, staging, prod]
+        required: true
+
+permissions:
+  contents: read
+  id-token: write # GitHub OIDC → AWS (no stored keys)
+
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: ${{ inputs.environment == 'prod' && 'production' || inputs.environment }}
+    env:
+      AWS_REGION: ap-south-1
+      NAME: foodstack-${{ inputs.environment }}
+      TAG: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        env:
+          REPO: ${{ steps.ecr.outputs.registry }}/foodstack-${{ inputs.environment }}/api
+        run: |
+          docker build -f infrastructure/docker/api.Dockerfile -t "$REPO:$TAG" .
+          docker push "$REPO:$TAG"
+          echo "IMAGE=$REPO:$TAG" >> "$GITHUB_ENV"
+
+      - name: Register task definitions with the new image
+        run: |
+          for fam in "$NAME-migrate" "$NAME-worker" "$NAME-api"; do
+            aws ecs describe-task-definition --task-definition "$fam" --query taskDefinition > td.json
+            jq --arg img "$IMAGE" '
+              .containerDefinitions |= map(if .name == "app" or .name == "migrate" then .image = $img else . end)
+              | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)
+            ' td.json > td-new.json
+            arn=$(aws ecs register-task-definition --cli-input-json file://td-new.json --query taskDefinition.taskDefinitionArn --output text)
+            echo "TD_${fam//-/_}=$arn" >> "$GITHUB_ENV"
+            echo "$fam → $arn"
+          done
+
+      - name: Run database migrations (stop on failure)
+        run: |
+          var="TD_${NAME//-/_}_migrate"
+          subnets=$(aws ec2 describe-subnets --filters "Name=tag:Tier,Values=private" "Name=tag:Environment,Values=${{ inputs.environment }}" --query 'Subnets[].SubnetId' --output text | tr '\t' ',')
+          sg=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=$NAME-migrate" --query 'SecurityGroups[0].GroupId' --output text)
+          task=$(aws ecs run-task --cluster "$NAME" --launch-type FARGATE --task-definition "${!var}" \
+            --network-configuration "awsvpcConfiguration={subnets=[$subnets],securityGroups=[$sg],assignPublicIp=DISABLED}" \
+            --query 'tasks[0].taskArn' --output text)
+          echo "migration task $task"
+          aws ecs wait tasks-stopped --cluster "$NAME" --tasks "$task"
+          code=$(aws ecs describe-tasks --cluster "$NAME" --tasks "$task" --query 'tasks[0].containers[0].exitCode' --output text)
+          echo "migration exit code: $code"
+          test "$code" = "0"
+
+      - name: Roll worker, then API
+        run: |
+          w="TD_${NAME//-/_}_worker"; a="TD_${NAME//-/_}_api"
+          aws ecs update-service --cluster "$NAME" --service "$NAME-worker" --task-definition "${!w}" >/dev/null
+          aws ecs update-service --cluster "$NAME" --service "$NAME-api" --task-definition "${!a}" >/dev/null
+          aws ecs wait services-stable --cluster "$NAME" --services "$NAME-worker" "$NAME-api"
+
+      - name: Smoke test through the load balancer
+        run: |
+          curl --fail --silent --show-error --retry 5 --retry-delay 5 "https://${{ vars.API_DOMAIN }}/api/v1/health/live"
+          curl --fail --silent --show-error "https://${{ vars.API_DOMAIN }}/api/v1/health"

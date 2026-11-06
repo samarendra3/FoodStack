@@ -1,5 +1,48 @@
 # FoodStack — Final Phase Completion Report
 
+_Last updated 2026-11-06 (session 3). Nothing has been pushed, merged or provisioned. The earlier report is kept below §12._
+
+## 0. Status by verification level
+
+| Area                                                                                  | Implemented                         | Automated tests passed                       | Browser verified     | Infrastructure provisioned                       | Load tested                                                                       | Production verified     |
+| ------------------------------------------------------------------------------------- | ----------------------------------- | -------------------------------------------- | -------------------- | ------------------------------------------------ | --------------------------------------------------------------------------------- | ----------------------- |
+| Phases 3, 4, 5, 7 (app)                                                               | ✅                                  | ✅ unit 177, integration 282, e2e 56, web 31 | ❌ (checklist ready) | ❌                                               | ✅ local                                                                          | ❌                      |
+| Phase 6 analytics                                                                     | ✅                                  | ✅                                           | ❌                   | ❌                                               | ✅ ≤100k orders                                                                   | ❌                      |
+| Phase 2 / 8 large datasets (1M/10M)                                                   | ✅ scripts                          | —                                            | —                    | ❌                                               | ❌ needs ≥16 GB (`run.sh` refuses below 15 GB)                                    | ❌                      |
+| Auth fail-closed on Redis outage (decision 2)                                         | ✅                                  | ✅ unit + integration                        | —                    | ❌                                               | ✅ local HA rehearsal: 503 + Retry-After, recovery                                | ❌                      |
+| Search without weakening RLS (decision 1)                                             | investigated; trigram stays off     | —                                            | —                    | —                                                | measured: gram table 313→75 ms for digit searches, no gain for names; not adopted | —                       |
+| Prometheus metrics (API and worker)                                                   | ✅                                  | ✅                                           | —                    | ❌                                               | ✅ scraped live                                                                   | ❌                      |
+| Grafana, Alertmanager, 21 alert rules                                                 | ✅                                  | ✅ promtool                                  | —                    | ❌ (local only)                                  | ✅ `AuthFailingClosed` fired on the real outage                                   | ❌                      |
+| HA: replicas, LB, PgBouncer, worker scaling                                           | ✅ (compose rehearsal)              | ✅                                           | —                    | ❌                                               | ✅ 0 errors with a replica stopped; writes p95 592 ms (missed the target)         | ❌                      |
+| AWS Terraform (VPC, ALB/TLS/WAF, ECS, RDS, ElastiCache, Secrets, AMP, Backup, 3 envs) | ✅                                  | ✅ fmt + validate ×4, Trivy 0 HIGH/CRITICAL  | —                    | ❌ **not applied** (costs money, needs approval) | ❌                                                                                | ❌                      |
+| Deploy and infra CI workflows                                                         | ✅                                  | ✅ actionlint                                | —                    | ❌ (never run)                                   | —                                                                                 | ❌                      |
+| Backups and DR                                                                        | documented (`DISASTER_RECOVERY.md`) | local dump/restore ✅                        | —                    | ❌                                               | —                                                                                 | ❌ RDS PITR not drilled |
+
+**Production-ready: NO.** No infrastructure is provisioned; monitoring and backups don't run on AWS; and deployment and recovery have not been tested there.
+
+## 0.1 This session's defects found and fixed
+
+1. PgBouncer rejected `statement_timeout`, so no replica could start. It is now set per transaction (`73e7e5f`).
+2. The readiness health check fails on a Redis outage. The ALB now checks `/health/live`, so a Redis outage can't take down every replica.
+3. The PgBouncer exporter was silently denied access. Fixed with `STATS_USERS`, plus a `PgBouncerDown` alert.
+4. Terraform security: unrestricted egress (now VPC + 443/587 only), an unencrypted log bucket, and an SNS topic without a CMK.
+
+## 0.2 Needs your approval or external resources
+
+1. **AWS:** approve the cost and target account, then `bootstrap` → `envs/staging` plan/apply (`infrastructure/aws/README.md`).
+2. **A ≥16 GB machine:** run `tests/load/large-dataset/run.sh all` (1M), then `ORDERS=10000000`.
+3. **A browser session:** `docs/BROWSER_VERIFICATION_CHECKLIST.md`.
+4. **GitHub:**
+   - The branch is 17 commits ahead of `origin/feature/central-authentication` and 26 ahead of `main`.
+   - gitleaks: clean (2 reviewed false positives, in `.gitleaksignore`).
+   - No accidental files; all 26 migrations are listed and ordered.
+   - Ready to push and open a PR **when you approve**. A PR description is in `docs/PR_DESCRIPTION.md`.
+5. **Write latency for a busy single tenant:** the per-tenant usage-counter row serializes concurrent orders. This needs a design decision after the ≥16 GB tests.
+
+---
+
+## 12. Previous report (session 2)
+
 _2026-11-06 · branch `feature/central-authentication` · all results were produced in this session on
 an i5-10310U, 7.7 GB RAM laptop with ~0.8 GB free. Nothing was pushed or merged._
 

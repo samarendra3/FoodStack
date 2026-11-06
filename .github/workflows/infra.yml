@@ -1,0 +1,59 @@
+# Infrastructure checks on every PR that touches infrastructure/. No AWS credentials, no plan,
+# no apply: formatting, validation, IaC security scan and Prometheus rule checks only.
+name: Infrastructure
+
+on:
+  pull_request:
+    paths: ['infrastructure/**', 'docker-compose*.yml', '.github/workflows/infra.yml']
+  push:
+    branches: [main]
+    paths: ['infrastructure/**', 'docker-compose*.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.13.3
+      - name: Format
+        run: terraform -chdir=infrastructure/aws fmt -recursive -check
+      - name: Validate every root (no backend, no credentials)
+        run: |
+          for root in bootstrap envs/dev envs/staging envs/prod; do
+            terraform -chdir=infrastructure/aws/$root init -backend=false -input=false
+            terraform -chdir=infrastructure/aws/$root validate
+          done
+      - name: IaC security scan (HIGH/CRITICAL fail the build)
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          scan-type: config
+          scan-ref: infrastructure/aws
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+
+  monitoring:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prometheus config and alert rules
+        run: |
+          docker run --rm --entrypoint promtool -v "$PWD/infrastructure/monitoring/prometheus:/etc/prometheus" \
+            prom/prometheus:v3.5.0 check config /etc/prometheus/prometheus.yml
+          docker run --rm --entrypoint promtool -v "$PWD/infrastructure/monitoring/prometheus:/etc/prometheus" \
+            prom/prometheus:v3.5.0 check rules /etc/prometheus/alerts.yml
+      - name: Dashboard is generated from its source
+        run: |
+          node infrastructure/monitoring/grafana/build-dashboard.mjs
+          git diff --exit-code infrastructure/monitoring/grafana/dashboards
+      - name: Compose overlays parse
+        run: |
+          cp .env.example .env
+          GRAFANA_ADMIN_PASSWORD=x docker compose -f docker-compose.yml -f docker-compose.ha.yml \
+            -f docker-compose.monitoring.yml --profile ha --profile monitoring config -q

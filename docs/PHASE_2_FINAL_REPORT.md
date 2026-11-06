@@ -116,3 +116,46 @@ docker exec -i foodstack-postgres-1 psql -U foodstack_owner -d foodstack_test \
 
 To record: insert throughput, list and filter p50/p95, EXPLAIN plans, CPU and memory (`tests/load/monitor.sh`).
 Results go in `apps/api/perf/results/` and update this report.
+
+## 6. Follow-up: search alternatives that keep RLS intact (decision 1)
+
+**Decision.** Trigram indexes stay disabled if making them usable weakens RLS. So these options are **rejected**:
+
+- `ALTER FUNCTION texticlike LEAKPROOF`;
+- a `SECURITY DEFINER` search path.
+
+**Constraint, verified.** Under forced RLS only **leakproof** operators can drive an index ahead of the
+policy. Checked in `pg_proc`:
+
+| Operator               | Leakproof |
+| ---------------------- | --------- |
+| `texteq` (`=`)         | **yes**   |
+| `texticlike` (ILIKE)   | no        |
+| `arraycontains` (`@>`) | no        |
+| `arrayoverlap` (`&&`)  | no        |
+| `show_trgm`            | no        |
+
+So an array-GIN trigram design doesn't help either. Only equality lookups can use an index for the app role.
+
+**Prototype: a gram table, where RLS remains the only isolation mechanism.**
+
+- `customer_search_grams(tenant_id, gram, customer_id)` holds the lowercase 3-character windows of name and phone.
+- RLS is FORCED on it with the same tenant policy, plus a B-tree on `(tenant_id, gram, customer_id)`.
+- A search is `gram = ANY($grams)` grouped by customer, keeping those with `count(DISTINCT gram) = n`. The candidates are then re-checked with `ILIKE` for exactness.
+
+It was measured inside a rolled-back transaction as `foodstack_app`, with 200,000 customers in one tenant:
+
+| Search                              | Seq-scan ILIKE (today) |                                                                  Gram table |
+| ----------------------------------- | ---------------------: | --------------------------------------------------------------------------: |
+| Digits `4471`                       |                 313 ms |    **75 ms** (index-only scan; the RLS predicate is in the index condition) |
+| Name `reddy 77` (common grams)      |                 313 ms |                                         289 ms (82k gram hits to aggregate) |
+| Other tenant reading the gram table |                      — |                                                      **0 rows** (RLS works) |
+| Build                               |                      — | 36 s to fill + 22 s to index for 200k customers; about 30 rows per customer |
+
+**Conclusion.** The design is safe and helps selective (digit) searches 4×. It doesn't help common name
+fragments, and it costs about 30 index rows per customer write. It is **not adopted**.
+
+**Recommended next step (cheap, RLS-safe):** a stored column such as `phone_last4` with a
+`(tenant_id, phone_last4)` B-tree. Search would use it when the term is exactly 4 digits: an equality lookup,
+leakproof, expected around 1 ms (an estimate, not measured). Customer search would stay seq-scan for free text. Measure at 2M customers on the ≥16 GB machine
+(`tests/load/large-dataset/run.sh trigram`) before deciding.
