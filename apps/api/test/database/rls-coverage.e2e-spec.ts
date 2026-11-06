@@ -10,9 +10,13 @@ import { openTestDatabase, type TestDatabase } from '../support/db';
  */
 const NON_TENANT_TABLES = [
   'access_requests',
+  // Platform-wide add-on catalogue (no tenant_id); written only by Super Admin endpoints.
+  'addon_packages',
   'login_attempts',
   'mfa_recovery_codes',
   'permissions',
+  // Platform-wide plan catalogue (no tenant_id, public plan list); Super Admin writes only.
+  'plans',
   'typeorm_migrations',
   'user_tokens',
   'users',
