@@ -2,7 +2,8 @@
 
 import { Button, buttonVariants } from '@foodstack/ui/components/button';
 import { cn } from '@foodstack/ui/lib/utils';
-import { CalendarX2, Clock, Hourglass, Loader2, LogOut, ShieldAlert, X } from 'lucide-react';
+import { AlertBanner } from '@foodstack/ui/components/alert-banner';
+import { CalendarX2, Clock, Hourglass, Loader2, LogOut, ShieldAlert } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { type ReactNode, useState } from 'react';
@@ -186,50 +187,34 @@ export function TrialReminderBanner() {
 
   if (!ent.data || (r !== 7 && r !== 3 && r !== 1) || dismissed === id) return null;
   const days = ent.data.remainingDays;
-  const urgent = r === 1;
+  const dismiss = () => {
+    setDismissed(id);
+    try {
+      localStorage.setItem(DISMISS_KEY, id);
+    } catch {
+      // Storage unavailable: dismissed for this visit only.
+    }
+  };
   return (
-    <div
-      role="status"
-      className={cn(
-        'flex flex-wrap items-center gap-3 border-b px-4 py-2.5 text-sm sm:px-6',
-        urgent
-          ? 'border-red-200 bg-red-50 text-red-800 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200'
-          : r === 3
-            ? 'border-orange-200 bg-orange-50 text-orange-800 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-200'
-            : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200',
-      )}
+    <AlertBanner
+      layout="bar"
+      variant={r === 1 ? 'danger' : 'warning'}
+      icon={Clock}
+      title={days <= 1 ? 'Your free trial ends today.' : `${days} days left in your free trial.`}
+      action={
+        ent.data.canManage ? (
+          <Link
+            href="/restaurant/profile#subscription"
+            className="rounded-md bg-white/70 px-3 py-1 font-medium hover:bg-white dark:bg-white/10 dark:hover:bg-white/15"
+          >
+            View plans
+          </Link>
+        ) : null
+      }
+      onDismiss={dismiss}
     >
-      <Clock className="size-4 shrink-0" aria-hidden />
-      <p className="flex-1">
-        <strong>
-          {days <= 1 ? 'Your free trial ends today.' : `${days} days left in your free trial.`}
-        </strong>{' '}
-        {ent.data.trialEndsAt ? `It ends on ${day.format(new Date(ent.data.trialEndsAt))}. ` : ''}
-        Subscribe to keep POS, orders and kitchen running without interruption.
-      </p>
-      {ent.data.canManage ? (
-        <Link
-          href="/restaurant/profile#subscription"
-          className="rounded-lg bg-white/70 px-3 py-1 font-medium hover:bg-white dark:bg-white/10"
-        >
-          View plans
-        </Link>
-      ) : null}
-      <button
-        type="button"
-        aria-label="Dismiss reminder"
-        className="rounded p-1 opacity-70 hover:opacity-100"
-        onClick={() => {
-          setDismissed(id);
-          try {
-            localStorage.setItem(DISMISS_KEY, id);
-          } catch {
-            // Storage unavailable: dismissed for this visit only.
-          }
-        }}
-      >
-        <X className="size-4" />
-      </button>
-    </div>
+      {ent.data.trialEndsAt ? `It ends on ${day.format(new Date(ent.data.trialEndsAt))}. ` : ''}
+      Subscribe to keep POS, orders and kitchen running without interruption.
+    </AlertBanner>
   );
 }

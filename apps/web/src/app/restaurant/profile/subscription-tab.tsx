@@ -1,6 +1,7 @@
 'use client';
 
 import { Button, buttonVariants } from '@foodstack/ui/components/button';
+import { Dialog } from '@foodstack/ui/components/dialog';
 import { cn } from '@foodstack/ui/lib/utils';
 import {
   AlertTriangle,
@@ -10,6 +11,7 @@ import {
   Clock,
   Copy,
   Loader2,
+  ShieldCheck,
   Sparkles,
   X,
 } from 'lucide-react';
@@ -19,14 +21,23 @@ import {
   type Cycle,
   KIND_LABEL,
   money,
+  PAYMENT_STATUS_META,
   type Plan,
   STATUS_META,
   type SubscriptionOverview,
   useBillingMutations,
+  useInvoiceCheckout,
   usePlanCheckout,
   useSubscription,
 } from '@/lib/billing';
-import { FEATURE_LABELS, type FeatureKey, limitLabel, planHighlights } from '@/lib/plans';
+import {
+  FEATURE_LABELS,
+  type FeatureKey,
+  limitLabel,
+  planHighlights,
+  sellsCycle,
+} from '@/lib/plans';
+import { useNotify } from '@/lib/notify';
 import { ErrorBox } from './profile-tab';
 
 const day = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
@@ -169,7 +180,7 @@ function ExpiryAlert({ s, onRenew }: { s: SubscriptionOverview; onRenew: () => v
 function PendingPayment({ s }: { s: SubscriptionOverview }) {
   const inv = s.pendingInvoice!;
   const m = useBillingMutations();
-  const pay = usePlanCheckout();
+  const pay = useInvoiceCheckout();
   const [copied, setCopied] = useState(false);
   const [payError, setPayError] = useState<string | null>(null);
   return (
@@ -177,8 +188,21 @@ function PendingPayment({ s }: { s: SubscriptionOverview }) {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
         <Clock className="size-6 shrink-0 text-violet-600" />
         <div className="flex-1 space-y-2">
-          <p className="font-semibold">
-            Awaiting payment · {KIND_LABEL[inv.kind]} to {inv.planName} ({inv.billingCycle})
+          <p className="flex flex-wrap items-center gap-2 font-semibold">
+            {inv.failureReason ? 'Payment failed' : 'Awaiting payment'} · {KIND_LABEL[inv.kind]}
+            {' — '}
+            {inv.planName}
+            {inv.billingCycle ? ` (${inv.billingCycle})` : ''}
+            {inv.paymentStatus ? (
+              <span
+                className={cn(
+                  'inline-flex rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset',
+                  PAYMENT_STATUS_META[inv.paymentStatus].cls,
+                )}
+              >
+                {PAYMENT_STATUS_META[inv.paymentStatus].label}
+              </span>
+            ) : null}
           </p>
           {inv.failureReason ? (
             <p role="alert" className="text-sm font-medium text-red-700 dark:text-red-300">
@@ -197,7 +221,9 @@ function PendingPayment({ s }: { s: SubscriptionOverview }) {
             <span className="font-semibold">{money(inv.amountMinor, inv.currencyCode)}</span>.{' '}
             {s.onlinePayments
               ? 'Pay online to activate instantly, or pay offline and the FoodStack team will confirm it.'
-              : 'Your plan changes only after the FoodStack team confirms your payment.'}
+              : inv.kind === 'addon'
+                ? 'The extra capacity is added only after the FoodStack team confirms your payment.'
+                : 'Your plan changes only after the FoodStack team confirms your payment.'}
           </p>
           {s.paymentInstructions ? (
             <pre className="rounded-lg bg-white/70 p-3 font-sans text-sm whitespace-pre-wrap dark:bg-black/20">
@@ -217,19 +243,18 @@ function PendingPayment({ s }: { s: SubscriptionOverview }) {
               disabled={pay.isPending}
               onClick={() => {
                 setPayError(null);
-                pay.mutate(
-                  { planId: inv.planId, billingCycle: inv.billingCycle },
-                  {
-                    onSuccess: (r) =>
-                      r === 'failed' &&
-                      setPayError('The payment did not go through. You have not been charged.'),
-                    onError: (e) => setPayError(authErrorMessage(e)),
-                  },
-                );
+                pay.mutate(inv.id, {
+                  onSuccess: (r) =>
+                    r === 'failed' &&
+                    setPayError('The payment did not go through. You have not been charged.'),
+                  onError: (e) => setPayError(authErrorMessage(e)),
+                });
               }}
             >
-              {pay.isPending ? <Loader2 className="animate-spin" /> : <CreditCard />} Pay{' '}
-              {money(inv.amountMinor, inv.currencyCode)} now
+              {pay.isPending ? <Loader2 className="animate-spin" /> : <CreditCard />}{' '}
+              {inv.failureReason
+                ? `Retry payment · ${money(inv.amountMinor, inv.currencyCode)}`
+                : `Pay ${money(inv.amountMinor, inv.currencyCode)} now`}
             </Button>
           ) : null}
           <Button
@@ -369,7 +394,7 @@ function Usage({ s }: { s: SubscriptionOverview }) {
         {s.plan
           ? `Against the limits of your ${s.plan.name} plan.`
           : s.status === 'trialing'
-            ? 'Your free trial includes 1 branch; other features are open to try.'
+            ? 'Against the limits of your free trial.'
             : 'Choose a plan to see its limits.'}
       </p>
       <div className="mt-5 grid gap-5 sm:grid-cols-2">
@@ -455,7 +480,12 @@ function PlanCard({
         <p className="mt-1 text-sm text-muted-foreground">{plan.description}</p>
       ) : null}
       <p className="mt-4">
-        {price === null ? (
+        {plan.planType === 'free_trial' ? (
+          <>
+            <span className="text-3xl font-bold">Free</span>
+            <span className="text-sm text-muted-foreground"> for {plan.trialDays} days</span>
+          </>
+        ) : price === null ? (
           <span className="text-3xl font-bold">Custom</span>
         ) : (
           <>
@@ -474,12 +504,29 @@ function PlanCard({
       ) : null}
       <ul className="mt-5 flex-1 space-y-2 text-sm">
         {planHighlights(plan).map((f) => (
-          <li key={f} className="flex gap-2">
-            <Check className="mt-0.5 size-4 shrink-0 text-emerald-600" /> {f}
+          <li
+            key={f.label}
+            className={cn('flex gap-2', !f.enabled && 'text-muted-foreground line-through')}
+          >
+            {f.enabled ? (
+              <Check className="mt-0.5 size-4 shrink-0 text-emerald-600" />
+            ) : (
+              <X className="mt-0.5 size-4 shrink-0 text-slate-400" />
+            )}
+            {f.label}
+            {f.enabled ? null : <span className="sr-only"> (not included)</span>}
           </li>
         ))}
       </ul>
-      {s.canManage && plan.customPricing ? (
+      {plan.planType === 'free_trial' ? (
+        <p className="mt-6 rounded-lg bg-muted/60 px-3 py-2 text-center text-xs text-muted-foreground">
+          Every new restaurant starts here for {plan.trialDays} days.
+        </p>
+      ) : s.canManage && !plan.customPricing && !sellsCycle(plan, cycle) ? (
+        <Button className="mt-6" variant="outline" disabled>
+          {plan.billingCycles === 'yearly' ? 'Yearly billing only' : 'Monthly billing only'}
+        </Button>
+      ) : s.canManage && plan.customPricing ? (
         <a
           className={cn(buttonVariants({ variant: 'outline' }), 'mt-6')}
           href="mailto:sales@foodstack.app"
@@ -516,6 +563,7 @@ function ConfirmChange({
 }) {
   const m = useBillingMutations();
   const pay = usePlanCheckout();
+  const notify = useNotify();
   const [error, setError] = useState<string | null>(null);
   const current = s.plan;
   const kind = !current
@@ -548,99 +596,126 @@ function ConfirmChange({
       : `Your ${cycle} period starts when your payment is confirmed.`,
   };
 
+  const busy = m.request.isPending || pay.isPending;
+  const title =
+    kind === 'new'
+      ? `Subscribe to ${plan.name}`
+      : kind === 'renewal'
+        ? `Renew ${plan.name}`
+        : kind === 'upgrade'
+          ? `Upgrade to ${plan.name}`
+          : kind === 'downgrade'
+            ? `Switch to ${plan.name}`
+            : `Switch to ${cycle} billing`;
+  const cycleLabel = (c: Cycle | null) => (c === 'yearly' ? 'Yearly' : 'Monthly');
+
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Confirm plan change"
-    >
-      <button
-        type="button"
-        aria-label="Close"
-        className="absolute inset-0 bg-slate-950/50"
-        onClick={onClose}
-      />
-      <div className="relative w-full max-w-md rounded-2xl bg-card p-6 shadow-2xl">
-        <h2 className="text-lg font-semibold">
-          {KIND_LABEL[kind as keyof typeof KIND_LABEL]}: {plan.name}
-        </h2>
-        <dl className="mt-4 space-y-2 rounded-xl bg-muted/50 p-4 text-sm">
-          {current ? (
-            <div className="flex justify-between">
-              <dt className="text-muted-foreground">Current</dt>
-              <dd>
-                {current.name} · {s.billingCycle}
+    <Dialog open onClose={onClose} dismissible={!busy} labelledBy="plan-change-title" size="md">
+      <div className="flex gap-4 p-6 max-sm:flex-col">
+        <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300">
+          <Sparkles className="size-5" aria-hidden />
+        </span>
+        <div className="min-w-0 flex-1 space-y-4">
+          <div className="space-y-1">
+            <h2 id="plan-change-title" className="text-base font-semibold tracking-tight">
+              {title}
+            </h2>
+            <p className="text-sm leading-relaxed text-muted-foreground">{explain[kind]}</p>
+          </div>
+          <dl className="divide-y rounded-lg border bg-muted/40 text-sm">
+            {current ? (
+              <div className="flex justify-between gap-4 px-3 py-2">
+                <dt className="text-muted-foreground">Current plan</dt>
+                <dd className="text-right">
+                  {current.name} · {cycleLabel(s.billingCycle)}
+                </dd>
+              </div>
+            ) : null}
+            <div className="flex justify-between gap-4 px-3 py-2">
+              <dt className="text-muted-foreground">{current ? 'New plan' : 'Plan'}</dt>
+              <dd className="text-right font-medium">
+                {plan.name} · {cycleLabel(cycle)}
               </dd>
             </div>
-          ) : null}
-          <div className="flex justify-between">
-            <dt className="text-muted-foreground">New</dt>
-            <dd className="font-medium">
-              {plan.name} · {cycle}
-            </dd>
-          </div>
-          <div className="flex justify-between border-t pt-2 text-base font-semibold">
-            <dt>Amount due</dt>
-            <dd>{money(price, plan.currencyCode)}</dd>
-          </div>
-        </dl>
-        <p className="mt-4 text-sm text-muted-foreground">{explain[kind]}</p>
-        <p className="mt-2 text-sm text-muted-foreground">
-          {s.onlinePayments
-            ? 'Pay securely by card, UPI or net banking. Your plan activates as soon as the payment is verified.'
-            : 'We’ll create an invoice marked Pending payment. Nothing changes until the FoodStack team verifies your payment.'}
-        </p>
-        {error ? (
-          <p role="alert" className="mt-3 text-sm text-red-600">
-            {error}
+            <div className="flex items-baseline justify-between gap-4 px-3 py-2.5">
+              <dt className="font-medium">Amount due</dt>
+              <dd className="text-lg font-semibold tabular-nums">
+                {money(price, plan.currencyCode)}
+              </dd>
+            </div>
+          </dl>
+          <p className="flex gap-2 text-xs text-muted-foreground">
+            <ShieldCheck className="size-4 shrink-0 text-emerald-600" aria-hidden />
+            {s.onlinePayments
+              ? 'Pay securely by card, UPI or net banking. Your plan activates as soon as the payment is verified.'
+              : 'We’ll create an invoice marked Pending payment. Nothing changes until the FoodStack team verifies your payment.'}
           </p>
-        ) : null}
-        <div className="mt-6 flex flex-wrap justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            variant={s.onlinePayments ? 'outline' : 'default'}
-            disabled={m.request.isPending || pay.isPending}
-            onClick={() =>
-              m.request.mutate(
-                { planId: plan.id, billingCycle: cycle },
-                { onSuccess: onClose, onError: (e) => setError(authErrorMessage(e)) },
-              )
-            }
-          >
-            {m.request.isPending ? <Loader2 className="animate-spin" /> : null}{' '}
-            {s.onlinePayments ? 'Pay offline (invoice)' : 'Create invoice'}
-          </Button>
-          {s.onlinePayments ? (
-            <Button
-              disabled={m.request.isPending || pay.isPending}
-              onClick={() => {
-                setError(null);
-                pay.mutate(
-                  { planId: plan.id, billingCycle: cycle },
-                  {
-                    onSuccess: (r) =>
-                      r === 'paid'
-                        ? onClose()
-                        : r === 'failed' &&
-                          setError('The payment did not go through. You have not been charged.'),
-                    onError: (e) =>
-                      setError(
-                        e instanceof Error && !('problem' in e) ? e.message : authErrorMessage(e),
-                      ),
-                  },
-                );
-              }}
+          {error ? (
+            <p
+              role="alert"
+              className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-300"
             >
-              {pay.isPending ? <Loader2 className="animate-spin" /> : <CreditCard />} Pay{' '}
-              {money(price, plan.currencyCode)}
-            </Button>
+              {error}
+            </p>
           ) : null}
         </div>
       </div>
-    </div>
+      <div className="flex flex-col-reverse gap-2 border-t bg-muted/30 px-6 py-4 sm:flex-row sm:justify-end">
+        <Button variant="outline" onClick={onClose} disabled={busy}>
+          Cancel
+        </Button>
+        <Button
+          variant={s.onlinePayments ? 'outline' : 'default'}
+          disabled={busy}
+          onClick={() =>
+            m.request.mutate(
+              { planId: plan.id, billingCycle: cycle },
+              {
+                onSuccess: () => {
+                  notify.success(
+                    'Invoice created',
+                    `${plan.name} starts once your payment is verified.`,
+                  );
+                  onClose();
+                },
+                onError: (e) => setError(authErrorMessage(e)),
+              },
+            )
+          }
+        >
+          {m.request.isPending ? <Loader2 className="animate-spin" /> : null}
+          {s.onlinePayments ? 'Pay offline (invoice)' : 'Create invoice'}
+        </Button>
+        {s.onlinePayments ? (
+          <Button
+            disabled={busy}
+            onClick={() => {
+              setError(null);
+              pay.mutate(
+                { planId: plan.id, billingCycle: cycle },
+                {
+                  onSuccess: (r) => {
+                    if (r === 'paid') {
+                      notify.success('Payment verified', `Your ${plan.name} plan is active.`);
+                      onClose();
+                    } else if (r === 'failed') {
+                      setError('The payment did not go through. You have not been charged.');
+                    }
+                  },
+                  onError: (e) =>
+                    setError(
+                      e instanceof Error && !('problem' in e) ? e.message : authErrorMessage(e),
+                    ),
+                },
+              );
+            }}
+          >
+            {pay.isPending ? <Loader2 className="animate-spin" /> : <CreditCard />} Pay{' '}
+            {money(price, plan.currencyCode)}
+          </Button>
+        ) : null}
+      </div>
+    </Dialog>
   );
 }
 

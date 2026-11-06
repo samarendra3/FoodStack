@@ -25,7 +25,7 @@ export class CustomersService {
 
   list(auth: AuthContext, query: ListCustomersQuery) {
     return this.db.run({ tenantId: auth.tenantId, userId: auth.userId }, async (db) => {
-      const access = await this.access.tenantAccess(db, auth.membershipId!);
+      const access = await this.access.forRequest(db, auth);
       // Customer records span every branch, so a business-wide grant is required.
       if (!access.tenant.includes('order:read')) {
         throw new ForbiddenException({

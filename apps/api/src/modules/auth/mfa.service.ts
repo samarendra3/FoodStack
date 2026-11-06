@@ -30,7 +30,7 @@ export class MfaService {
       // Required in staging/production by env validation; locally, say so before a Super Admin
       // hits it at their first sign-in.
       new Logger(MfaService.name).warn(
-        'MFA_ENCRYPTION_KEY is not set: Super Admin sign-in (two-step verification) will fail. Copy it from .env.example.',
+        'MFA_ENCRYPTION_KEY is not set: Super Admin sign-in (two-step verification) and queued email (password reset, invitations) will fail. Copy it from .env.example.',
       );
     }
     this.issuer = config.get('MFA_ISSUER');

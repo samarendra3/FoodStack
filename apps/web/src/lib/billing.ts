@@ -41,18 +41,33 @@ export interface Plan extends PublicPlan {
   isActive?: boolean;
   isPublic?: boolean;
   archivedAt?: string | null;
+  adminNotes?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Invoice {
   id: string;
   invoiceNumber: string;
-  planId: string;
+  /** Null for add-on purchases (kind 'addon'), which carry `addon` instead. */
+  planId: string | null;
   planName: string;
-  billingCycle: Cycle;
-  kind: 'new' | 'renewal' | 'upgrade' | 'downgrade' | 'cycle_change';
+  billingCycle: Cycle | null;
+  kind: 'new' | 'renewal' | 'upgrade' | 'downgrade' | 'cycle_change' | 'addon';
   amountMinor: number;
   currencyCode: string;
-  status: 'pending' | 'paid' | 'cancelled';
+  status: 'pending' | 'paid' | 'cancelled' | 'refunded' | 'expired';
+  addon: {
+    packageId: string;
+    addonType: 'orders' | 'branches' | 'staff' | 'storage';
+    quantity: number;
+    validity: 'current_cycle' | 'fixed_days' | 'custom';
+  } | null;
+  refundedAt: string | null;
+  refundReason: string | null;
+  expiredAt?: string | null;
+  paymentStatus?: PaymentStatus;
+  transactionId?: string | null;
   periodStart: string | null;
   periodEnd: string | null;
   paymentMethod: string | null;
@@ -63,6 +78,47 @@ export interface Invoice {
   failureReason: string | null;
   failedAt: string | null;
 }
+
+export type PaymentStatus =
+  | 'awaiting_payment'
+  | 'pending_payment'
+  | 'payment_failed'
+  | 'paid'
+  | 'cancelled'
+  | 'expired'
+  | 'refunded';
+
+/** One label per payment state, used by Super Admin and the restaurant panel alike. */
+export const PAYMENT_STATUS_META: Record<PaymentStatus, { label: string; cls: string }> = {
+  awaiting_payment: {
+    label: 'Awaiting payment',
+    cls: 'bg-violet-50 text-violet-700 ring-violet-200 dark:bg-violet-500/10 dark:text-violet-300 dark:ring-violet-500/20',
+  },
+  pending_payment: {
+    label: 'Payment in progress',
+    cls: 'bg-sky-50 text-sky-700 ring-sky-200 dark:bg-sky-500/10 dark:text-sky-300 dark:ring-sky-500/20',
+  },
+  payment_failed: {
+    label: 'Payment failed',
+    cls: 'bg-red-50 text-red-700 ring-red-200 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/20',
+  },
+  paid: {
+    label: 'Paid',
+    cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-500/20',
+  },
+  cancelled: {
+    label: 'Cancelled',
+    cls: 'bg-slate-100 text-slate-600 ring-slate-200 dark:bg-white/5 dark:text-slate-400 dark:ring-white/10',
+  },
+  expired: {
+    label: 'Session expired',
+    cls: 'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-500/20',
+  },
+  refunded: {
+    label: 'Refunded',
+    cls: 'bg-slate-100 text-slate-600 ring-slate-200 dark:bg-white/5 dark:text-slate-400 dark:ring-white/10',
+  },
+};
 
 export interface SubscriptionOverview {
   status: SubscriptionStatus;
@@ -144,6 +200,7 @@ export const KIND_LABEL: Record<Invoice['kind'], string> = {
   upgrade: 'Upgrade',
   downgrade: 'Downgrade',
   cycle_change: 'Billing cycle change',
+  addon: 'Add-on purchase',
 };
 
 export const METHOD_LABEL: Record<string, string> = {
@@ -168,6 +225,10 @@ export function useSubscription() {
   return useQuery({
     queryKey: ['billing', profile.activeTenant?.id, 'subscription'],
     queryFn: () => client.request<SubscriptionOverview>('/billing/subscription'),
+    // A payment can be confirmed elsewhere (gateway webhook, Super Admin verification): check
+    // again on focus, and every 15 s while a request is waiting, so the new plan shows up.
+    refetchOnWindowFocus: true,
+    refetchInterval: (q) => (q.state.data?.pendingInvoice ? 15_000 : false),
   });
 }
 
@@ -233,58 +294,95 @@ function loadRazorpay(): Promise<void> {
  * gateway window and hands the signed result back for server-side verification. Resolves with
  * 'paid', 'failed' or 'dismissed'.
  */
+type ApiClient = ReturnType<typeof useAuth>['client'];
+type Profile = ReturnType<typeof useProfile>;
+
+/**
+ * Opens the gateway window for a server-created order and confirms the result on the server
+ * (signature check). Resolves 'paid' only after the server has verified the payment.
+ */
+async function openGateway(
+  client: ApiClient,
+  profile: Profile,
+  order: CheckoutOrder,
+): Promise<'paid' | 'failed' | 'dismissed'> {
+  await loadRazorpay();
+  return new Promise<'paid' | 'failed' | 'dismissed'>((resolve, reject) => {
+    // The gateway keeps its window open after a failed attempt so the owner can retry.
+    let failed = false;
+    const rzp = new window.Razorpay!({
+      key: order.keyId,
+      order_id: order.orderId,
+      amount: order.amountMinor,
+      currency: order.currencyCode,
+      name: 'FoodStack',
+      description: order.invoice.billingCycle
+        ? `${order.invoice.planName} · ${order.invoice.billingCycle}`
+        : order.invoice.planName,
+      prefill: { name: profile.user.fullName, email: profile.user.email },
+      theme: { color: '#4f46e5' },
+      handler: (r: RazorpayResponse) => {
+        client
+          .request<Invoice>('/billing/subscription/checkout/verify', {
+            method: 'POST',
+            body: {
+              invoiceId: order.invoice.id,
+              orderId: r.razorpay_order_id,
+              paymentId: r.razorpay_payment_id,
+              signature: r.razorpay_signature,
+            },
+          })
+          .then(() => resolve('paid'), reject);
+      },
+      modal: { ondismiss: () => resolve(failed ? 'failed' : 'dismissed') },
+    });
+    rzp.on('payment.failed', (r) => {
+      failed = true;
+      void client
+        .request<void>('/billing/subscription/checkout/failed', {
+          method: 'POST',
+          body: { invoiceId: order.invoice.id, reason: r.error?.description?.slice(0, 300) },
+        })
+        .catch(() => undefined);
+    });
+    rzp.open();
+  });
+}
+
 export function usePlanCheckout() {
   const { client } = useAuth();
   const profile = useProfile();
   const qc = useQueryClient();
   const refresh = () => qc.invalidateQueries({ queryKey: ['billing', profile.activeTenant?.id] });
   return useMutation({
-    mutationFn: async (body: { planId: string; billingCycle: Cycle }) => {
-      const order = await client.request<CheckoutOrder>('/billing/subscription/checkout', {
-        method: 'POST',
-        body,
-      });
-      await loadRazorpay();
-      return new Promise<'paid' | 'failed' | 'dismissed'>((resolve, reject) => {
-        // The gateway keeps its window open after a failed attempt so the owner can retry.
-        let failed = false;
-        const rzp = new window.Razorpay!({
-          key: order.keyId,
-          order_id: order.orderId,
-          amount: order.amountMinor,
-          currency: order.currencyCode,
-          name: 'FoodStack',
-          description: `${order.invoice.planName} · ${order.invoice.billingCycle}`,
-          prefill: { name: profile.user.fullName, email: profile.user.email },
-          theme: { color: '#4f46e5' },
-          handler: (r: RazorpayResponse) => {
-            client
-              .request<Invoice>('/billing/subscription/checkout/verify', {
-                method: 'POST',
-                body: {
-                  invoiceId: order.invoice.id,
-                  orderId: r.razorpay_order_id,
-                  paymentId: r.razorpay_payment_id,
-                  signature: r.razorpay_signature,
-                },
-              })
-              .then(() => resolve('paid'), reject);
-          },
-          modal: { ondismiss: () => resolve(failed ? 'failed' : 'dismissed') },
-        });
-        rzp.on('payment.failed', (r) => {
-          failed = true;
-          void client
-            .request<void>('/billing/subscription/checkout/failed', {
-              method: 'POST',
-              body: { invoiceId: order.invoice.id, reason: r.error?.description?.slice(0, 300) },
-            })
-            .catch(() => undefined);
-        });
-        rzp.open();
-      });
-    },
+    mutationFn: async (body: { planId: string; billingCycle: Cycle }) =>
+      openGateway(
+        client,
+        profile,
+        await client.request<CheckoutOrder>('/billing/subscription/checkout', {
+          method: 'POST',
+          body,
+        }),
+      ),
     onSettled: refresh,
+  });
+}
+
+/** Online payment for a request that already exists (e.g. an add-on purchase). */
+export function useInvoiceCheckout() {
+  const { client } = useAuth();
+  const profile = useProfile();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (invoiceId: string) =>
+      openGateway(
+        client,
+        profile,
+        await client.request<CheckoutOrder>(`/billing/invoices/${invoiceId}/checkout`, {
+          method: 'POST',
+        }),
+      ),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['billing', profile.activeTenant?.id] }),
   });
 }
 

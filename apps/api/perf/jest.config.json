@@ -1,0 +1,11 @@
+{
+  "rootDir": "..",
+  "testMatch": ["<rootDir>/perf/**/*.perf-spec.ts"],
+  "moduleFileExtensions": ["js", "json", "ts"],
+  "transform": {
+    "^.+\\.ts$": ["ts-jest", { "tsconfig": "<rootDir>/integration/tsconfig.json" }]
+  },
+  "setupFiles": ["<rootDir>/integration/setup-env.ts"],
+  "testEnvironment": "node",
+  "testTimeout": 1800000
+}

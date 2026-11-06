@@ -1,8 +1,9 @@
 'use client';
 
 import { Button } from '@foodstack/ui/components/button';
+import { SuspendConfirmDialog } from '@foodstack/ui/components/confirm-dialog';
 import { cn } from '@foodstack/ui/lib/utils';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CalendarPlus, Loader2, PauseCircle, PlayCircle, Sparkles, X } from 'lucide-react';
 import { type FormEvent, useState } from 'react';
 import { useAuth } from '@/components/auth/auth-provider';
@@ -13,10 +14,13 @@ import {
   type Invoice,
   METHOD_LABEL,
   money,
+  PAYMENT_STATUS_META,
+  type PaymentStatus,
   type Plan,
   STATUS_META,
   type SubscriptionStatus,
 } from '@/lib/billing';
+import { useNotify } from '@/lib/notify';
 import { usePagedList } from '@/lib/paged';
 
 interface RestaurantSubscription {
@@ -37,7 +41,42 @@ interface RestaurantSubscription {
   remainingDays: number;
   statusReason: string | null;
   statusChangedAt: string | null;
+  ownerName: string | null;
+  ownerEmail: string | null;
+  /** What the restaurant is on now (paid plan's agreed terms, or the Free Trial). */
+  currentPlan: {
+    name: string;
+    billingCycle: Cycle | null;
+    priceMinor: number | null;
+    currencyCode: string;
+  } | null;
+  /** The open request awaiting payment; it becomes current only after verified payment. */
+  requested: Invoice | null;
+  /** The latest request or payment for this restaurant. */
+  lastInvoice: Invoice | null;
 }
+
+/**
+ * Refreshes every Super Admin subscription tab and the payments list. Billing actions change
+ * rows in several tabs at once (e.g. a verified payment moves a restaurant from Pending to
+ * Active), so all of them reload instead of showing cached rows.
+ */
+export function useRefreshSubscriptions() {
+  const qc = useQueryClient();
+  return () =>
+    qc.invalidateQueries({
+      predicate: (q) => {
+        const k = String(q.queryKey[0]);
+        return (
+          k.startsWith('platform-subscriptions') ||
+          k === 'platform-invoices' ||
+          k === 'platform-subscription'
+        );
+      },
+    });
+}
+
+export type SubscriptionGroup = 'pending' | 'active' | 'expired' | 'inactive';
 
 interface SubscriptionDetail extends RestaurantSubscription {
   events: {
@@ -63,6 +102,10 @@ const EVENT_LABEL: Record<string, string> = {
   past_due: 'Payment overdue',
   checkout_started: 'Checkout started',
   checkout_cancelled: 'Checkout cancelled',
+  checkout_expired: 'Payment session expired',
+  addon_purchased: 'Add-on purchased',
+  addon_revoked: 'Add-on refunded',
+  addon_expired: 'Add-on expired',
   payment_succeeded: 'Payment received',
   payment_failed: 'Payment failed',
   trial_extended: 'Trial extended',
@@ -85,13 +128,54 @@ function StatusPill({ status }: { status: SubscriptionStatus }) {
   );
 }
 
-/** Super Admin: every restaurant's trial or plan, with history and lifecycle actions. */
-export function RestaurantSubscriptions() {
+function PaymentPill({ invoice }: { invoice: Invoice | null }) {
+  if (!invoice?.paymentStatus) return <span className="text-muted-foreground">—</span>;
+  const m = PAYMENT_STATUS_META[invoice.paymentStatus];
+  return (
+    <span
+      className={cn(
+        'inline-flex rounded-md px-2 py-0.5 text-xs font-medium whitespace-nowrap ring-1 ring-inset',
+        m.cls,
+      )}
+      title={invoice.failureReason ?? undefined}
+    >
+      {m.label}
+    </span>
+  );
+}
+
+const GROUP_COPY: Record<
+  'all' | SubscriptionGroup,
+  { empty: string; sort: string; order: 'asc' | 'desc' }
+> = {
+  all: { empty: 'Restaurants appear here once created.', sort: 'periodEnd', order: 'asc' },
+  pending: {
+    empty: 'No subscription requests are waiting for payment.',
+    sort: 'requestedAt',
+    order: 'desc',
+  },
+  active: { empty: 'No active paid subscriptions yet.', sort: 'periodEnd', order: 'asc' },
+  expired: { empty: 'No expired subscriptions.', sort: 'periodEnd', order: 'desc' },
+  inactive: { empty: 'No cancelled or suspended subscriptions.', sort: 'periodEnd', order: 'desc' },
+};
+
+/**
+ * Super Admin subscriptions list. One component for every tab: `group` fixes the server-side
+ * filter (pending requests, active, expired, cancelled / suspended); search, filters, sorting
+ * and pagination all run on the server.
+ */
+export function RestaurantSubscriptions({ group }: { group?: SubscriptionGroup }) {
   const [open, setOpen] = useState<string | null>(null);
+  const refreshAll = useRefreshSubscriptions();
+  const copy = GROUP_COPY[group ?? 'all'];
   const list = usePagedList<RestaurantSubscription>(
-    'platform-subscriptions',
+    `platform-subscriptions-${group ?? 'all'}`,
     '/platform/billing/subscriptions',
-    { sortBy: 'periodEnd', sortOrder: 'asc', filters: { status: '' } },
+    {
+      sortBy: copy.sort,
+      sortOrder: copy.order,
+      filters: { group: group ?? '', status: '', paymentStatus: '' },
+    },
   );
 
   const columns: Column<RestaurantSubscription>[] = [
@@ -106,34 +190,85 @@ export function RestaurantSubscriptions() {
           onClick={() => setOpen(s.tenantId)}
         >
           {s.tenantName}
-          <span className="block text-xs font-normal text-muted-foreground">{s.tenantSlug}</span>
+          <span className="block text-xs font-normal text-muted-foreground">
+            {s.ownerName ? `${s.ownerName} · ${s.ownerEmail}` : s.tenantSlug}
+          </span>
         </button>
       ),
     },
-    { key: 'status', header: 'Status', cell: (s) => <StatusPill status={s.status} /> },
     {
-      key: 'plan',
-      header: 'Plan',
-      hideOnMobile: true,
+      key: 'current',
+      header: 'Current plan',
       cell: (s) =>
-        s.planName ? `${s.planName} · ${s.billingCycle}` : s.trialEndsAt ? 'Free trial' : '—',
-    },
-    {
-      key: 'trial',
-      header: 'Trial',
-      hideOnMobile: true,
-      cell: (s) =>
-        s.trialEndsAt ? (
-          <span className="text-xs">
-            {fmt(s.trialStartedAt)} → {fmt(s.trialEndsAt)}
+        s.currentPlan ? (
+          <span>
+            <span className="font-medium">{s.currentPlan.name}</span>
+            {s.currentPlan.billingCycle ? (
+              <span className="block text-xs text-muted-foreground capitalize">
+                {s.currentPlan.billingCycle}
+              </span>
+            ) : null}
           </span>
         ) : (
           '—'
         ),
     },
     {
+      key: 'requested',
+      header: 'Requested plan',
+      sortKey: 'requestedAt',
+      hideOnMobile: true,
+      cell: (s) =>
+        s.requested ? (
+          <span>
+            {s.requested.planName}
+            <span className="block text-xs text-muted-foreground">
+              {s.requested.billingCycle
+                ? `${s.requested.billingCycle} · `
+                : s.requested.kind === 'addon'
+                  ? 'Add-on · '
+                  : ''}
+              {money(s.requested.amountMinor, s.requested.currencyCode)} ·{' '}
+              {fmt(s.requested.createdAt)}
+            </span>
+          </span>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        ),
+    },
+    {
+      key: 'amount',
+      header: 'Amount',
+      sortKey: 'amountMinor',
+      align: 'right',
+      hideOnMobile: true,
+      cell: (s) =>
+        s.currentPlan?.priceMinor != null && s.currentPlan.name !== 'Free Trial' ? (
+          <span className="tabular-nums">
+            {money(s.currentPlan.priceMinor, s.currentPlan.currencyCode)}
+            <span className="block text-xs text-muted-foreground">
+              per {s.currentPlan.billingCycle === 'yearly' ? 'year' : 'month'}
+            </span>
+          </span>
+        ) : (
+          '—'
+        ),
+    },
+    {
+      key: 'payment',
+      header: 'Payment',
+      cell: (s) => <PaymentPill invoice={s.requested ?? s.lastInvoice} />,
+    },
+    { key: 'status', header: 'Subscription', cell: (s) => <StatusPill status={s.status} /> },
+    {
+      key: 'start',
+      header: 'Start date',
+      hideOnMobile: true,
+      cell: (s) => fmt(s.periodStart ?? s.trialStartedAt),
+    },
+    {
       key: 'end',
-      header: 'Ends',
+      header: 'Expiry date',
       sortKey: 'periodEnd',
       cell: (s) =>
         s.periodEnd ? (
@@ -152,6 +287,19 @@ export function RestaurantSubscriptions() {
           'No end'
         ),
     },
+    {
+      key: 'txn',
+      header: 'Transaction',
+      hideOnMobile: true,
+      cell: (s) =>
+        s.lastInvoice?.transactionId ? (
+          <span className="font-mono text-xs" title={s.lastInvoice.invoiceNumber}>
+            {s.lastInvoice.transactionId}
+          </span>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        ),
+    },
   ];
 
   return (
@@ -160,14 +308,26 @@ export function RestaurantSubscriptions() {
         list={list}
         columns={columns}
         getRowId={(s) => s.id}
-        searchPlaceholder="Restaurant name or slug"
+        searchPlaceholder="Restaurant, invoice or transaction ID"
         filters={[
+          ...(group
+            ? []
+            : [
+                {
+                  key: 'status',
+                  label: 'Subscription',
+                  options: (Object.keys(STATUS_META) as SubscriptionStatus[]).map((k) => ({
+                    value: k,
+                    label: STATUS_META[k].label,
+                  })),
+                },
+              ]),
           {
-            key: 'status',
-            label: 'Status',
-            options: (Object.keys(STATUS_META) as SubscriptionStatus[]).map((k) => ({
+            key: 'paymentStatus',
+            label: 'Payment',
+            options: (Object.keys(PAYMENT_STATUS_META) as PaymentStatus[]).map((k) => ({
               value: k,
-              label: STATUS_META[k].label,
+              label: PAYMENT_STATUS_META[k].label,
             })),
           },
         ]}
@@ -176,14 +336,10 @@ export function RestaurantSubscriptions() {
             Manage
           </Button>
         )}
-        empty={{ title: 'No restaurants', description: 'Restaurants appear here once created.' }}
+        empty={{ title: 'Nothing here', description: copy.empty }}
       />
       {open ? (
-        <Detail
-          tenantId={open}
-          onClose={() => setOpen(null)}
-          onChanged={() => void list.refetch()}
-        />
+        <Detail tenantId={open} onClose={() => setOpen(null)} onChanged={() => void refreshAll()} />
       ) : null}
     </>
   );
@@ -201,6 +357,8 @@ function Detail({
   onChanged: () => void;
 }) {
   const { client } = useAuth();
+  const notify = useNotify();
+  const [suspendReason, setSuspendReason] = useState('');
   const [action, setAction] = useState<Action | null>(null);
   const q = useQuery({
     queryKey: ['platform-subscription', tenantId],
@@ -268,7 +426,7 @@ function Detail({
               )}
             </div>
 
-            {action ? (
+            {action && action !== 'suspend' ? (
               <ActionForm
                 action={action}
                 tenantId={tenantId}
@@ -276,10 +434,61 @@ function Detail({
                   setAction(null);
                   void q.refetch();
                   onChanged();
+                  notify.success(
+                    {
+                      extend: 'Trial extended successfully',
+                      activate: 'Plan granted successfully',
+                      reinstate: 'Restaurant reinstated successfully',
+                    }[action],
+                    s.tenantName,
+                  );
                 }}
                 onCancel={() => setAction(null)}
               />
             ) : null}
+            <SuspendConfirmDialog
+              open={action === 'suspend'}
+              onClose={() => setAction(null)}
+              entity="restaurant"
+              title={`Suspend ${s.tenantName}?`}
+              confirmLabel="Suspend Restaurant"
+              description="Staff lose access to operations immediately. Data is kept, owners can still see their subscription, and payments do not lift a suspension. You can reinstate it at any time."
+              details={[
+                { label: 'Restaurant', value: s.tenantName },
+                {
+                  label: 'Plan',
+                  value: s.planName ? `${s.planName} · ${s.billingCycle}` : 'Free trial',
+                },
+                { label: 'Status', value: STATUS_META[s.status]?.label ?? s.status },
+              ]}
+              confirmDisabled={suspendReason.trim().length < 3}
+              errorMessage={authErrorMessage}
+              onConfirm={async () => {
+                await client.request(`/platform/billing/subscriptions/${tenantId}/suspend`, {
+                  method: 'POST',
+                  body: { reason: suspendReason.trim() },
+                });
+                setSuspendReason('');
+                void q.refetch();
+                onChanged();
+                notify.success('Restaurant suspended successfully', s.tenantName);
+              }}
+            >
+              <label className="block space-y-1 text-sm">
+                <span className="font-medium">Reason</span>
+                <input
+                  value={suspendReason}
+                  maxLength={300}
+                  onChange={(e) => setSuspendReason(e.target.value)}
+                  placeholder="e.g. Payment dispute"
+                  aria-describedby="suspend-reason-hint"
+                  className="h-9 w-full rounded-md border bg-background px-3 outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/20"
+                />
+                <span id="suspend-reason-hint" className="block text-xs text-muted-foreground">
+                  Kept in the subscription history (at least 3 characters).
+                </span>
+              </label>
+            </SuspendConfirmDialog>
 
             <section className="space-y-2">
               <h3 className="text-sm font-semibold">Payments & renewals</h3>

@@ -9,7 +9,6 @@ import { cn } from '@foodstack/ui/lib/utils';
 import { emailSchema } from '@foodstack/validators';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  CheckCircle2,
   Loader2,
   Mail,
   MoreHorizontal,
@@ -20,10 +19,10 @@ import {
   UserPlus,
   UserRoundCheck,
   Users,
-  X,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { type FormEvent, type ReactNode, useEffect, useRef, useState } from 'react';
+import { useNotify } from '@/lib/notify';
 import { useAuth, useProfile } from '@/components/auth/auth-provider';
 import { authErrorMessage } from '@/lib/auth/errors';
 import { initials } from '@/lib/auth/roles';
@@ -86,7 +85,7 @@ export default function TeamPage() {
   const [filter, setFilter] = useState<Filter>('all');
   const [query, setQuery] = useState('');
   const [dialog, setDialog] = useState<Dialog | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const notify = useNotify();
   const team = useQuery({
     queryKey: ['restaurant', 'team', profile.activeTenant?.id],
     queryFn: () => client.request<TeamData>('/team'),
@@ -117,29 +116,6 @@ export default function TeamPage() {
           </Button>
         ) : null}
       </div>
-
-      <AnimatePresence>
-        {notice ? (
-          <motion.div
-            initial={{ opacity: 0, y: -6 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -6 }}
-            role="status"
-            className="flex items-start gap-3 rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-sm"
-          >
-            <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
-            <p className="flex-1">{notice}</p>
-            <button
-              type="button"
-              aria-label="Dismiss"
-              onClick={() => setNotice(null)}
-              className="rounded p-0.5 text-muted-foreground hover:bg-muted"
-            >
-              <X className="size-4" />
-            </button>
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
 
       <Card className="gap-0 p-0">
         <div className="flex flex-col gap-3 border-b p-4 md:flex-row md:items-center md:justify-between">
@@ -262,7 +238,7 @@ export default function TeamPage() {
                       onChangeRole={() => setDialog({ kind: 'role', member: m })}
                       onSuspend={() => setDialog({ kind: 'suspend', member: m })}
                       onReactivate={() => setDialog({ kind: 'reactivate', member: m })}
-                      onResent={() => setNotice(`A new link was emailed to ${m.email}.`)}
+                      onResent={() => notify.success(`A new link was emailed to ${m.email}.`)}
                     />
                   ) : (
                     <span className="block size-9" aria-hidden />
@@ -288,7 +264,7 @@ export default function TeamPage() {
             onClose={() => setDialog(null)}
             onDone={(message) => {
               setDialog(null);
-              setNotice(message);
+              notify.success(message);
             }}
           />
         ) : null}

@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useEffect, useState } from 'react';
+import { useNotify } from '@/lib/notify';
 import {
   type KitchenFeed,
   type KitchenTicket,
@@ -90,7 +91,7 @@ export function TicketBoard({ feed }: { feed: KitchenFeed }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-3 lg:flex-row lg:items-center dark:border-white/10 dark:bg-slate-900">
+      <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-3 lg:flex-row lg:items-center dark:border-white/10 dark:bg-slate-900">
         <div
           className="-mx-1 flex gap-1.5 overflow-x-auto px-1 [scrollbar-width:none]"
           role="tablist"
@@ -153,7 +154,7 @@ export function TicketBoard({ feed }: { feed: KitchenFeed }) {
       </div>
 
       {visible.length === 0 ? (
-        <p className="rounded-2xl border border-dashed border-slate-200 bg-white py-16 text-center text-sm text-slate-500 dark:border-white/10 dark:bg-slate-900">
+        <p className="rounded-xl border border-dashed border-slate-200 bg-white py-16 text-center text-sm text-slate-500 dark:border-white/10 dark:bg-slate-900">
           No orders match these filters.
         </p>
       ) : (
@@ -180,6 +181,7 @@ function TicketCard({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const notify = useNotify();
   const minutes = Math.max(0, Math.floor((now - Date.parse(t.createdAt)) / 60000));
   const late = t.status !== 'completed' && minutes >= 20;
   const warn = t.status !== 'completed' && minutes >= 12;
@@ -195,7 +197,7 @@ function TicketCard({
       exit={{ opacity: 0, scale: 0.96 }}
       transition={{ duration: 0.25 }}
       className={cn(
-        'relative flex flex-col overflow-hidden rounded-2xl border bg-white shadow-xs dark:bg-slate-900',
+        'relative flex flex-col overflow-hidden rounded-xl border bg-white shadow-xs dark:bg-slate-900',
         late ? 'border-red-300 dark:border-red-500/40' : 'border-slate-200 dark:border-white/10',
       )}
       aria-label={`Order ${t.orderNumber}, ${status.label}`}
@@ -302,8 +304,9 @@ function TicketCard({
               setError(null);
               try {
                 await onAdvance(t.id, next.to);
-              } catch {
+              } catch (e) {
                 setError('Could not update — try again.');
+                notify.error(e, `Ticket ${t.orderNumber} not updated`);
               } finally {
                 setBusy(false);
               }

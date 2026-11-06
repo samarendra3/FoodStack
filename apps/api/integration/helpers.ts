@@ -4,6 +4,8 @@ import { DataSource, type EntityManager, type MigrationInterface } from 'typeorm
 import { type Env, validateEnv } from '../src/config/env.validation';
 import { setTenantForTransaction } from '../src/database/rls';
 import { buildDataSourceOptions } from '../src/database/typeorm.options';
+import { EmailDeliveryService } from '../src/modules/notifications/email-delivery.service';
+import { MailService } from '../src/modules/notifications/mail.service';
 
 export const testEnv = (): Env => validateEnv(process.env);
 
@@ -50,4 +52,30 @@ export function asTenant<T>(
     await setTenantForTransaction(manager.queryRunner!, tenantId);
     return work(manager);
   });
+}
+
+type AppLike = { get<T>(type: abstract new (...args: never[]) => T): T };
+
+/**
+ * Delivers queued email now through the worker's own code path (claim → send → mark sent), so
+ * tests can read messages without running a worker process. Phase 5: business code only queues.
+ */
+export async function deliverEmails(app: AppLike) {
+  return app.get(EmailDeliveryService).deliverPending();
+}
+
+/** Delivers queued email until a message matching `match` arrives (newest first), or times out. */
+export async function waitForEmail(
+  app: AppLike,
+  match: (m: { to: string; subject: string; text: string; html: string }) => boolean,
+  timeoutMs = 3_000,
+) {
+  const mail = app.get(MailService);
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    await deliverEmails(app);
+    const found = [...mail.outbox].reverse().find(match);
+    if (found || Date.now() > deadline) return found;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
 }

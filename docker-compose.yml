@@ -108,6 +108,31 @@ services:
       retries: 5
       start_period: 20s
 
+  # Background worker: same image as the api, no HTTP listener (dist/worker.js). Delivers queued
+  # email from the transactional outbox. Scale independently: docker compose up -d --scale worker=3
+  # The api keeps working while it is down: email stays in the outbox until a worker returns.
+  worker:
+    profiles: [apps]
+    build: *api-build
+    env_file: .env
+    environment:
+      <<: *api-env
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+    command: ['node', 'dist/worker.js']
+    # SIGTERM: stop taking jobs, finish active sends (bounded by EMAIL_SEND_TIMEOUT_MS), exit.
+    stop_grace_period: 45s
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ['CMD', 'node', 'dist/worker-health.js']
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
   web:
     profiles: [apps]
     build: &next-build

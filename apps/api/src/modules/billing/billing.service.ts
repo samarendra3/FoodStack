@@ -21,21 +21,30 @@ import type {
   VerifyCheckoutInput,
 } from './billing.schemas';
 import { PAYMENT_GATEWAY, type PaymentGateway } from './payment-gateway';
-import { OFFERED_SQL, type PlanRow, publicPlanDto } from './plan-catalogue';
+import { OFFERED_SQL, type PlanRow, publicPlanDto, sellsCycle } from './plan-catalogue';
 import { iso, stored, SubscriptionLifecycleService } from './subscription-lifecycle.service';
 import { subscriptionState, trialReminder } from './subscription-state';
+import type { AddonSnapshot } from './subscription-lifecycle.service';
 
 export interface InvoiceRow {
   id: string;
   tenant_id: string;
   invoice_number: string;
-  plan_id: string;
+  /** NULL for add-on invoices (kind = 'addon'), which carry addon_package_id instead. */
+  plan_id: string | null;
   plan_name: string;
-  billing_cycle: 'monthly' | 'yearly';
+  billing_cycle: 'monthly' | 'yearly' | null;
   kind: string;
   amount_minor: string;
   currency_code: string;
-  status: 'pending' | 'paid' | 'cancelled';
+  status: 'pending' | 'paid' | 'cancelled' | 'refunded' | 'expired';
+  addon_package_id: string | null;
+  checkout_started_at?: Date | null;
+  expired_at?: Date | null;
+  gateway_payment_id?: string | null;
+  addon_snapshot: AddonSnapshot | null;
+  refunded_at: Date | null;
+  refund_reason: string | null;
   period_start: Date | null;
   period_end: Date | null;
   payment_method: string | null;
@@ -68,7 +77,41 @@ export function invoiceDto(r: InvoiceRow) {
     gateway: r.gateway,
     failureReason: r.failure_reason,
     failedAt: iso(r.failed_at),
+    addon: r.addon_snapshot
+      ? {
+          packageId: r.addon_snapshot.packageId,
+          addonType: r.addon_snapshot.addonType,
+          quantity: r.addon_snapshot.quantity,
+          validity: r.addon_snapshot.validity,
+        }
+      : null,
+    refundedAt: iso(r.refunded_at ?? null),
+    refundReason: r.refund_reason ?? null,
+    expiredAt: iso(r.expired_at ?? null),
+    /** One status for people: a pending invoice with a failed attempt reads "failed". */
+    paymentStatus: paymentStatus(r),
+    /** The gateway payment id, or the reference recorded for an offline payment. */
+    transactionId:
+      r.gateway_payment_id ??
+      (r.status === 'paid' || r.status === 'refunded' ? r.payment_reference : null),
   };
+}
+
+export type PaymentStatus =
+  | 'awaiting_payment'
+  | 'pending_payment'
+  | 'payment_failed'
+  | 'paid'
+  | 'cancelled'
+  | 'expired'
+  | 'refunded';
+
+export function paymentStatus(
+  r: Pick<InvoiceRow, 'status' | 'failed_at' | 'gateway_order_id'>,
+): PaymentStatus {
+  if (r.status !== 'pending') return r.status;
+  if (r.failed_at) return 'payment_failed';
+  return r.gateway_order_id ? 'pending_payment' : 'awaiting_payment';
 }
 
 const forbidden = () =>
@@ -98,7 +141,7 @@ export class BillingService {
   /** Access state for any member (drives the expired screen and trial reminders). */
   entitlement(auth: AuthContext) {
     return this.db.run({ tenantId: auth.tenantId, userId: auth.userId }, async (db) => {
-      const access = await this.access.tenantAccess(db, auth.membershipId!);
+      const access = await this.access.forRequest(db, auth);
       return {
         ...(await this.lifecycle.entitlement(db, auth.tenantId!)),
         canManage: canManage(access),
@@ -136,6 +179,7 @@ export class BillingService {
       const state = subscriptionState(stored(sub), new Date());
       const paid = Boolean(plan);
       const used = await this.lifecycle.usage(db);
+      const effective = await this.lifecycle.effectiveLimits(db, sub);
 
       return {
         status: state.status,
@@ -159,9 +203,11 @@ export class BillingService {
         /** What this customer pays per cycle (agreed price, unaffected by later plan edits). */
         price: snap?.priceMinor ?? null,
         currencyCode: snap?.currencyCode ?? plan?.currencyCode ?? 'INR',
-        limits: this.lifecycle.limitsFor(sub),
+        // Plan limits plus live add-ons: what the restaurant may use right now.
+        limits: effective,
+        planLimits: this.lifecycle.limitsFor(sub),
         autoRenew: false,
-        branchLimit: this.lifecycle.limitsFor(sub).branches,
+        branchLimit: effective.branches,
         pendingInvoice: pending ? invoiceDto(pending) : null,
         paymentInstructions: this.config.get('BILLING_PAYMENT_INSTRUCTIONS') ?? null,
         onlinePayments: this.gateway.enabled,
@@ -202,31 +248,64 @@ export class BillingService {
         existing.billing_cycle === input.billingCycle
           ? existing
           : await this.createInvoice(db, auth, input, meta);
-      let orderId = inv.gateway_order_id;
-      if (!orderId) {
-        orderId = (
-          await this.gateway.createOrder({
-            amountMinor: Number(inv.amount_minor),
-            currency: inv.currency_code.trim(),
-            receipt: inv.invoice_number,
-            notes: { invoiceId: inv.id, tenantId: auth.tenantId! },
-          })
-        ).orderId;
-        await db.query(
-          `UPDATE subscription_invoices SET gateway = $2, gateway_order_id = $3 WHERE id = $1`,
-          [inv.id, this.gateway.name, orderId],
-        );
-      }
-      await this.lifecycle.markPendingPayment(db, auth.tenantId!, inv.id);
-      return {
-        invoice: invoiceDto(inv),
-        gateway: this.gateway.name,
-        keyId: this.gateway.publicKey,
-        orderId,
-        amountMinor: Number(inv.amount_minor),
-        currencyCode: inv.currency_code.trim(),
-      };
+      return this.openGatewayOrder(db, auth, inv);
     });
+  }
+
+  /**
+   * Online payment for a request that already exists (e.g. an add-on): opens (or reuses) the
+   * gateway order for the invoice's server-side amount.
+   */
+  checkoutInvoice(auth: AuthContext, invoiceId: string) {
+    if (!this.gateway.enabled) {
+      throw new BadRequestException({
+        code: 'PAYMENTS_UNAVAILABLE',
+        message: 'Online payment is not set up yet. Pay offline using the instructions shown.',
+      });
+    }
+    return this.run(auth, async (db, access) => {
+      if (!canManage(access)) throw forbidden();
+      const inv = await db.one<InvoiceRow>(
+        `SELECT * FROM subscription_invoices WHERE id = $1 AND status = 'pending' FOR UPDATE`,
+        [invoiceId],
+      );
+      if (!inv)
+        throw new NotFoundException({ code: 'INVOICE_NOT_FOUND', message: 'Payment not found.' });
+      return this.openGatewayOrder(db, auth, inv);
+    });
+  }
+
+  /**
+   * Opens (or reuses) the gateway order for a pending invoice. Each opening, including a retry
+   * after a failed attempt, restarts the payment session window.
+   */
+  private async openGatewayOrder(db: Db, auth: AuthContext, inv: InvoiceRow) {
+    let orderId = inv.gateway_order_id;
+    if (!orderId) {
+      orderId = (
+        await this.gateway.createOrder({
+          amountMinor: Number(inv.amount_minor),
+          currency: inv.currency_code.trim(),
+          receipt: inv.invoice_number,
+          notes: { invoiceId: inv.id, tenantId: auth.tenantId! },
+        })
+      ).orderId;
+    }
+    const row = await db.one<InvoiceRow>(
+      `UPDATE subscription_invoices SET gateway = $2, gateway_order_id = $3, checkout_started_at = now()
+        WHERE id = $1 RETURNING *`,
+      [inv.id, this.gateway.name, orderId],
+    );
+    // Plan payments may revive an expired subscription; add-ons never change its status.
+    if (inv.kind !== 'addon') await this.lifecycle.markPendingPayment(db, auth.tenantId!, inv.id);
+    return {
+      invoice: invoiceDto(row ?? inv),
+      gateway: this.gateway.name,
+      keyId: this.gateway.publicKey,
+      orderId,
+      amountMinor: Number(inv.amount_minor),
+      currencyCode: inv.currency_code.trim(),
+    };
   }
 
   /**
@@ -306,12 +385,36 @@ export class BillingService {
          ON CONFLICT DO NOTHING RETURNING event_id`,
         [this.gateway.name, evt.eventId.slice(0, 100), evt.eventType.slice(0, 60)],
       );
-      if (!fresh || evt.outcome === 'other' || !evt.orderId) return;
+      if (!fresh || evt.outcome === 'other') return;
+      // Refund or lost chargeback: an add-on bought with this payment stops counting at once.
+      if (evt.outcome === 'reversed') {
+        if (!evt.paymentId) return;
+        const paid = await db.one<InvoiceRow>(
+          `SELECT * FROM subscription_invoices WHERE gateway = $1 AND gateway_payment_id = $2`,
+          [this.gateway.name, evt.paymentId],
+        );
+        if (paid?.kind === 'addon' && paid.status === 'paid') {
+          await this.lifecycle.revokeAddon(
+            db,
+            paid.id,
+            `Payment reversed (${evt.eventType})`,
+            null,
+          );
+        } else if (paid) {
+          this.logger.warn(`Payment reversal for plan invoice ${paid.id} needs Super Admin review`);
+        }
+        return;
+      }
+      if (!evt.orderId) return;
       const inv = await db.one<InvoiceRow>(
         `SELECT * FROM subscription_invoices WHERE gateway = $1 AND gateway_order_id = $2 FOR UPDATE`,
         [this.gateway.name, evt.orderId],
       );
-      if (!inv || inv.status !== 'pending') return; // unknown, or already confirmed by checkout
+      // Unknown, or already confirmed (e.g. by the checkout or an earlier event for the same
+      // payment): nothing to do, so repeated webhooks never activate twice. A late payment for
+      // an expired session is still applied.
+      if (!inv || (inv.status !== 'pending' && inv.status !== 'expired')) return;
+      if (inv.status === 'expired' && evt.outcome === 'failed') return;
       if (evt.outcome === 'failed') {
         await this.lifecycle.recordPaymentFailure(db, inv.id, evt.failureReason);
         return;
@@ -396,7 +499,8 @@ export class BillingService {
     meta: RequestMeta,
   ): Promise<InvoiceRow> {
     const sub = await this.lifecycle.load(db, auth.tenantId!, true);
-    const snap = sub.plan_snapshot;
+    // Trial terms (Free Trial snapshot, no plan_id) are not a purchase: buying from a trial is new.
+    const snap = sub.plan_id ? sub.plan_snapshot : null;
     const renewing = snap?.planId === input.planId && snap.billingCycle === input.billingCycle;
     // Subscribers may renew their plan on the agreed terms even after it is no longer offered.
     const plan = await db.one<PlanRow>(
@@ -410,6 +514,15 @@ export class BillingService {
         code: 'PLAN_NOT_FOUND',
         message: 'That plan is not available.',
       });
+    if (!renewing && !sellsCycle(plan, input.billingCycle)) {
+      throw new BadRequestException({
+        code: 'PLAN_CYCLE_UNAVAILABLE',
+        message:
+          plan.plan_type === 'free_trial'
+            ? 'The free trial starts automatically when a restaurant registers; choose a paid plan.'
+            : `This plan is not sold with ${input.billingCycle} billing.`,
+      });
+    }
     if (plan.custom_pricing && !renewing) {
       throw new BadRequestException({
         code: 'PLAN_CUSTOM_PRICING',
@@ -485,14 +598,14 @@ export class BillingService {
 
   private run<T>(auth: AuthContext, work: (db: Db, access: TenantAccess) => Promise<T>) {
     return this.db.run({ tenantId: auth.tenantId, userId: auth.userId }, async (db) =>
-      work(db, await this.access.tenantAccess(db, auth.membershipId!)),
+      work(db, await this.access.forRequest(db, auth)),
     );
   }
 
   /** Checks the caller's tenant role, then returns the transaction to the platform scope. */
   private async assertCanManage(db: Db, auth: AuthContext) {
     await db.setScope({ tenantId: auth.tenantId, userId: auth.userId });
-    const access = await this.access.tenantAccess(db, auth.membershipId!);
+    const access = await this.access.forRequest(db, auth);
     await db.setScope({ platform: true, tenantId: auth.tenantId, userId: auth.userId });
     if (!canManage(access)) throw forbidden();
   }

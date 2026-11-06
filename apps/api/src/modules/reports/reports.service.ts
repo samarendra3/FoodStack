@@ -28,7 +28,7 @@ export class ReportsService {
     }
 
     return this.db.run({ tenantId: auth.tenantId, userId: auth.userId }, async (db) => {
-      const access = await this.access.tenantAccess(db, auth.membershipId!);
+      const access = await this.access.forRequest(db, auth);
       const branches = accessibleBranches(access).filter((b) =>
         hasPermission(access, 'report:view', { branchId: b.id }),
       );

@@ -9,6 +9,13 @@ export interface AuthContext {
   membershipId: string | null;
   /** True when this session passed TOTP. */
   mfaVerified: boolean;
+  /**
+   * The caller's tenant permissions as computed by AuthGuard **for this request**, from the
+   * database, after the session, membership and subscription were validated. Set only on the
+   * server (never from client input), lives only as long as the request, and is never shared
+   * between requests, users or tenants. Absent when the route needs no permission check.
+   */
+  access?: TenantAccess;
 }
 
 export interface RequestMeta {

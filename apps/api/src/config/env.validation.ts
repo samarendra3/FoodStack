@@ -91,6 +91,40 @@ export const envSchema = z
     REDIS_TLS: booleanString,
     QUEUE_PREFIX: z.string().min(1).default('foodstack'),
 
+    /** Redis read cache (docs/PHASE_4_REDIS_REPORT.md). false = every read goes to PostgreSQL. */
+    CACHE_ENABLED: z
+      .enum(['true', 'false'])
+      .default('true')
+      .transform((value) => value === 'true'),
+    /** TTLs in seconds. Entries are also invalidated on write, so TTL only bounds staleness from out-of-band writes. */
+    CACHE_TTL_MENU_SECONDS: z.coerce.number().int().positive().default(180),
+    CACHE_TTL_MENU_CATEGORIES_SECONDS: z.coerce.number().int().positive().default(300),
+    CACHE_TTL_INVENTORY_SUMMARY_SECONDS: z.coerce.number().int().positive().default(30),
+    CACHE_TTL_PLANS_SECONDS: z.coerce.number().int().positive().default(300),
+    /** Analytics over a range that includes today (also invalidated on every order write). */
+    CACHE_TTL_ANALYTICS_SECONDS: z.coerce.number().int().positive().default(60),
+    /** Analytics over a range that ended before today (local time). */
+    CACHE_TTL_ANALYTICS_CLOSED_SECONDS: z.coerce.number().int().positive().default(900),
+    /** Super Admin platform analytics (tenants, subscriptions, SaaS invoices). */
+    CACHE_TTL_PLATFORM_ANALYTICS_SECONDS: z.coerce.number().int().positive().default(300),
+    /** After a Redis error, skip the cache for this long instead of paying a timeout per request. */
+    CACHE_BREAKER_MS: z.coerce.number().int().positive().default(5_000),
+
+    /** Email worker (dist/worker.js, docs/PHASE_5_BULLMQ_REPORT.md). */
+    EMAIL_WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(50).default(5),
+    /** Upper bound for one SMTP delivery; a slower send counts as a failed attempt and is retried. */
+    EMAIL_SEND_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
+    /** Attempts per email before it is marked failed (exponential backoff from 2 s). */
+    EMAIL_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(5),
+    /** Re-publishes outbox rows that never reached the queue (Redis down, crash). 0 = off. */
+    OUTBOX_RECOVERY_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(30),
+    /** Rows older than this and still unpublished or stuck are picked up by recovery. */
+    OUTBOX_STALE_SECONDS: z.coerce.number().int().positive().default(60),
+    OUTBOX_SENT_RETENTION_DAYS: z.coerce.number().int().positive().default(7),
+    OUTBOX_FAILED_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
+    /** Touched by the worker while healthy; the container health check reads its age. */
+    WORKER_HEARTBEAT_FILE: z.string().min(1).default('/tmp/foodstack-worker.alive'),
+
     /** Global per-IP limit: RATE_LIMIT_MAX requests per RATE_LIMIT_WINDOW_MS. */
     RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
     RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),

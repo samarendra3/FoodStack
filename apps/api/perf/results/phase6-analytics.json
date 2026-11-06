@@ -1,0 +1,769 @@
+{
+  "1000": {
+    "counts": {
+      "orders": "1000",
+      "items": "2000",
+      "payments": "900",
+      "refunds": "20"
+    },
+    "seedSeconds": 5.063471600000001,
+    "explain_last30": [
+      {
+        "name": "sales",
+        "ms": 3.225,
+        "rowsScanned": 148,
+        "sharedHit": 55,
+        "sharedRead": 0,
+        "indexes": [],
+        "seqScans": ["orders"]
+      },
+      {
+        "name": "orders",
+        "ms": 1.384,
+        "rowsScanned": 166,
+        "sharedHit": 55,
+        "sharedRead": 0,
+        "indexes": [],
+        "seqScans": ["orders"]
+      },
+      {
+        "name": "payments",
+        "ms": 1.262,
+        "rowsScanned": 148,
+        "sharedHit": 15,
+        "sharedRead": 0,
+        "indexes": [],
+        "seqScans": ["payments"]
+      },
+      {
+        "name": "refunds",
+        "ms": 2.879,
+        "rowsScanned": 905,
+        "sharedHit": 16,
+        "sharedRead": 0,
+        "indexes": [],
+        "seqScans": ["payments", "refunds"]
+      },
+      {
+        "name": "activeTables",
+        "ms": 0.568,
+        "rowsScanned": 50,
+        "sharedHit": 55,
+        "sharedRead": 0,
+        "indexes": [],
+        "seqScans": ["orders"]
+      },
+      {
+        "name": "customers",
+        "ms": 4.787,
+        "rowsScanned": 1283,
+        "sharedHit": 110,
+        "sharedRead": 0,
+        "indexes": [],
+        "seqScans": ["orders"]
+      },
+      {
+        "name": "itemSales",
+        "ms": 5.363,
+        "rowsScanned": 2183,
+        "sharedHit": 107,
+        "sharedRead": 0,
+        "indexes": ["menu_items_tenant_id_id_key"],
+        "seqScans": ["menu_categories", "order_items", "orders"]
+      },
+      {
+        "name": "trend",
+        "ms": 4.358,
+        "rowsScanned": 1230,
+        "sharedHit": 141,
+        "sharedRead": 0,
+        "indexes": [],
+        "seqScans": ["orders", "payments", "refunds"]
+      }
+    ],
+    "explain_thisYear": [
+      {
+        "name": "sales",
+        "ms": 1.809,
+        "rowsScanned": 761,
+        "sharedHit": 55,
+        "sharedRead": 0,
+        "indexes": [],
+        "seqScans": ["orders"]
+      },
+      {
+        "name": "orders",
+        "ms": 2.491,
+        "rowsScanned": 846,
+        "sharedHit": 55,
+        "sharedRead": 0,
+        "indexes": [],
+        "seqScans": ["orders"]
+      },
+      {
+        "name": "payments",
+        "ms": 2.415,
+        "rowsScanned": 761,
+        "sharedHit": 15,
+        "sharedRead": 0,
+        "indexes": [],
+        "seqScans": ["payments"]
+      },
+      {
+        "name": "refunds",
+        "ms": 1.619,
+        "rowsScanned": 920,
+        "sharedHit": 16,
+        "sharedRead": 0,
+        "indexes": [],
+        "seqScans": ["payments", "refunds"]
+      },
+      {
+        "name": "activeTables",
+        "ms": 0.573,
+        "rowsScanned": 50,
+        "sharedHit": 55,
+        "sharedRead": 0,
+        "indexes": [],
+        "seqScans": ["orders"]
+      },
+      {
+        "name": "customers",
+        "ms": 4.419,
+        "rowsScanned": 3228,
+        "sharedHit": 110,
+        "sharedRead": 0,
+        "indexes": [],
+        "seqScans": ["orders"]
+      },
+      {
+        "name": "itemSales",
+        "ms": 11.515,
+        "rowsScanned": 2871,
+        "sharedHit": 107,
+        "sharedRead": 0,
+        "indexes": ["menu_items_tenant_id_id_key"],
+        "seqScans": ["menu_categories", "order_items", "orders"]
+      },
+      {
+        "name": "trend",
+        "ms": 7.986,
+        "rowsScanned": 3299,
+        "sharedHit": 141,
+        "sharedRead": 0,
+        "indexes": [],
+        "seqScans": ["orders", "payments", "refunds"]
+      }
+    ],
+    "api": {
+      "database": {
+        "seq": {
+          "/analytics/summary": {
+            "first": 97.7947000000022,
+            "p50": 79.35780000000159,
+            "p95": 146.01810000000114,
+            "max": 146.01810000000114
+          },
+          "/analytics/trend": {
+            "first": 81.23020000000179,
+            "p50": 57.22469999999885,
+            "p95": 73.73539999999775,
+            "max": 73.73539999999775
+          },
+          "/analytics/menu": {
+            "first": 80.95999999999913,
+            "p50": 59.517900000002555,
+            "p95": 69.44150000000081,
+            "max": 69.44150000000081
+          },
+          "/analytics/customers": {
+            "first": 45.3621000000021,
+            "p50": 39.84779999999955,
+            "p95": 42.72049999999945,
+            "max": 42.72049999999945
+          }
+        },
+        "concurrent": {
+          "users": 20,
+          "dashboards": 100,
+          "wallMs": 7218.590199999999,
+          "dashboardsPerSec": 13.853120516524129,
+          "p50": 1336.4982999999993,
+          "p95": 1753.1565999999984,
+          "max": 1945.8015000000014,
+          "pgCpuSeconds": 12.2973
+        },
+        "errors": {}
+      },
+      "database_metrics": {
+        "hits": 0,
+        "misses": 0,
+        "fallbacks": 0,
+        "coalesced": 0,
+        "errors": 0,
+        "hitRatio": null
+      },
+      "cache": {
+        "seq": {
+          "/analytics/summary": {
+            "first": 89.41389999999956,
+            "p50": 46.19460000000254,
+            "p95": 50.003499999998894,
+            "max": 50.003499999998894
+          },
+          "/analytics/trend": {
+            "first": 50.92990000000282,
+            "p50": 35.20679999999993,
+            "p95": 49.569400000000314,
+            "max": 49.569400000000314
+          },
+          "/analytics/menu": {
+            "first": 70.02210000000196,
+            "p50": 43.91050000000541,
+            "p95": 63.98569999999745,
+            "max": 63.98569999999745
+          },
+          "/analytics/customers": {
+            "first": 34.61609999999928,
+            "p50": 34.791400000001886,
+            "p95": 38.61130000000412,
+            "max": 38.61130000000412
+          }
+        },
+        "concurrent": {
+          "users": 20,
+          "dashboards": 100,
+          "wallMs": 5665.729299999999,
+          "dashboardsPerSec": 17.649978441433838,
+          "p50": 1066.5262000000002,
+          "p95": 1333.765800000001,
+          "max": 1466.125899999999,
+          "pgCpuSeconds": 6.29061
+        },
+        "errors": {}
+      },
+      "cache_metrics": {
+        "hits": 528,
+        "misses": 4,
+        "fallbacks": 0,
+        "coalesced": 73,
+        "errors": 0,
+        "hitRatio": 0.992
+      }
+    }
+  },
+  "10000": {
+    "counts": {
+      "orders": "10000",
+      "items": "20000",
+      "payments": "9000",
+      "refunds": "200"
+    },
+    "seedSeconds": 10.290491399999999,
+    "explain_last30": [
+      {
+        "name": "sales",
+        "ms": 8.459,
+        "rowsScanned": 1460,
+        "sharedHit": 523,
+        "sharedRead": 0,
+        "indexes": [],
+        "seqScans": ["orders"]
+      },
+      {
+        "name": "orders",
+        "ms": 6.623,
+        "rowsScanned": 1622,
+        "sharedHit": 523,
+        "sharedRead": 0,
+        "indexes": [],
+        "seqScans": ["orders"]
+      },
+      {
+        "name": "payments",
+        "ms": 5.378,
+        "rowsScanned": 1460,
+        "sharedHit": 148,
+        "sharedRead": 0,
+        "indexes": [],
+        "seqScans": ["payments"]
+      },
+      {
+        "name": "refunds",
+        "ms": 0.657,
+        "rowsScanned": 72,
+        "sharedHit": 111,
+        "sharedRead": 0,
+        "indexes": ["payments_pkey"],
+        "seqScans": ["refunds"]
+      },
+      {
+        "name": "activeTables",
+        "ms": 3.095,
+        "rowsScanned": 500,
+        "sharedHit": 523,
+        "sharedRead": 0,
+        "indexes": [],
+        "seqScans": ["orders"]
+      },
+      {
+        "name": "customers",
+        "ms": 7.106,
+        "rowsScanned": 3520,
+        "sharedHit": 766,
+        "sharedRead": 0,
+        "indexes": ["orders_customer_created_idx"],
+        "seqScans": ["orders"]
+      },
+      {
+        "name": "itemSales",
+        "ms": 30.702,
+        "rowsScanned": 20839,
+        "sharedHit": 993,
+        "sharedRead": 0,
+        "indexes": [],
+        "seqScans": ["menu_categories", "menu_items", "order_items", "orders"]
+      },
+      {
+        "name": "trend",
+        "ms": 12.372,
+        "rowsScanned": 2335,
+        "sharedHit": 1251,
+        "sharedRead": 0,
+        "indexes": ["payments_pkey"],
+        "seqScans": ["orders", "payments", "refunds"]
+      }
+    ],
+    "explain_thisYear": [
+      {
+        "name": "sales",
+        "ms": 15.669,
+        "rowsScanned": 7616,
+        "sharedHit": 523,
+        "sharedRead": 0,
+        "indexes": [],
+        "seqScans": ["orders"]
+      },
+      {
+        "name": "orders",
+        "ms": 28.333,
+        "rowsScanned": 8461,
+        "sharedHit": 523,
+        "sharedRead": 0,
+        "indexes": [],
+        "seqScans": ["orders"]
+      },
+      {
+        "name": "payments",
+        "ms": 31.678,
+        "rowsScanned": 7616,
+        "sharedHit": 148,
+        "sharedRead": 0,
+        "indexes": [],
+        "seqScans": ["payments"]
+      },
+      {
+        "name": "refunds",
+        "ms": 11.129,
+        "rowsScanned": 9169,
+        "sharedHit": 151,
+        "sharedRead": 0,
+        "indexes": [],
+        "seqScans": ["payments", "refunds"]
+      },
+      {
+        "name": "activeTables",
+        "ms": 2.974,
+        "rowsScanned": 500,
+        "sharedHit": 523,
+        "sharedRead": 0,
+        "indexes": [],
+        "seqScans": ["orders"]
+      },
+      {
+        "name": "customers",
+        "ms": 39.696,
+        "rowsScanned": 32340,
+        "sharedHit": 1046,
+        "sharedRead": 0,
+        "indexes": [],
+        "seqScans": ["orders"]
+      },
+      {
+        "name": "itemSales",
+        "ms": 63.124,
+        "rowsScanned": 27726,
+        "sharedHit": 993,
+        "sharedRead": 0,
+        "indexes": [],
+        "seqScans": ["menu_categories", "menu_items", "order_items", "orders"]
+      },
+      {
+        "name": "trend",
+        "ms": 59.069,
+        "rowsScanned": 32873,
+        "sharedHit": 1345,
+        "sharedRead": 0,
+        "indexes": [],
+        "seqScans": ["orders", "payments", "refunds"]
+      }
+    ],
+    "api": {
+      "database": {
+        "seq": {
+          "/analytics/summary": {
+            "first": 113.20360000000073,
+            "p50": 102.90460000000166,
+            "p95": 143.65929999999935,
+            "max": 143.65929999999935
+          },
+          "/analytics/trend": {
+            "first": 88.80780000000232,
+            "p50": 72.19890000000305,
+            "p95": 183.87389999999868,
+            "max": 183.87389999999868
+          },
+          "/analytics/menu": {
+            "first": 96.52980000000389,
+            "p50": 89.57050000000163,
+            "p95": 112.93639999999868,
+            "max": 112.93639999999868
+          },
+          "/analytics/customers": {
+            "first": 55.530800000000454,
+            "p50": 43.28929999999673,
+            "p95": 57.60759999999573,
+            "max": 57.60759999999573
+          }
+        },
+        "concurrent": {
+          "users": 20,
+          "dashboards": 100,
+          "wallMs": 11457.520900000003,
+          "dashboardsPerSec": 8.727891563348575,
+          "p50": 2161.133400000006,
+          "p95": 2577.0948999999964,
+          "max": 2626.159599999999,
+          "pgCpuSeconds": 31.325104
+        },
+        "errors": {}
+      },
+      "database_metrics": {
+        "hits": 0,
+        "misses": 0,
+        "fallbacks": 0,
+        "coalesced": 0,
+        "errors": 0,
+        "hitRatio": null
+      },
+      "cache": {
+        "seq": {
+          "/analytics/summary": {
+            "first": 55.955099999991944,
+            "p50": 53.477899999998044,
+            "p95": 79.24629999999888,
+            "max": 79.24629999999888
+          },
+          "/analytics/trend": {
+            "first": 47.80320000000938,
+            "p50": 56.05059999998775,
+            "p95": 72.8006000000023,
+            "max": 72.8006000000023
+          },
+          "/analytics/menu": {
+            "first": 63.399600000004284,
+            "p50": 50.99850000000151,
+            "p95": 65.19000000000233,
+            "max": 65.19000000000233
+          },
+          "/analytics/customers": {
+            "first": 57.13699999998789,
+            "p50": 77.95140000000538,
+            "p95": 172.46719999999914,
+            "max": 172.46719999999914
+          }
+        },
+        "concurrent": {
+          "users": 20,
+          "dashboards": 100,
+          "wallMs": 9888.334799999997,
+          "dashboardsPerSec": 10.112926192588061,
+          "p50": 1908.3336999999883,
+          "p95": 2390.5339999999997,
+          "max": 2606.017200000002,
+          "pgCpuSeconds": 10.038509
+        },
+        "errors": {}
+      },
+      "cache_metrics": {
+        "hits": 512,
+        "misses": 0,
+        "fallbacks": 0,
+        "coalesced": 93,
+        "errors": 0,
+        "hitRatio": 1
+      }
+    }
+  },
+  "100000": {
+    "counts": {
+      "orders": "100000",
+      "items": "200000",
+      "payments": "90000",
+      "refunds": "2000"
+    },
+    "seedSeconds": 92.6520421,
+    "explain_last30": [
+      {
+        "name": "sales",
+        "ms": 25.923,
+        "rowsScanned": 14561,
+        "sharedHit": 402,
+        "sharedRead": 118,
+        "indexes": ["orders_branch_completed_idx"],
+        "seqScans": []
+      },
+      {
+        "name": "orders",
+        "ms": 162.049,
+        "rowsScanned": 32486,
+        "sharedHit": 1793,
+        "sharedRead": 1306,
+        "indexes": ["orders_branch_created_idx"],
+        "seqScans": []
+      },
+      {
+        "name": "payments",
+        "ms": 31.464,
+        "rowsScanned": 14561,
+        "sharedHit": 14834,
+        "sharedRead": 0,
+        "indexes": ["payments_branch_created_idx"],
+        "seqScans": []
+      },
+      {
+        "name": "refunds",
+        "ms": 23.481,
+        "rowsScanned": 666,
+        "sharedHit": 1154,
+        "sharedRead": 184,
+        "indexes": ["payments_pkey", "refunds_tenant_created_idx"],
+        "seqScans": []
+      },
+      {
+        "name": "activeTables",
+        "ms": 88.721,
+        "rowsScanned": 5000,
+        "sharedHit": 4221,
+        "sharedRead": 840,
+        "indexes": ["orders_branch_status_created_idx"],
+        "seqScans": []
+      },
+      {
+        "name": "customers",
+        "ms": 68.555,
+        "rowsScanned": 35184,
+        "sharedHit": 3764,
+        "sharedRead": 396,
+        "indexes": ["orders_branch_completed_idx", "orders_customer_created_idx"],
+        "seqScans": []
+      },
+      {
+        "name": "itemSales",
+        "ms": 260.335,
+        "rowsScanned": 207390.02000000002,
+        "sharedHit": 6259,
+        "sharedRead": 3634,
+        "indexes": [],
+        "seqScans": ["menu_categories", "menu_items", "order_items", "orders"]
+      },
+      {
+        "name": "trend",
+        "ms": 56.941,
+        "rowsScanned": 30296,
+        "sharedHit": 2574,
+        "sharedRead": 64,
+        "indexes": [
+          "orders_branch_completed_idx",
+          "orders_branch_status_created_idx",
+          "payments_branch_created_idx",
+          "payments_pkey",
+          "refunds_tenant_created_idx"
+        ],
+        "seqScans": []
+      }
+    ],
+    "explain_thisYear": [
+      {
+        "name": "sales",
+        "ms": 233.621,
+        "rowsScanned": 76079,
+        "sharedHit": 5164,
+        "sharedRead": 59,
+        "indexes": [],
+        "seqScans": ["orders"]
+      },
+      {
+        "name": "orders",
+        "ms": 346.334,
+        "rowsScanned": 84531,
+        "sharedHit": 5223,
+        "sharedRead": 0,
+        "indexes": [],
+        "seqScans": ["orders"]
+      },
+      {
+        "name": "payments",
+        "ms": 430.435,
+        "rowsScanned": 76079,
+        "sharedHit": 90836,
+        "sharedRead": 0,
+        "indexes": ["payments_branch_created_idx"],
+        "seqScans": []
+      },
+      {
+        "name": "refunds",
+        "ms": 161.795,
+        "rowsScanned": 91696,
+        "sharedHit": 1505,
+        "sharedRead": 0,
+        "indexes": [],
+        "seqScans": ["payments", "refunds"]
+      },
+      {
+        "name": "activeTables",
+        "ms": 17.937,
+        "rowsScanned": 5000,
+        "sharedHit": 5061,
+        "sharedRead": 0,
+        "indexes": ["orders_branch_status_created_idx"],
+        "seqScans": []
+      },
+      {
+        "name": "customers",
+        "ms": 321.188,
+        "rowsScanned": 240911,
+        "sharedHit": 43261,
+        "sharedRead": 0,
+        "indexes": ["orders_customer_created_idx"],
+        "seqScans": ["orders"]
+      },
+      {
+        "name": "itemSales",
+        "ms": 685.113,
+        "rowsScanned": 276189.02,
+        "sharedHit": 6840,
+        "sharedRead": 3053,
+        "indexes": [],
+        "seqScans": ["menu_categories", "menu_items", "order_items", "orders"]
+      },
+      {
+        "name": "trend",
+        "ms": 834.943,
+        "rowsScanned": 328396,
+        "sharedHit": 8615,
+        "sharedRead": 659,
+        "indexes": ["orders_branch_status_created_idx"],
+        "seqScans": ["orders", "payments", "refunds"]
+      }
+    ],
+    "api": {
+      "database": {
+        "seq": {
+          "/analytics/summary": {
+            "first": 471.97259999997914,
+            "p50": 187.0801999999967,
+            "p95": 262.8177999999898,
+            "max": 262.8177999999898
+          },
+          "/analytics/trend": {
+            "first": 82.15510000000359,
+            "p50": 68.75760000001173,
+            "p95": 81.41539999999804,
+            "max": 81.41539999999804
+          },
+          "/analytics/menu": {
+            "first": 226.44880000001285,
+            "p50": 256.70269999999437,
+            "p95": 353.1020000000135,
+            "max": 353.1020000000135
+          },
+          "/analytics/customers": {
+            "first": 71.57339999999385,
+            "p50": 61.499800000019604,
+            "p95": 79.83850000001257,
+            "max": 79.83850000001257
+          }
+        },
+        "concurrent": {
+          "users": 20,
+          "dashboards": 100,
+          "wallMs": 29785.26880000002,
+          "dashboardsPerSec": 3.357364362614043,
+          "p50": 5650.178899999999,
+          "p95": 7060.7300000000105,
+          "max": 7094.189400000003,
+          "pgCpuSeconds": 182.006975
+        },
+        "errors": {
+          "500 INTERNAL_ERROR": 2
+        }
+      },
+      "database_metrics": {
+        "hits": 0,
+        "misses": 0,
+        "fallbacks": 0,
+        "coalesced": 0,
+        "errors": 0,
+        "hitRatio": null
+      },
+      "cache": {
+        "seq": {
+          "/analytics/summary": {
+            "first": 217.6928000000189,
+            "p50": 41.01219999999739,
+            "p95": 44.82469999999739,
+            "max": 44.82469999999739
+          },
+          "/analytics/trend": {
+            "first": 80.37899999998626,
+            "p50": 36.303699999989476,
+            "p95": 38.53560000000289,
+            "max": 38.53560000000289
+          },
+          "/analytics/menu": {
+            "first": 185.5052999999898,
+            "p50": 37.31590000001597,
+            "p95": 39.77079999999842,
+            "max": 39.77079999999842
+          },
+          "/analytics/customers": {
+            "first": 39.2449000000197,
+            "p50": 36.576600000000326,
+            "p95": 49.28210000001127,
+            "max": 49.28210000001127
+          }
+        },
+        "concurrent": {
+          "users": 20,
+          "dashboards": 100,
+          "wallMs": 6481.371400000004,
+          "dashboardsPerSec": 15.428833471879106,
+          "p50": 1228.334600000002,
+          "p95": 1620.7467000000179,
+          "max": 1775.7709000000032,
+          "pgCpuSeconds": 6.571506
+        },
+        "errors": {}
+      },
+      "cache_metrics": {
+        "hits": 544,
+        "misses": 4,
+        "fallbacks": 0,
+        "coalesced": 57,
+        "errors": 0,
+        "hitRatio": 0.993
+      }
+    }
+  }
+}

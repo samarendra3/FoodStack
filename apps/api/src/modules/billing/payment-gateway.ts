@@ -16,8 +16,11 @@ export interface WebhookPayment {
   paymentId: string | null;
   amountMinor: number | null;
   currency: string | null;
-  /** captured: money received; failed: attempt failed; other: ignored. */
-  outcome: 'captured' | 'failed' | 'other';
+  /**
+   * captured: money received; failed: attempt failed; reversed: money returned (full refund or a
+   * lost chargeback; paymentId identifies the original payment); other: ignored.
+   */
+  outcome: 'captured' | 'failed' | 'reversed' | 'other';
   failureReason: string | null;
 }
 
@@ -111,6 +114,8 @@ export class RazorpayGateway implements PaymentGateway {
     const event = JSON.parse(rawBody.toString('utf8')) as {
       event?: string;
       payload?: {
+        refund?: { entity?: { payment_id?: string } };
+        dispute?: { entity?: { payment_id?: string } };
         payment?: {
           entity?: {
             id?: string;
@@ -128,7 +133,11 @@ export class RazorpayGateway implements PaymentGateway {
       eventId,
       eventType: type,
       orderId: p?.order_id ?? null,
-      paymentId: p?.id ?? null,
+      paymentId:
+        p?.id ??
+        event.payload?.refund?.entity?.payment_id ??
+        event.payload?.dispute?.entity?.payment_id ??
+        null,
       amountMinor: typeof p?.amount === 'number' ? p.amount : null,
       currency: p?.currency ?? null,
       outcome:
@@ -136,7 +145,9 @@ export class RazorpayGateway implements PaymentGateway {
           ? 'captured'
           : type === 'payment.failed'
             ? 'failed'
-            : 'other',
+            : type === 'refund.processed' || type === 'payment.dispute.lost'
+              ? 'reversed'
+              : 'other',
       failureReason: p?.error_description?.slice(0, 300) ?? null,
     };
   }

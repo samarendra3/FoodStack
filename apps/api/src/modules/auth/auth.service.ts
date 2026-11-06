@@ -9,7 +9,7 @@ import { AppConfigService } from '../../config/app-config.service';
 import { type Db, DbContext } from '../../core/db/db-context';
 import { durationMs, randomToken, sha256 } from '../../core/security/crypto';
 import { PasswordHasher } from '../../core/security/password-hasher';
-import { MailService } from '../notifications/mail.service';
+import { EmailOutboxService } from '../notifications/email-outbox.service';
 import { ACTIVE_TENANT_STATUSES, AccessService } from './access.service';
 import type { LoginInput, MfaVerifyInput } from './auth.schemas';
 import type { Audience, AuthContext, RequestMeta, SessionProfile } from './auth.types';
@@ -99,7 +99,7 @@ export class AuthService {
     private readonly tokens: TokenService,
     private readonly access: AccessService,
     private readonly mfa: MfaService,
-    private readonly mail: MailService,
+    private readonly mail: EmailOutboxService,
     private readonly config: AppConfigService,
   ) {
     this.refreshIdleMs = durationMs(config.get('JWT_REFRESH_TTL'));
@@ -253,17 +253,21 @@ export class AuthService {
           metadata: { failures, minutes },
           ...meta,
         });
+        // Queued with the lock itself: sent only if the lock commits.
+        await this.mail.queue(
+          db,
+          'auth.account_locked',
+          {
+            to: user.email,
+            subject: 'Your FoodStack account was locked',
+            text: `After ${failures} failed sign-in attempts your account is locked for ${minutes} minutes. If this was not you, reset your password.`,
+            html: `<p>After ${failures} failed sign-in attempts your account is locked for ${minutes} minutes.</p><p>If this was not you, reset your password.</p>`,
+          },
+          null,
+        );
       }
     });
     await this.recordAttempt(user.email, user.id, 'bad_credentials', meta);
-    if (minutes) {
-      void this.mail.send({
-        to: user.email,
-        subject: 'Your FoodStack account was locked',
-        text: `After ${failures} failed sign-in attempts your account is locked for ${minutes} minutes. If this was not you, reset your password.`,
-        html: `<p>After ${failures} failed sign-in attempts your account is locked for ${minutes} minutes.</p><p>If this was not you, reset your password.</p>`,
-      });
-    }
   }
 
   private lockedError(until: Date): HttpException {
@@ -689,12 +693,12 @@ export class AuthService {
 
   /** Always succeeds from the caller's point of view (no account enumeration). */
   async forgotPassword(email: string, meta: RequestMeta): Promise<void> {
-    const issued = await this.db.run({}, async (db) => {
+    await this.db.run({}, async (db) => {
       const user = await db.one<{ id: string; full_name: string; status: string }>(
         'SELECT id, full_name, status FROM users WHERE email = $1',
         [email],
       );
-      if (!user || user.status !== 'active') return undefined;
+      if (!user || user.status !== 'active') return;
       const { token } = await issueUserToken(db, user.id, 'password_reset', PASSWORD_RESET_TTL_MS);
       await writeAudit(db, {
         action: 'auth.password_reset_requested',
@@ -703,15 +707,19 @@ export class AuthService {
         entityId: user.id,
         ...meta,
       });
-      return { token, name: user.full_name };
-    });
-    if (!issued) return;
-    const link = `${this.config.get('APP_URL')}/reset-password?token=${issued.token}`;
-    await this.mail.send({
-      to: email,
-      subject: 'Reset your FoodStack password',
-      text: `Hi ${issued.name},\n\nReset your password here (valid for 30 minutes):\n${link}\n\nIf you did not ask for this, ignore this email.`,
-      html: `<p>Hi ${escapeHtml(issued.name)},</p><p><a href="${link}">Reset your password</a> (valid for 30 minutes).</p><p>If you did not ask for this, ignore this email.</p>`,
+      // Same transaction as the token. The link (with the token) is stored only encrypted.
+      const link = `${this.config.get('APP_URL')}/reset-password?token=${token}`;
+      await this.mail.queue(
+        db,
+        'auth.password_reset',
+        {
+          to: email,
+          subject: 'Reset your FoodStack password',
+          text: `Hi ${user.full_name},\n\nReset your password here (valid for 30 minutes):\n${link}\n\nIf you did not ask for this, ignore this email.`,
+          html: `<p>Hi ${escapeHtml(user.full_name)},</p><p><a href="${link}">Reset your password</a> (valid for 30 minutes).</p><p>If you did not ask for this, ignore this email.</p>`,
+        },
+        null,
+      );
     });
   }
 

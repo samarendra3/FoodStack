@@ -12,7 +12,7 @@ export interface ProvisionTenantInput {
   /** Super Admin who triggered it (null from the CLI). */
   actorUserId?: string | null;
   via: 'cli' | 'access_request';
-  /** Free trial length in days (default 15). */
+  /** Free trial length in days (default: the Free Trial plan's, else 15). */
   trialDays?: number;
 }
 
@@ -51,8 +51,12 @@ export async function provisionTenant(
   await db.setScope({ platform: true, userId: input.actorUserId ?? null });
   const tenant = await db.one<{ id: string }>(
     `INSERT INTO tenants (slug, name, status, trial_ends_at)
-     VALUES ($1, $2, 'trial', now() + make_interval(days => $3)) RETURNING id`,
-    [input.slug, input.name, input.trialDays ?? 15],
+     VALUES ($1, $2, 'trial', now() + make_interval(days => coalesce($3::int,
+       (SELECT trial_days FROM plans
+         WHERE plan_type = 'free_trial' AND is_active AND archived_at IS NULL), 15)))
+     RETURNING id`,
+    // Without an explicit length, the trial lasts as long as the Free Trial plan says.
+    [input.slug, input.name, input.trialDays ?? null],
   );
   const tenantId = tenant!.id;
   await db.setScope({ tenantId, userId: owner.id });

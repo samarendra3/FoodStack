@@ -330,6 +330,7 @@ describe('Plan catalogue (integration)', () => {
   it('shows custom-priced plans publicly but sends buyers to sales', async () => {
     const ent = (
       await newPlan('enterprise', {
+        planType: 'enterprise',
         customPricing: true,
         priceMonthlyMinor: null,
         priceYearlyMinor: null,

@@ -11,6 +11,9 @@ process.env.LOG_LEVEL ??= 'warn';
 // Lets tests give each request its own client IP (X-Forwarded-For) so per-IP rate limits
 // do not couple unrelated tests. Without the header the socket address is used, as before.
 process.env.TRUST_PROXY = 'true';
+// Queue and cache keys separate from a local dev API sharing the same Redis: jobs queued by
+// tests must never reach a dev worker (their outbox rows live in the test database).
+process.env.QUEUE_PREFIX ??= 'foodstack-test';
 // Parsed and assigned here rather than with process.loadEnvFile, which writes to the real
 // process.env and not to the per-file copy Jest gives each test file.
 for (const file of envFilePaths('test')) {

@@ -23,7 +23,7 @@ export class RestaurantOverviewController {
   @ApiOperation({ summary: 'Tenant, restaurants and branches visible to the caller' })
   overview(@CurrentAuth() auth: AuthContext) {
     return this.db.run({ tenantId: auth.tenantId, userId: auth.userId }, async (db) => {
-      const access = await this.access.tenantAccess(db, auth.membershipId!);
+      const access = await this.access.forRequest(db, auth);
       const branches = accessibleBranches(access);
       const restaurantIds = [...new Set(branches.map((b) => b.restaurantId))];
       const tenant = await db.one<{
@@ -81,7 +81,7 @@ export class RestaurantOverviewController {
   })
   activity(@CurrentAuth() auth: AuthContext) {
     return this.db.run({ tenantId: auth.tenantId, userId: auth.userId }, async (db) => {
-      const access = await this.access.tenantAccess(db, auth.membershipId!);
+      const access = await this.access.forRequest(db, auth);
       // The audit log is business-wide; branch-limited managers do not get it.
       if (!access.tenant.includes('audit:view')) return { available: false, events: [] };
       const events = await db.query<{

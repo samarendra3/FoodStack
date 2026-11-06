@@ -86,6 +86,11 @@ export async function runPaged<Row, T>(
   opts: {
     select: string;
     from: string;
+    /**
+     * FROM clause for the count, when `from` carries joins that only add display columns
+     * (lateral look-ups per row). Must produce the same rows for the same `where`.
+     */
+    countFrom?: string;
     where: string[];
     params: unknown[];
     sortColumns: Record<string, string>;
@@ -99,7 +104,10 @@ export async function runPaged<Row, T>(
   const where = opts.where.length ? `WHERE ${opts.where.join(' AND ')}` : '';
   const n = opts.params.length;
   const [count, rows] = await Promise.all([
-    db.one<{ total: string }>(`SELECT count(*) AS total FROM ${opts.from} ${where}`, opts.params),
+    db.one<{ total: string }>(
+      `SELECT count(*) AS total FROM ${opts.countFrom ?? opts.from} ${where}`,
+      opts.params,
+    ),
     db.query<Row>(
       `SELECT ${opts.select} FROM ${opts.from} ${where}
         ORDER BY ${sort} ${opts.query.sortOrder} NULLS LAST, ${opts.tiebreak} ${opts.query.sortOrder}

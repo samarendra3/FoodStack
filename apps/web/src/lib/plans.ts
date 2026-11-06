@@ -16,7 +16,11 @@ export interface PublicPlan {
   name: string;
   description: string | null;
   icon: PlanIcon;
-  badge: 'popular' | 'recommended' | null;
+  badge: PlanBadge | null;
+  planType: PlanType;
+  ctaLabel: string | null;
+  billingCycles: BillingCycles;
+  allowTrial: boolean;
   currencyCode: string;
   customPricing: boolean;
   priceMonthlyMinor: number | null;
@@ -31,9 +35,31 @@ export interface PublicPlan {
     storageMb: number | null;
   };
   features: string[];
+  /** Every line for the plan card, included or not, in display order. */
+  featureItems: FeatureItem[];
   featureFlags: Partial<Record<FeatureKey, boolean>>;
   sortOrder: number;
 }
+
+export type PlanBadge = 'popular' | 'recommended' | 'best_value';
+export type PlanType = 'free_trial' | 'paid' | 'enterprise';
+export type BillingCycles = 'monthly' | 'yearly' | 'both';
+export interface FeatureItem {
+  label: string;
+  enabled: boolean;
+}
+
+export const PLAN_TYPE_LABEL: Record<PlanType, string> = {
+  free_trial: 'Free Trial',
+  paid: 'Paid',
+  enterprise: 'Enterprise',
+};
+
+/** Whether the plan can be bought in this cycle (the Free Trial starts on its own). */
+export const sellsCycle = (
+  p: Pick<PublicPlan, 'planType' | 'billingCycles'>,
+  c: 'monthly' | 'yearly',
+) => p.planType !== 'free_trial' && (p.billingCycles === 'both' || p.billingCycles === c);
 
 export type PlanIcon = 'rocket' | 'sparkles' | 'building' | 'store' | 'crown';
 export const PLAN_ICONS: Record<PlanIcon, typeof Rocket> = {
@@ -59,7 +85,11 @@ export const FEATURE_LABELS = {
 } as const;
 export type FeatureKey = keyof typeof FEATURE_LABELS;
 
-export const BADGE_LABEL = { popular: 'Most popular', recommended: 'Recommended' } as const;
+export const BADGE_LABEL: Record<PlanBadge, string> = {
+  popular: 'Most popular',
+  recommended: 'Recommended',
+  best_value: 'Best value',
+};
 
 export const formatMoney = (minor: number, currency = 'INR') =>
   new Intl.NumberFormat('en-IN', {
@@ -73,17 +103,34 @@ export function limitLabel(n: number | null, one: string, many: string) {
   return n === null ? `Unlimited ${many}` : `${n.toLocaleString('en-IN')} ${n === 1 ? one : many}`;
 }
 
-/** Bullet list for a plan card: limits first, then the Super Admin's feature lines. */
-export function planHighlights(p: PublicPlan): string[] {
-  return [
+/**
+ * Lines for a plan card: limits first, then the Super Admin's feature lines in their order.
+ * Excluded features are kept (enabled: false) so cards can show them as not included.
+ */
+export function planHighlights(p: PublicPlan): FeatureItem[] {
+  const limits = [
     limitLabel(p.limits.branches, 'branch', 'branches'),
     limitLabel(p.limits.staff, 'team member', 'team members'),
     limitLabel(p.limits.ordersPerMonth, 'order / month', 'orders / month'),
-    ...(p.limits.menuItems !== null
-      ? [limitLabel(p.limits.menuItems, 'menu item', 'menu items')]
-      : []),
-    ...p.features,
-  ];
+    limitLabel(p.limits.menuItems, 'menu item', 'menu items'),
+  ].map((label) => ({ label, enabled: true }));
+  const features = p.featureItems?.length
+    ? p.featureItems
+    : p.features.map((label) => ({ label, enabled: true }));
+  return [...limits, ...features];
+}
+
+/** Button text: the Super Admin's custom label, else a sensible default. */
+export function planCta(p: PublicPlan): string {
+  if (p.ctaLabel) return p.ctaLabel;
+  if (p.customPricing) return 'Contact sales';
+  if (p.planType === 'free_trial' || p.allowTrial) return `Start ${p.trialDays}-day free trial`;
+  return 'Choose plan';
+}
+
+/** The cycle to show when the visitor picked `wanted` (falls back to the one the plan sells). */
+export function cycleFor(p: PublicPlan, wanted: 'monthly' | 'yearly'): 'monthly' | 'yearly' {
+  return p.billingCycles === 'yearly' || p.billingCycles === 'monthly' ? p.billingCycles : wanted;
 }
 
 /** Public, unauthenticated pricing (landing page). Refetches so Super Admin edits show up. */

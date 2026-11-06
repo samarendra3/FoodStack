@@ -2,7 +2,7 @@
 
 import { cn } from '@foodstack/ui/lib/utils';
 import { type Column, DataTable } from '@/components/data-table/data-table';
-import { type Invoice, KIND_LABEL, METHOD_LABEL, money } from '@/lib/billing';
+import { type Invoice, KIND_LABEL, METHOD_LABEL, money, PAYMENT_STATUS_META } from '@/lib/billing';
 import { Button } from '@foodstack/ui/components/button';
 import { Download } from 'lucide-react';
 import { useProfile } from '@/components/auth/auth-provider';
@@ -10,20 +10,9 @@ import { printInvoice } from '@/lib/invoice-print';
 import { usePagedList } from '@/lib/paged';
 
 const day = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
-const STATUS: Record<Invoice['status'], { label: string; cls: string }> = {
-  pending: {
-    label: 'Pending payment',
-    cls: 'bg-violet-50 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300',
-  },
-  paid: {
-    label: 'Paid',
-    cls: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300',
-  },
-  cancelled: {
-    label: 'Cancelled',
-    cls: 'bg-slate-100 text-slate-600 dark:bg-white/10 dark:text-slate-300',
-  },
-};
+/** The invoice's payment state in the shared vocabulary (falls back for older responses). */
+const statusOf = (i: Invoice) =>
+  PAYMENT_STATUS_META[i.paymentStatus ?? (i.status === 'pending' ? 'awaiting_payment' : i.status)];
 
 export function BillingTab() {
   const list = usePagedList<Invoice>('billing', '/billing/invoices', {
@@ -89,10 +78,8 @@ export function BillingTab() {
       key: 'status',
       header: 'Status',
       cell: (i) => (
-        <span
-          className={cn('rounded-full px-2 py-0.5 text-xs font-semibold', STATUS[i.status].cls)}
-        >
-          {STATUS[i.status].label}
+        <span className={cn('rounded-full px-2 py-0.5 text-xs font-semibold', statusOf(i).cls)}>
+          {statusOf(i).label}
         </span>
       ),
     },
@@ -119,7 +106,12 @@ export function BillingTab() {
         {
           key: 'status',
           label: 'Status',
-          options: Object.entries(STATUS).map(([value, s]) => ({ value, label: s.label })),
+          options: (['pending', 'paid', 'expired', 'cancelled', 'refunded'] as const).map(
+            (value) => ({
+              value,
+              label: value === 'pending' ? 'Pending payment' : PAYMENT_STATUS_META[value].label,
+            }),
+          ),
         },
       ]}
       exportCsv={{
@@ -127,7 +119,7 @@ export function BillingTab() {
         columns: [
           { header: 'Invoice', value: (i) => i.invoiceNumber },
           { header: 'Plan', value: (i) => i.planName },
-          { header: 'Cycle', value: (i) => i.billingCycle },
+          { header: 'Cycle', value: (i) => i.billingCycle ?? '' },
           { header: 'Type', value: (i) => KIND_LABEL[i.kind] },
           { header: 'Billing date', value: (i) => i.createdAt },
           { header: 'Period start', value: (i) => i.periodStart ?? '' },
@@ -140,7 +132,8 @@ export function BillingTab() {
               i.paymentMethod ? (METHOD_LABEL[i.paymentMethod] ?? i.paymentMethod) : '',
           },
           { header: 'Reference', value: (i) => i.paymentReference ?? '' },
-          { header: 'Status', value: (i) => STATUS[i.status].label },
+          { header: 'Status', value: (i) => statusOf(i).label },
+          { header: 'Transaction', value: (i) => i.transactionId ?? '' },
         ],
       }}
       empty={{
