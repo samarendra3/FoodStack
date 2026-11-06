@@ -83,6 +83,8 @@ export const envSchema = z
     DATABASE_SSL_CA_PATH: optionalString,
     DATABASE_POOL_MAX: z.coerce.number().int().positive().default(10),
     DATABASE_STATEMENT_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
+    /** 'pgbouncer' when connecting through PgBouncer (transaction mode): no session startup parameters. */
+    DATABASE_POOLER: z.enum(['none', 'pgbouncer']).default('none'),
     DATABASE_LOGGING: booleanString,
 
     REDIS_HOST: z.string().min(1).default('localhost'),
@@ -112,6 +114,12 @@ export const envSchema = z
     ANALYTICS_MAX_CONCURRENCY: z.coerce.number().int().nonnegative().default(0),
     /** How long an analytics request may wait for a slot before a 503 with Retry-After. */
     ANALYTICS_QUEUE_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
+    /** Prometheus /metrics on a separate internal port (not behind the load balancer). 0 = off. */
+    METRICS_PORT: z.coerce.number().int().min(0).max(65535).default(9464),
+    /** Interface for /metrics. Loopback by default; containers set 0.0.0.0 (private network only). */
+    METRICS_HOST: z.string().min(1).default('127.0.0.1'),
+    /** Worker /metrics port (the worker has no other HTTP listener). 0 = off. */
+    WORKER_METRICS_PORT: z.coerce.number().int().min(0).max(65535).default(9465),
     /** Super Admin platform analytics (tenants, subscriptions, SaaS invoices). */
     CACHE_TTL_PLATFORM_ANALYTICS_SECONDS: z.coerce.number().int().positive().default(300),
     /** After a Redis error, skip the cache for this long instead of paying a timeout per request. */

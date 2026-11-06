@@ -20,7 +20,11 @@ export class Db {
 
   private scopeTenantId: string | null = null;
 
-  constructor(private readonly runner: QueryRunner) {}
+  constructor(
+    private readonly runner: QueryRunner,
+    /** Applied with every scope change; 0 = leave the connection's setting. */
+    private readonly statementTimeoutMs = 0,
+  ) {}
 
   /** The tenant this transaction is scoped to (RLS); throws when it has none. */
   tenantId(): string {
@@ -69,12 +73,14 @@ export class Db {
     await this.serial(() =>
       this.runner.query(
         `SELECT set_config('app.tenant_id', $1, true), set_config('app.user_id', $2, true),
-                set_config('app.session_id', $3, true), set_config('app.platform', $4, true)`,
+                set_config('app.session_id', $3, true), set_config('app.platform', $4, true),
+                CASE WHEN $5::int > 0 THEN set_config('statement_timeout', $5::text, true) END`,
         [
           scope.tenantId ?? '',
           scope.userId ?? '',
           scope.sessionId ?? '',
           scope.platform ? 'on' : '',
+          this.statementTimeoutMs,
         ],
       ),
     );
@@ -87,12 +93,18 @@ export class Db {
  */
 @Injectable()
 export class DbContext {
-  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
+  private readonly statementTimeoutMs: number;
+
+  constructor(@InjectDataSource() private readonly dataSource: DataSource) {
+    const extra = (dataSource.options as { extra?: { foodstackStatementTimeoutMs?: number } })
+      .extra;
+    this.statementTimeoutMs = extra?.foodstackStatementTimeoutMs ?? 0;
+  }
 
   async run<T>(scope: DbScope, work: (db: Db) => Promise<T>): Promise<T> {
     let db: Db | undefined;
     const result = await this.dataSource.transaction(async (manager) => {
-      db = new Db(manager.queryRunner!);
+      db = new Db(manager.queryRunner!, this.statementTimeoutMs);
       await db.setScope(scope);
       return work(db);
     });
