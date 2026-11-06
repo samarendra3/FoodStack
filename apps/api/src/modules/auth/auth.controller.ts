@@ -1,3 +1,4 @@
+import { requestMeta } from '../../common/http/request-meta';
 import {
   Body,
   Controller,
@@ -25,15 +26,9 @@ import {
   resetPasswordSchema,
 } from './auth.schemas';
 import { AuthService, type IssuedSession } from './auth.service';
-import type { AuthContext, RequestMeta } from './auth.types';
+import type { AuthContext } from './auth.types';
 import { clearSessionCookies, readRefreshCookie, setSessionCookies } from './cookies';
-import {
-  AllowAudience,
-  AllowInactiveSubscription,
-  type AuthedRequest,
-  CurrentAuth,
-  Public,
-} from './decorators';
+import { AllowAudience, AllowInactiveSubscription, CurrentAuth, Public } from './decorators';
 
 const MINUTE = 60_000;
 
@@ -224,15 +219,7 @@ export class AuthController {
   }
 }
 
-function meta(req: Request): RequestMeta {
-  const ua = req.headers['user-agent'];
-  const id = (req as AuthedRequest).id;
-  return {
-    ip: req.ip ?? null,
-    userAgent: typeof ua === 'string' ? ua : null,
-    requestId: id === undefined ? null : String(id),
-  };
-}
+const meta = requestMeta;
 
 function noStore(res: Response): void {
   res.setHeader('Cache-Control', 'no-store');
