@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { likeTerm, pageMeta, pageQuerySchema } from './paged';
+import { decodeCursor, encodeCursor, likeTerm, pageMeta, pageQuerySchema } from './paged';
 
 const schema = pageQuerySchema(['createdAt', 'total'] as const, 'createdAt', {
   status: z.enum(['open', 'completed']).optional(),
@@ -12,6 +12,7 @@ describe('pagination', () => {
       limit: 25,
       sortBy: 'createdAt',
       sortOrder: 'DESC',
+      pagination: 'offset',
     });
   });
 
@@ -58,5 +59,43 @@ describe('pagination', () => {
 
   it('escapes LIKE wildcards in search terms', () => {
     expect(likeTerm('50%_off\\')).toBe('%50\\%\\_off\\\\%');
+  });
+
+  describe('cursor', () => {
+    const payload = {
+      v: 1 as const,
+      d: 'n' as const,
+      k: '2026-01-01 10:00:00.000003+00',
+      i: '01a1af83-f19a-786b-9422-073180fd157e',
+      f: '0123456789abcdef',
+    };
+
+    it('accepts pagination=cursor and a URL-safe cursor only', () => {
+      expect(schema.parse({ pagination: 'cursor' })).toMatchObject({ pagination: 'cursor' });
+      expect(schema.safeParse({ cursor: encodeCursor(payload) }).success).toBe(true);
+      expect(schema.safeParse({ pagination: 'keyset' }).success).toBe(false);
+      expect(schema.safeParse({ cursor: 'abc def' }).success).toBe(false);
+      expect(schema.safeParse({ cursor: 'a'.repeat(513) }).success).toBe(false);
+    });
+
+    it('round-trips and keeps microseconds in the sort key', () => {
+      expect(decodeCursor(encodeCursor(payload))).toEqual(payload);
+    });
+
+    it.each([
+      ['not json', Buffer.from('nope').toString('base64url')],
+      ['wrong version', encodeCursor({ ...payload, v: 2 as never })],
+      ['bad id', encodeCursor({ ...payload, i: "1' OR 1=1" })],
+      ['bad fingerprint', encodeCursor({ ...payload, f: 'XYZ' })],
+      ['extra field', Buffer.from(JSON.stringify({ ...payload, x: 1 })).toString('base64url')],
+      [
+        'object key',
+        Buffer.from(JSON.stringify({ ...payload, k: { a: 1 } })).toString('base64url'),
+      ],
+    ])('rejects a cursor with %s as 400 INVALID_CURSOR', (_label, cursor) => {
+      expect(() => decodeCursor(cursor)).toThrow(
+        expect.objectContaining({ response: expect.objectContaining({ code: 'INVALID_CURSOR' }) }),
+      );
+    });
   });
 });
