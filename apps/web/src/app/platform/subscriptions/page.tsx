@@ -96,10 +96,15 @@ export default function SubscriptionsAdminPage() {
 function Payments() {
   const { client } = useAuth();
   const [paying, setPaying] = useState<PlatformInvoice | null>(null);
-  const list = usePagedList<PlatformInvoice>('platform-invoices', '/platform/billing/invoices', {
-    sortBy: 'createdAt',
-    filters: { status: 'pending' },
-  });
+  const list = usePagedList<PlatformInvoice>(
+    'platform-invoices',
+    '/platform/billing/invoices',
+    {
+      sortBy: 'createdAt',
+      filters: { status: 'pending' },
+    },
+    { cursor: true },
+  );
   const notify = useNotify();
   const refreshAll = useRefreshSubscriptions();
   const [cancelling, setCancelling] = useState<PlatformInvoice | null>(null);

@@ -2,7 +2,9 @@
 
 export const PAGE_SIZES = [10, 25, 50, 100] as const;
 
-export interface PageMeta {
+/** Offset page (total known; numbered pages). */
+export interface OffsetPageMeta {
+  pagination?: undefined;
   page: number;
   limit: number;
   total: number;
@@ -10,6 +12,21 @@ export interface PageMeta {
   hasNextPage: boolean;
   hasPreviousPage: boolean;
 }
+
+/** Keyset page: no total, opaque cursors to the neighbouring pages. */
+export interface CursorPageMeta {
+  pagination: 'cursor';
+  limit: number;
+  hasNextPage: boolean;
+  hasPreviousPage: boolean;
+  nextCursor: string | null;
+  prevCursor: string | null;
+}
+
+export type PageMeta = OffsetPageMeta | CursorPageMeta;
+
+export const isCursorMeta = (m: PageMeta | null | undefined): m is CursorPageMeta =>
+  m?.pagination === 'cursor';
 
 export interface ListState {
   page: number;
@@ -19,11 +36,22 @@ export interface ListState {
   sortOrder: 'asc' | 'desc';
   /** List-specific filters (status, branchId, from, to…); empty values are omitted. */
   filters: Record<string, string>;
+  /** Cursor mode only: position of the current page (absent = first page). */
+  cursor?: string;
 }
 
-const RESERVED = new Set(['page', 'limit', 'search', 'sortBy', 'sortOrder']);
+const RESERVED = new Set([
+  'page',
+  'limit',
+  'search',
+  'sortBy',
+  'sortOrder',
+  'pagination',
+  'cursor',
+]);
+const CURSOR_RE = /^[A-Za-z0-9_-]{1,512}$/;
 
-export function readUrl(defaults: ListState, filterKeys: string[]): ListState {
+export function readUrl(defaults: ListState, filterKeys: string[], cursorMode = false): ListState {
   if (typeof window === 'undefined') return defaults;
   const q = new URLSearchParams(window.location.search);
   const limit = Number(q.get('limit'));
@@ -32,8 +60,9 @@ export function readUrl(defaults: ListState, filterKeys: string[]): ListState {
     const v = q.get(k);
     if (v !== null) filters[k] = v;
   }
+  const cursor = q.get('cursor');
   return {
-    page: Math.max(1, Number(q.get('page')) || defaults.page),
+    page: cursorMode ? 1 : Math.max(1, Number(q.get('page')) || defaults.page),
     limit: (PAGE_SIZES as readonly number[]).includes(limit) ? limit : defaults.limit,
     search: q.get('search') ?? defaults.search,
     sortBy: q.get('sortBy') ?? defaults.sortBy,
@@ -44,13 +73,22 @@ export function readUrl(defaults: ListState, filterKeys: string[]): ListState {
           ? 'desc'
           : defaults.sortOrder,
     filters,
+    ...(cursorMode && cursor && CURSOR_RE.test(cursor) ? { cursor } : {}),
   };
 }
 
-/** Query string for the API (and the address bar): only non-default, non-empty values. */
-export function toQuery(s: ListState): URLSearchParams {
+/**
+ * Query string for the API (and the address bar): only non-default, non-empty values.
+ * Cursor mode sends `pagination=cursor` (+ `cursor`) instead of `page`.
+ */
+export function toQuery(s: ListState, cursorMode = false): URLSearchParams {
   const q = new URLSearchParams();
-  q.set('page', String(s.page));
+  if (cursorMode) {
+    q.set('pagination', 'cursor');
+    if (s.cursor) q.set('cursor', s.cursor);
+  } else {
+    q.set('page', String(s.page));
+  }
   q.set('limit', String(s.limit));
   if (s.search.trim()) q.set('search', s.search.trim());
   q.set('sortBy', s.sortBy);

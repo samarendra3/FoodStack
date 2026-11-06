@@ -135,10 +135,15 @@ export default function InventoryPage() {
   });
   const branchId = stock.state.filters.branchId ?? '';
   const summary = useInventorySummary(branchId);
-  const movements = usePagedList<MovementRow>('inventory-movements', '/inventory/movements', {
-    sortBy: 'createdAt',
-    filters: { branchId: '', type: '', from: '', to: '' },
-  });
+  const movements = usePagedList<MovementRow>(
+    'inventory-movements',
+    '/inventory/movements',
+    {
+      sortBy: 'createdAt',
+      filters: { branchId: '', type: '', from: '', to: '' },
+    },
+    { cursor: true },
+  );
   const data = summary.data;
   const currency = data?.restaurant?.currencyCode ?? 'INR';
   const money = (m: number) => formatMoney(Math.round(m), currency);
