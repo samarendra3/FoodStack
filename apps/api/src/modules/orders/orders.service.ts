@@ -39,6 +39,7 @@ interface OrderRow {
   status: 'open' | 'completed' | 'cancelled';
   kitchen_status: KitchenStatus;
   table_label: string | null;
+  bill_label: string | null;
   customer_id: string | null;
   note: string | null;
   coupon_code: string | null;
@@ -55,6 +56,78 @@ interface OrderRow {
   completed_at: Date | null;
   cancelled_at: Date | null;
   kitchen_updated_at: Date;
+}
+
+/** Who performs an order write: a signed-in staff member, or a QR guest (no user, "system"). */
+export interface Actor {
+  tenantId: string;
+  userId: string | null;
+  sessionId: string | null;
+  audience: 'tenant' | 'system';
+}
+export const actorOf = (auth: AuthContext): Actor => ({
+  tenantId: auth.tenantId!,
+  userId: auth.userId,
+  sessionId: auth.sessionId,
+  audience: 'tenant',
+});
+
+export interface SessionRow {
+  id: string;
+  branch_id: string;
+  branch_name: string;
+  table_id: string;
+  table_label: string;
+  table_area: string;
+  status: 'open' | 'closed';
+  opened_via: 'qr' | 'staff';
+  opened_at: Date;
+  closed_at: Date | null;
+  currency_code: string;
+}
+export const SESSION_SQL = `
+  SELECT s.id, s.branch_id, b.name AS branch_name, s.table_id, t.label AS table_label, t.area AS table_area,
+         s.status, s.opened_via, s.opened_at, s.closed_at, r.currency_code
+    FROM table_sessions s
+    JOIN dining_tables t ON t.id = s.table_id
+    JOIN branches b ON b.id = s.branch_id
+    JOIN restaurants r ON r.id = b.restaurant_id`;
+
+/**
+ * The open sitting at a table, opening one if there is none. The partial unique index allows a
+ * single open sitting per table; a per-table advisory lock makes concurrent first scans and
+ * first orders wait for each other and then share the same sitting.
+ */
+export async function openTableSession(
+  db: Db,
+  tenantId: string,
+  branchId: string,
+  tableId: string,
+  via: 'qr' | 'staff',
+): Promise<string> {
+  await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+    `table-session:${tenantId}:${tableId}`,
+  ]);
+  const open = await db.one<{ id: string }>(
+    `SELECT id FROM table_sessions WHERE table_id = $1 AND status = 'open'`,
+    [tableId],
+  );
+  if (open) return open.id;
+  const created = await db.one<{ id: string }>(
+    `INSERT INTO table_sessions (tenant_id, branch_id, table_id, opened_via) VALUES ($1, $2, $3, $4) RETURNING id`,
+    [tenantId, branchId, tableId, via],
+  );
+  return created!.id;
+}
+
+/** Staff dine-in order at a table defined in Tables & Sections → that table's sitting. */
+async function staffTableSession(db: Db, tenantId: string, branchId: string, label: string) {
+  const t = await db.one<{ id: string }>(
+    `SELECT id FROM dining_tables WHERE branch_id = $1 AND lower(label) = lower($2) AND deleted_at IS NULL`,
+    [branchId, label],
+  );
+  // Free-text table labels (no matching table) keep working as before, without a session.
+  return t ? openTableSession(db, tenantId, branchId, t.id, 'staff') : null;
 }
 
 /**
@@ -85,11 +158,30 @@ export class OrdersService {
         ['pos:access', 'waiter:access'],
         'You cannot take orders at this branch.',
       );
+      return this.createInTx(db, actorOf(auth), input, clientRequestId, meta, null);
+    });
+  }
+
+  /**
+   * Creates one order inside the caller's transaction. Shared by staff (POS / waiter) and QR
+   * guests, so pricing, numbering, idempotency, limits and audit are identical for both.
+   * `guest` links a QR order to its table session and guest; staff dine-in orders at a known
+   * table join (or open) that table's session.
+   */
+  async createInTx(
+    db: Db,
+    actor: Actor,
+    input: CreateOrderInput,
+    clientRequestId: string | null,
+    meta: RequestMeta,
+    guest: { sessionId: string; guestId: string; billLabel: string } | null,
+  ) {
+    {
       if (clientRequestId) {
         // Concurrent retries of one request wait here, then find the order the first one
         // created, instead of racing to the unique index (which would fail with an error).
         await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
-          `order-request:${auth.tenantId}:${clientRequestId}`,
+          `order-request:${actor.tenantId}:${clientRequestId}`,
         ]);
         const existing = await db.one<{ id: string }>(
           'SELECT id FROM orders WHERE client_request_id = $1',
@@ -98,7 +190,7 @@ export class OrdersService {
         if (existing) return this.detail(db, existing.id);
       }
       // Reserves this month's slot atomically (rolled back if the order fails below).
-      await this.subscriptions.assertWithinLimit(db, auth.tenantId!, 'ordersPerMonth', 1, {
+      await this.subscriptions.assertWithinLimit(db, actor.tenantId!, 'ordersPerMonth', 1, {
         branchId: input.branchId,
       });
 
@@ -115,23 +207,28 @@ export class OrdersService {
       );
       const tax = taxOf(q.totalMinor, restaurant!.tax_rate_bp);
       const customerId = input.customer
-        ? await this.upsertCustomer(db, auth.tenantId!, input.customer)
+        ? await this.upsertCustomer(db, actor.tenantId!, input.customer)
         : null;
       const number = await db.one<{ last_number: number }>(
         `INSERT INTO branch_order_counters (tenant_id, branch_id, last_number) VALUES ($1, $2, 1)
          ON CONFLICT (tenant_id, branch_id) DO UPDATE SET last_number = branch_order_counters.last_number + 1
          RETURNING last_number`,
-        [auth.tenantId, input.branchId],
+        [actor.tenantId, input.branchId],
       );
 
+      const sessionId =
+        guest?.sessionId ??
+        (input.tableLabel && (input.channel === 'dine_in' || input.channel === 'qr')
+          ? await staffTableSession(db, actor.tenantId, input.branchId, input.tableLabel)
+          : null);
       const order = await db.one<{ id: string }>(
         `INSERT INTO orders (tenant_id, restaurant_id, branch_id, order_number, channel, table_label,
-                             customer_id, note, coupon_code, currency_code, tax_rate_bp,
+                             bill_label, customer_id, note, coupon_code, currency_code, tax_rate_bp,
                              subtotal_minor, discount_minor, tax_minor, total_minor,
-                             client_request_id, created_by, updated_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$17) RETURNING id`,
+                             client_request_id, created_by, updated_by, table_session_id, guest_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$18,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$17,$19,$20) RETURNING id`,
         [
-          auth.tenantId,
+          actor.tenantId,
           q.restaurantId,
           input.branchId,
           number!.last_number,
@@ -147,7 +244,11 @@ export class OrdersService {
           tax,
           q.totalMinor + tax,
           clientRequestId,
-          auth.userId,
+          actor.userId,
+          // A bill only makes sense at a table; a QR guest's orders form that guest's bill.
+          guest ? guest.billLabel : (input.tableLabel && input.billLabel) || null,
+          sessionId,
+          guest?.guestId ?? null,
         ],
       );
       // All lines in one statement. WITH ORDINALITY keeps the cart order: ids are uuidv7
@@ -165,7 +266,7 @@ export class OrdersService {
                                      note, n)
           ORDER BY l.n`,
         [
-          auth.tenantId,
+          actor.tenantId,
           order!.id,
           q.lines.map((l) => l.menuItemId),
           q.lines.map((l) => l.variantId ?? null),
@@ -179,13 +280,13 @@ export class OrdersService {
           q.lines.map((_, i) => input.lines[i]!.note || null),
         ],
       );
-      await this.saveDiscounts(db, auth.tenantId!, order!.id, q.applied);
-      await this.audit(db, auth, meta, 'order.created', order!.id, {
+      await this.saveDiscounts(db, actor.tenantId!, order!.id, q.applied);
+      await this.audit(db, actor, meta, 'order.created', order!.id, {
         number: number!.last_number,
         totalMinor: q.totalMinor + tax,
       });
       return this.detail(db, order!.id);
-    });
+    }
   }
 
   /** Paged orders across the branches the caller may see (optionally one branch). */
@@ -326,7 +427,7 @@ export class OrdersService {
         [itemId, auth.userId, reason],
       );
       await this.reprice(db, auth, order, remaining);
-      await this.audit(db, auth, meta, 'order.item_voided', orderId, { itemId, reason });
+      await this.audit(db, actorOf(auth), meta, 'order.item_voided', orderId, { itemId, reason });
       return this.detail(db, orderId);
     });
   }
@@ -349,7 +450,7 @@ export class OrdersService {
         [id, reason, auth.userId],
       );
       await this.subscriptions.releaseOrderSlot(db, id);
-      await this.audit(db, auth, meta, 'order.cancelled', id, { reason });
+      await this.audit(db, actorOf(auth), meta, 'order.cancelled', id, { reason });
       return this.detail(db, id);
     });
   }
@@ -364,42 +465,56 @@ export class OrdersService {
         ['pos:access'],
         'You cannot take payments at this branch.',
       );
-      if (order.status !== 'open') throw conflict('ORDER_CLOSED', 'This order is already closed.');
-      const due = Number(order.total_minor) - Number(order.paid_minor);
-      if (input.amountMinor > due) {
-        throw new BadRequestException({
-          code: 'OVERPAYMENT',
-          message: `Only ${due / 100} is due on this order.`,
-        });
-      }
-      const payment = await db.one<{ id: string }>(
-        `INSERT INTO payments (tenant_id, order_id, branch_id, method, amount_minor, reference, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-        [
-          auth.tenantId,
-          id,
-          order.branch_id,
-          input.method,
-          input.amountMinor,
-          input.reference || null,
-          auth.userId,
-        ],
-      );
-      const paidInFull = input.amountMinor === due;
-      await db.query(
-        `UPDATE orders SET paid_minor = paid_minor + $2,
-                status = CASE WHEN $3 THEN 'completed' ELSE status END,
-                completed_at = CASE WHEN $3 THEN now() ELSE completed_at END,
-                updated_by = $4, updated_at = now(), version = version + 1
-          WHERE id = $1`,
-        [id, input.amountMinor, paidInFull, auth.userId],
-      );
-      await this.audit(db, auth, meta, 'order.payment', id, {
-        paymentId: payment!.id,
-        method: input.method,
-        amountMinor: input.amountMinor,
-      });
+      await this.applyPayment(db, actorOf(auth), order, input, meta);
       return this.detail(db, id);
+    });
+  }
+
+  /**
+   * Records one payment against one locked, open order and completes it when nothing is due.
+   * The single place a payment is written (POS, guest balance and whole-table settlement).
+   */
+  private async applyPayment(
+    db: Db,
+    actor: Actor,
+    order: OrderRow,
+    input: PaymentInput,
+    meta: RequestMeta,
+  ) {
+    if (order.status !== 'open') throw conflict('ORDER_CLOSED', 'This order is already closed.');
+    const due = Number(order.total_minor) - Number(order.paid_minor);
+    if (input.amountMinor > due) {
+      throw new BadRequestException({
+        code: 'OVERPAYMENT',
+        message: `Only ${due / 100} is due on this order.`,
+      });
+    }
+    const payment = await db.one<{ id: string }>(
+      `INSERT INTO payments (tenant_id, order_id, branch_id, method, amount_minor, reference, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+      [
+        actor.tenantId,
+        order.id,
+        order.branch_id,
+        input.method,
+        input.amountMinor,
+        input.reference || null,
+        actor.userId,
+      ],
+    );
+    const paidInFull = input.amountMinor === due;
+    await db.query(
+      `UPDATE orders SET paid_minor = paid_minor + $2,
+              status = CASE WHEN $3 THEN 'completed' ELSE status END,
+              completed_at = CASE WHEN $3 THEN now() ELSE completed_at END,
+              updated_by = $4, updated_at = now(), version = version + 1
+        WHERE id = $1`,
+      [order.id, input.amountMinor, paidInFull, actor.userId],
+    );
+    await this.audit(db, actor, meta, 'order.payment', order.id, {
+      paymentId: payment!.id,
+      method: input.method,
+      amountMinor: input.amountMinor,
     });
   }
 
@@ -439,7 +554,7 @@ export class OrdersService {
          VALUES ($1, $2, $3, $4, $5, $6)`,
         [auth.tenantId, paymentId, payment.order_id, input.amountMinor, input.reason, auth.userId],
       );
-      await this.audit(db, auth, meta, 'order.refund', payment.order_id, {
+      await this.audit(db, actorOf(auth), meta, 'order.refund', payment.order_id, {
         paymentId,
         amountMinor: input.amountMinor,
         reason: input.reason,
@@ -478,6 +593,7 @@ export class OrdersService {
         orderNumber: String(o.order_number),
         orderType: o.channel,
         tableLabel: o.table_label,
+        billLabel: o.bill_label,
         customerName: o.customer_name,
         createdAt: new Date(o.created_at).toISOString(),
         updatedAt: new Date(o.kitchen_updated_at).toISOString(),
@@ -511,11 +627,290 @@ export class OrdersService {
                            updated_at = now(), version = version + 1 WHERE id = $1`,
         [id, to, auth.userId],
       );
-      await this.audit(db, auth, meta, 'order.kitchen_status', id, {
+      await this.audit(db, actorOf(auth), meta, 'order.kitchen_status', id, {
         from: order.kitchen_status,
         to,
       });
       return { id, status: to };
+    });
+  }
+
+  // ---- table sessions (guest-wise and whole-table billing) ----
+
+  /** Staff view of a table's current sitting (or a given one): guests, their orders and bills. */
+  tableSession(auth: AuthContext, q: { tableId?: string; sessionId?: string }) {
+    return this.run(auth, async (db, access) => {
+      const s = q.sessionId
+        ? await db.one<SessionRow>(`${SESSION_SQL} WHERE s.id = $1`, [q.sessionId])
+        : await db.one<SessionRow>(
+            `${SESSION_SQL} WHERE s.table_id = $1 ORDER BY (s.status = 'open') DESC, s.opened_at DESC LIMIT 1`,
+            [q.tableId],
+          );
+      if (!s) return null;
+      this.require(
+        access,
+        s.branch_id,
+        ['pos:access', 'waiter:access', 'order:read'],
+        'You cannot view this table.',
+      );
+      const history = await db.query<{
+        id: string;
+        status: string;
+        opened_at: Date;
+        closed_at: Date | null;
+      }>(
+        `SELECT id, status, opened_at, closed_at FROM table_sessions WHERE table_id = $1 ORDER BY opened_at DESC LIMIT 10`,
+        [s.table_id],
+      );
+      return {
+        ...(await this.sessionView(db, s, null)),
+        canTakePayment: hasPermission(access, 'pos:access', { branchId: s.branch_id }),
+        sittings: history.map((h) => ({
+          id: h.id,
+          status: h.status,
+          openedAt: new Date(h.opened_at).toISOString(),
+          closedAt: h.closed_at ? new Date(h.closed_at).toISOString() : null,
+        })),
+      };
+    });
+  }
+
+  /** Open sittings at a branch with guest count, order count and balances (Dining Sessions). */
+  openSessions(auth: AuthContext, branchId: string) {
+    return this.run(auth, async (db, access) => {
+      this.require(
+        access,
+        branchId,
+        ['pos:access', 'waiter:access', 'order:read'],
+        'You cannot view this branch.',
+      );
+      const rows = await db.query<Record<string, string | Date | null>>(
+        `SELECT s.id, s.table_id, t.label, t.area, s.opened_at, s.opened_via,
+                (SELECT count(*) FROM table_guests g WHERE g.session_id = s.id) AS guests,
+                count(o.id) FILTER (WHERE o.status <> 'cancelled') AS orders,
+                coalesce(sum(o.total_minor) FILTER (WHERE o.status <> 'cancelled'), 0) AS total,
+                coalesce(sum(o.paid_minor) FILTER (WHERE o.status <> 'cancelled'), 0) AS paid,
+                coalesce(sum(o.total_minor - o.paid_minor) FILTER (WHERE o.status = 'open'), 0) AS due,
+                max(o.created_at) AS last_order_at
+           FROM table_sessions s JOIN dining_tables t ON t.id = s.table_id
+           LEFT JOIN orders o ON o.table_session_id = s.id
+          WHERE s.branch_id = $1 AND s.status = 'open'
+          GROUP BY s.id, t.label, t.area ORDER BY s.opened_at`,
+        [branchId],
+      );
+      return rows.map((r) => ({
+        id: r.id as string,
+        tableId: r.table_id as string,
+        tableLabel: r.label as string,
+        area: r.area as string,
+        openedAt: new Date(r.opened_at as Date).toISOString(),
+        openedVia: r.opened_via as string,
+        guests: Number(r.guests),
+        orders: Number(r.orders),
+        totalMinor: Number(r.total),
+        paidMinor: Number(r.paid),
+        outstandingMinor: Number(r.due),
+        lastOrderAt: r.last_order_at ? new Date(r.last_order_at as Date).toISOString() : null,
+      }));
+    });
+  }
+
+  /**
+   * Bills of one sitting grouped by guest (staff orders without a guest form "Table"). When
+   * `onlyGuest` is set, only that guest is returned (the guest's own phone view).
+   */
+  async sessionView(db: Db, s: SessionRow, onlyGuest: string | null) {
+    const orders = await db.query<OrderRow & { guest_id: string | null; item_count: string }>(
+      `SELECT o.*, (SELECT coalesce(sum(quantity), 0) FROM order_items i WHERE i.order_id = o.id AND i.status = 'active') AS item_count
+         FROM orders o WHERE o.table_session_id = $1 ${onlyGuest ? 'AND o.guest_id = $2' : ''}
+        ORDER BY o.created_at, o.id`,
+      onlyGuest ? [s.id, onlyGuest] : [s.id],
+    );
+    const guests = await db.query<{
+      id: string;
+      display_name: string;
+      guest_number: number;
+      created_at: Date;
+      last_seen_at: Date;
+    }>(
+      `SELECT id, display_name, guest_number, created_at, last_seen_at FROM table_guests
+        WHERE session_id = $1 ${onlyGuest ? 'AND id = $2' : ''} ORDER BY guest_number`,
+      onlyGuest ? [s.id, onlyGuest] : [s.id],
+    );
+    const payments = await db.query<{
+      id: string;
+      order_id: string;
+      method: string;
+      amount_minor: string;
+      refunded_minor: string;
+      created_at: Date;
+    }>(
+      `SELECT p.id, p.order_id, p.method, p.amount_minor, p.refunded_minor, p.created_at
+         FROM payments p JOIN orders o ON o.id = p.order_id
+        WHERE o.table_session_id = $1 ${onlyGuest ? 'AND o.guest_id = $2' : ''} ORDER BY p.created_at`,
+      onlyGuest ? [s.id, onlyGuest] : [s.id],
+    );
+    const orderDto = (o: (typeof orders)[number]) => ({
+      id: o.id,
+      orderNumber: o.order_number,
+      createdAt: new Date(o.created_at).toISOString(),
+      status: o.status,
+      kitchenStatus: o.kitchen_status,
+      itemCount: Number(o.item_count),
+      totalMinor: Number(o.total_minor),
+      paidMinor: Number(o.paid_minor),
+      dueMinor: o.status === 'open' ? Number(o.total_minor) - Number(o.paid_minor) : 0,
+    });
+    const group = (list: typeof orders) => {
+      const live = list.filter((o) => o.status !== 'cancelled');
+      const totalMinor = live.reduce((t, o) => t + Number(o.total_minor), 0);
+      const paidMinor = live.reduce((t, o) => t + Number(o.paid_minor), 0);
+      const ids = new Set(list.map((o) => o.id));
+      return {
+        orders: list.map(orderDto),
+        totalMinor,
+        paidMinor,
+        outstandingMinor: live
+          .filter((o) => o.status === 'open')
+          .reduce((t, o) => t + Number(o.total_minor) - Number(o.paid_minor), 0),
+        payments: payments
+          .filter((p) => ids.has(p.order_id))
+          .map((p) => ({
+            id: p.id,
+            orderId: p.order_id,
+            method: p.method,
+            amountMinor: Number(p.amount_minor),
+            refundedMinor: Number(p.refunded_minor),
+            createdAt: new Date(p.created_at).toISOString(),
+          })),
+      };
+    };
+    const byGuest = guests.map((g) => ({
+      id: g.id,
+      name: g.display_name,
+      number: g.guest_number,
+      joinedAt: new Date(g.created_at).toISOString(),
+      lastSeenAt: new Date(g.last_seen_at).toISOString(),
+      ...group(orders.filter((o) => o.guest_id === g.id)),
+    }));
+    const staffOrders = orders.filter((o) => o.guest_id === null);
+    const all = group(orders);
+    return {
+      session: {
+        id: s.id,
+        status: s.status,
+        openedVia: s.opened_via,
+        openedAt: new Date(s.opened_at).toISOString(),
+        closedAt: s.closed_at ? new Date(s.closed_at).toISOString() : null,
+        table: { id: s.table_id, label: s.table_label, area: s.table_area },
+        branch: { id: s.branch_id, name: s.branch_name },
+        currencyCode: s.currency_code.trim(),
+      },
+      guests: byGuest,
+      table:
+        onlyGuest || staffOrders.length === 0
+          ? null
+          : { name: 'Table (staff orders)', ...group(staffOrders) },
+      totals: {
+        totalMinor: all.totalMinor,
+        paidMinor: all.paidMinor,
+        outstandingMinor: all.outstandingMinor,
+      },
+    };
+  }
+
+  /**
+   * Pays one guest's balance (`guestId`), the staff orders without a guest (`unassigned`), or the
+   * whole table. The amount is spread over that scope's open orders oldest first through
+   * `applyPayment`, all under row locks in one transaction; paid orders are never touched.
+   */
+  paySession(
+    auth: AuthContext,
+    sessionId: string,
+    scope: { guestId?: string; unassigned?: boolean },
+    input: PaymentInput,
+    meta: RequestMeta,
+  ) {
+    return this.run(auth, async (db, access) => {
+      const s = await db.one<SessionRow>(`${SESSION_SQL} WHERE s.id = $1`, [sessionId]);
+      if (!s) throw notFound('Table session');
+      this.require(access, s.branch_id, ['pos:access'], 'You cannot take payments at this branch.');
+      const where = scope.guestId
+        ? 'AND guest_id = $2'
+        : scope.unassigned
+          ? 'AND guest_id IS NULL'
+          : '';
+      const open = await db.query<OrderRow>(
+        `SELECT * FROM orders WHERE table_session_id = $1 AND status = 'open' ${where}
+          ORDER BY created_at, id FOR UPDATE`,
+        scope.guestId ? [sessionId, scope.guestId] : [sessionId],
+      );
+      const due = open.reduce((t, o) => t + Number(o.total_minor) - Number(o.paid_minor), 0);
+      if (due === 0) throw conflict('NOTHING_DUE', 'Nothing is due on this bill.');
+      if (input.amountMinor > due) {
+        throw new BadRequestException({
+          code: 'OVERPAYMENT',
+          message: `Only ${due / 100} is due on this bill.`,
+        });
+      }
+      let left = input.amountMinor;
+      const applied: { orderId: string; amountMinor: number }[] = [];
+      for (const o of open) {
+        if (left === 0) break;
+        const part = Math.min(left, Number(o.total_minor) - Number(o.paid_minor));
+        if (part <= 0) continue;
+        await this.applyPayment(db, actorOf(auth), o, { ...input, amountMinor: part }, meta);
+        applied.push({ orderId: o.id, amountMinor: part });
+        left -= part;
+      }
+      return {
+        applied,
+        remainingMinor: due - input.amountMinor,
+        ...(await this.sessionView(db, s, null)),
+      };
+    });
+  }
+
+  /** Ends a sitting. Refused while any bill is open; the next scan starts a new sitting. */
+  closeSession(auth: AuthContext, sessionId: string, meta: RequestMeta) {
+    return this.run(auth, async (db, access) => {
+      const s = await db.one<SessionRow>(`${SESSION_SQL} WHERE s.id = $1 FOR UPDATE OF s`, [
+        sessionId,
+      ]);
+      if (!s) throw notFound('Table session');
+      this.require(
+        access,
+        s.branch_id,
+        ['pos:access', 'waiter:access'],
+        'You cannot close this table.',
+      );
+      if (s.status === 'closed')
+        throw conflict('SESSION_CLOSED', 'This table session is already closed.');
+      const open = await db.one<{ n: string }>(
+        `SELECT count(*) AS n FROM orders WHERE table_session_id = $1 AND status = 'open'`,
+        [sessionId],
+      );
+      if (Number(open?.n ?? 0) > 0) {
+        throw conflict(
+          'SESSION_HAS_OPEN_BILLS',
+          'Settle or cancel every open bill before closing the table.',
+        );
+      }
+      await db.query(
+        `UPDATE table_sessions SET status = 'closed', closed_at = now(), closed_by = $2 WHERE id = $1`,
+        [sessionId, auth.userId],
+      );
+      await writeAudit(db, {
+        action: 'table_session.closed',
+        tenantId: auth.tenantId,
+        actorUserId: auth.userId,
+        actorSessionId: auth.sessionId,
+        actorAudience: 'tenant',
+        entityType: 'table_session',
+        entityId: sessionId,
+        metadata: { table: s.table_label },
+        ...meta,
+      });
     });
   }
 
@@ -759,7 +1154,7 @@ export class OrdersService {
 
   private audit(
     db: Db,
-    auth: AuthContext,
+    auth: Actor,
     meta: RequestMeta,
     action: string,
     id: string,
@@ -773,7 +1168,7 @@ export class OrdersService {
       tenantId: auth.tenantId,
       actorUserId: auth.userId,
       actorSessionId: auth.sessionId,
-      actorAudience: 'tenant',
+      actorAudience: auth.audience,
       entityType: 'order',
       entityId: id,
       metadata: metadata as Record<string, unknown>,
@@ -796,6 +1191,9 @@ const LIST_COLUMNS = [
   'status',
   'kitchen_status',
   'table_label',
+  'bill_label',
+  'table_session_id',
+  'guest_id',
   'note',
   'coupon_code',
   'currency_code',
@@ -845,6 +1243,9 @@ function summary(o: OrderRow) {
     status: o.status,
     kitchenStatus: o.kitchen_status,
     tableLabel: o.table_label,
+    billLabel: o.bill_label,
+    tableSessionId: (o as { table_session_id?: string | null }).table_session_id ?? null,
+    guestId: (o as { guest_id?: string | null }).guest_id ?? null,
     note: o.note,
     couponCode: o.coupon_code,
     currencyCode: o.currency_code.trim(),

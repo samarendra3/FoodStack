@@ -256,7 +256,12 @@ export class PromotionsService {
     if (!branch)
       throw new NotFoundException({ code: 'BRANCH_NOT_FOUND', message: 'Branch not found.' });
 
-    const { lines, details } = await priceLines(db, branch.restaurant_id, input.lines);
+    const { lines, details } = await priceLines(
+      db,
+      branch.restaurant_id,
+      input.branchId,
+      input.lines,
+    );
     const promotions = (
       await db.query<Row>(`${SELECT} WHERE p.restaurant_id = $1 AND p.deleted_at IS NULL`, [
         branch.restaurant_id,
@@ -433,6 +438,7 @@ export class PromotionsService {
 async function priceLines(
   db: Db,
   restaurantId: string,
+  branchId: string,
   input: { menuItemId: string; variantId?: string | null; quantity: number }[],
 ) {
   const ids = [...new Set(input.map((l) => l.menuItemId))];
@@ -442,17 +448,22 @@ async function priceLines(
     category_id: string;
     price_minor: string;
     is_available: boolean;
+    sold_here: boolean;
   }>(
-    `SELECT i.id, i.name, i.category_id, i.price_minor, i.is_available
+    `SELECT i.id, i.name, i.category_id, i.price_minor, i.is_available,
+            (NOT EXISTS (SELECT 1 FROM menu_item_branches mb WHERE mb.menu_item_id = i.id)
+             OR EXISTS (SELECT 1 FROM menu_item_branches mb
+                         WHERE mb.menu_item_id = i.id AND mb.branch_id = $3)) AS sold_here
        FROM menu_items i JOIN menu_categories c ON c.id = i.category_id
       WHERE i.id = ANY($1::uuid[]) AND i.restaurant_id = $2
         AND i.deleted_at IS NULL AND c.deleted_at IS NULL AND c.is_active`,
-    [ids, restaurantId],
+    [ids, restaurantId, branchId],
   );
   const byId = new Map(items.map((i) => [i.id, i]));
   if (ids.some((id) => !byId.has(id))) {
     throw invalid('Some items are no longer on the menu. Refresh and try again.');
   }
+  if (items.some((i) => !i.sold_here)) throw invalid('Some items are not sold at this branch.');
   if (items.some((i) => !i.is_available)) throw invalid('Some items are sold out.');
 
   const variants = await db.query<{

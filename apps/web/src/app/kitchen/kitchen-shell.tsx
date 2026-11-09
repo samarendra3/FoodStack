@@ -2,6 +2,7 @@
 
 import { cn } from '@foodstack/ui/lib/utils';
 import {
+  ArrowLeft,
   BarChart3,
   ChefHat,
   ChevronDown,
@@ -16,20 +17,21 @@ import {
   X,
 } from 'lucide-react';
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { type ReactNode, useState } from 'react';
 import { AccountMenu } from '@/components/account-menu';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { useProfile } from '@/components/auth/auth-provider';
+import { canAccessPath } from '@/lib/auth/access';
 import type { Connection } from './kitchen-feed';
 import { ConnectionPill } from './status';
 
-/** Only Kitchen Display has a route today; the rest render as "Soon", like the restaurant nav. */
-const NAV = [
+const NAV: { label: string; icon: typeof ChefHat; href?: string }[] = [
   { label: 'Kitchen Display', icon: ChefHat, href: '/kitchen' },
-  { label: 'Orders', icon: ClipboardList },
-  { label: 'Menu', icon: LayoutGrid },
-  { label: 'Reports', icon: BarChart3 },
-  { label: 'Settings', icon: Settings },
+  { label: 'Orders', icon: ClipboardList, href: '/kitchen/orders' },
+  { label: 'Menu', icon: LayoutGrid, href: '/kitchen/menu' },
+  { label: 'Reports', icon: BarChart3, href: '/kitchen/reports' },
+  { label: 'Settings', icon: Settings, href: '/kitchen/settings' },
 ];
 
 interface KitchenShellProps {
@@ -38,13 +40,16 @@ interface KitchenShellProps {
   connection: Connection;
   muted: boolean;
   onMuted: (m: boolean) => void;
+  title?: string;
   children: ReactNode;
 }
 
 export function KitchenShell(p: KitchenShellProps) {
   const profile = useProfile();
+  const canAdmin = canAccessPath(profile, '/restaurant/dashboard');
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const pathname = usePathname();
 
   const sidebar = (compact: boolean) => (
     <div className="flex h-full flex-col border-r border-slate-200 bg-white text-slate-700 dark:border-white/10 dark:bg-slate-900 dark:text-slate-300">
@@ -70,7 +75,7 @@ export function KitchenShell(p: KitchenShellProps) {
           </p>
         ) : null}
         {NAV.map(({ label, icon: Icon, href }) => {
-          const active = href === '/kitchen';
+          const active = href === pathname;
           const body = (
             <>
               <Icon className="size-4 shrink-0" />
@@ -95,6 +100,7 @@ export function KitchenShell(p: KitchenShellProps) {
             <Link
               key={label}
               href={href}
+              onClick={() => setMobileOpen(false)}
               className={cls}
               aria-current={active ? 'page' : undefined}
               title={compact ? label : undefined}
@@ -153,7 +159,7 @@ export function KitchenShell(p: KitchenShellProps) {
       ) : null}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-4 sm:px-6 dark:border-white/10 dark:bg-slate-900">
+        <header className="flex h-14 shrink-0 items-center gap-2 border-b sm:gap-3 border-slate-200 bg-white px-4 sm:px-6 dark:border-white/10 dark:bg-slate-900">
           <button
             type="button"
             onClick={() =>
@@ -173,8 +179,20 @@ export function KitchenShell(p: KitchenShellProps) {
             />
           </button>
 
+          {canAdmin ? (
+            <Link
+              href="/restaurant/dashboard"
+              title="Back to admin"
+              aria-label="Back to admin"
+              className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-slate-200 px-2 text-sm font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 sm:px-3 dark:border-white/10 dark:text-slate-200 dark:hover:bg-white/10"
+            >
+              <ArrowLeft className="size-4" />
+              <span className="hidden sm:inline">Back to admin</span>
+            </Link>
+          ) : null}
+
           {profile.branches.length > 0 ? (
-            <label className="relative hidden items-center sm:flex">
+            <label className="relative flex min-w-0 items-center">
               <MapPin
                 className="pointer-events-none absolute left-3 size-4 text-slate-500"
                 aria-hidden
@@ -184,7 +202,7 @@ export function KitchenShell(p: KitchenShellProps) {
                 value={p.branchId}
                 onChange={(e) => p.onBranch(e.target.value)}
                 disabled={profile.branches.length < 2}
-                className="h-9 appearance-none rounded-md border border-slate-200 bg-white pr-9 pl-9 text-sm font-medium text-slate-700 shadow-xs disabled:opacity-100 dark:border-white/10 dark:bg-white/5 dark:text-white"
+                className="h-9 w-full max-w-[9.5rem] min-w-0 appearance-none truncate rounded-md border border-slate-200 bg-white pr-8 pl-9 text-sm font-medium text-slate-700 sm:max-w-[14rem] disabled:opacity-100 dark:border-white/10 dark:bg-white/5 dark:text-white"
               >
                 {profile.branches.map((b) => (
                   <option key={b.id} value={b.id}>
@@ -203,7 +221,7 @@ export function KitchenShell(p: KitchenShellProps) {
 
           <span className="hidden h-6 w-px bg-slate-200 md:block dark:bg-white/10" aria-hidden />
           <h1 className="hidden text-sm font-semibold text-slate-900 md:block dark:text-white">
-            Kitchen Display
+            {p.title ?? 'Kitchen Display'}
           </h1>
           <ConnectionPill connection={p.connection} />
 

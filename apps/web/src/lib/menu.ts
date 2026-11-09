@@ -29,6 +29,8 @@ export interface MenuItem {
   updatedAt: string;
   /** Portions such as Full / Half; empty when the item has a single price. */
   variants: MenuVariant[];
+  /** Branches that sell it; empty = every branch. */
+  branchIds?: string[];
 }
 
 export interface MenuVariant {
@@ -53,6 +55,8 @@ export interface ItemInput {
   imageUrl: string | null;
   isAvailable: boolean;
   variants?: { id?: string; name: string; priceMinor: number }[];
+  /** Empty = sold at every branch. */
+  branchIds?: string[];
 }
 
 export interface ImportRow {
@@ -79,12 +83,16 @@ export function menuKey(tenantId: string | undefined) {
   return ['menu', tenantId] as const;
 }
 
-export function useMenu() {
+/** The menu; with a branch, only the items that branch sells (POS, waiter). */
+export function useMenu(branchId?: string) {
   const { client } = useAuth();
   const profile = useProfile();
   return useQuery({
-    queryKey: menuKey(profile.activeTenant?.id),
-    queryFn: () => client.request<MenuData>('/menu'),
+    queryKey: [...menuKey(profile.activeTenant?.id), 'full', branchId ?? 'all'],
+    queryFn: () =>
+      client.request<MenuData>(
+        branchId ? `/menu?branchId=${encodeURIComponent(branchId)}` : '/menu',
+      ),
   });
 }
 

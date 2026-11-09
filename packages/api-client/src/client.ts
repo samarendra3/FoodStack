@@ -37,12 +37,19 @@ export function createApiClient(options: ApiClientOptions) {
     const branchId = options.getBranchId?.();
     if (branchId) headers['X-Branch-Id'] = branchId;
     if (init.idempotencyKey) headers['Idempotency-Key'] = init.idempotencyKey;
-    if (init.body !== undefined) headers['Content-Type'] = 'application/json';
+    // FormData (file uploads) sets its own multipart Content-Type with the boundary.
+    const multipart = typeof FormData !== 'undefined' && init.body instanceof FormData;
+    if (init.body !== undefined && !multipart) headers['Content-Type'] = 'application/json';
 
     const response = await doFetch(`${baseUrl}${path}`, {
       method: init.method ?? 'GET',
       headers,
-      body: init.body === undefined ? undefined : JSON.stringify(init.body),
+      body:
+        init.body === undefined
+          ? undefined
+          : multipart
+            ? (init.body as FormData)
+            : JSON.stringify(init.body),
       credentials: 'include',
       signal: init.signal ?? null,
     });

@@ -24,6 +24,12 @@ import { OrderUsageCounters1798000021000 } from './migrations/1798000021000-Orde
 import { PerRestaurantUsage1798000022000 } from './migrations/1798000022000-PerRestaurantUsage';
 import { EmailOutbox1798000023000 } from './migrations/1798000023000-EmailOutbox';
 import { AnalyticsIndexes1798000024000 } from './migrations/1798000024000-AnalyticsIndexes';
+import { MenuItemBranches1798000025000 } from './migrations/1798000025000-MenuItemBranches';
+import { DiningTables1798000026000 } from './migrations/1798000026000-DiningTables';
+import { OrderBillLabel1798000027000 } from './migrations/1798000027000-OrderBillLabel';
+import { OperationsModules1798000028000 } from './migrations/1798000028000-OperationsModules';
+import { PlatformSettings1798000029000 } from './migrations/1798000029000-PlatformSettings';
+import { TableSessions1798000030000 } from './migrations/1798000030000-TableSessions';
 
 /**
  * All migrations in order, for code that cannot load them by file glob (the e2e test setup).
@@ -56,4 +62,10 @@ export const ALL_MIGRATIONS = [
   PerRestaurantUsage1798000022000,
   EmailOutbox1798000023000,
   AnalyticsIndexes1798000024000,
+  MenuItemBranches1798000025000,
+  DiningTables1798000026000,
+  OrderBillLabel1798000027000,
+  OperationsModules1798000028000,
+  PlatformSettings1798000029000,
+  TableSessions1798000030000,
 ];

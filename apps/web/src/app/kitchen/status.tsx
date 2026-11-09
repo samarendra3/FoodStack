@@ -46,16 +46,10 @@ export function ConnectionPill({ connection }: { connection: Connection }) {
     <span
       role="status"
       className={cn(
-        'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset',
-        c.pill,
+        'inline-flex shrink-0 items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200',
       )}
     >
-      <span className="relative flex size-2">
-        {c.pulse ? (
-          <span className={cn('absolute inset-0 animate-ping rounded-full opacity-60', c.dot)} />
-        ) : null}
-        <span className={cn('relative size-2 rounded-full', c.dot)} />
-      </span>
+      <span className={cn('size-1.5 rounded-full', c.dot)} aria-hidden />
       {c.label}
     </span>
   );

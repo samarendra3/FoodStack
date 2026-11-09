@@ -34,6 +34,8 @@ import {
 import { type Column, DataTable } from '@/components/data-table/data-table';
 import { useNotify } from '@/lib/notify';
 import { usePagedList } from '@/lib/paged';
+import { useRestaurantOverview } from '../overview';
+import { ImageUpload } from './image-upload';
 import { ImportDialog } from './import-dialog';
 import { MenuTabs } from './menu-tabs';
 
@@ -54,13 +56,23 @@ export default function MenuPage() {
   const list = usePagedList<PagedItem>('menu', '/menu/items', {
     sortBy: 'category',
     sortOrder: 'asc',
-    filters: { categoryId: '', diet: '', available: '' },
+    filters: { categoryId: '', diet: '', available: '', branchId: '' },
   });
+  const overview = useRestaurantOverview();
 
   const data = cats.data;
   const canManage = data?.canManage ?? false;
   const categoryId = list.state.filters.categoryId ?? '';
   const currency = data?.restaurant.currencyCode ?? 'INR';
+  // Branches of this restaurant; per-branch menus only matter when there is more than one.
+  const branches = (overview.data?.branches ?? []).filter(
+    (b) => b.restaurantId === data?.restaurant.id,
+  );
+  const multiBranch = branches.length > 1;
+  const branchNames = (ids?: string[]) =>
+    ids?.length
+      ? ids.map((id) => branches.find((b) => b.id === id)?.name ?? 'Other branch').join(', ')
+      : 'All branches';
 
   const toggleAvailable = (item: MenuItem) => {
     setRowError(null);
@@ -146,6 +158,25 @@ export default function MenuPage() {
         </button>
       ),
     },
+    ...(multiBranch
+      ? [
+          {
+            key: 'branches',
+            header: 'Sold at',
+            hideOnMobile: true,
+            cell: (item: PagedItem) => (
+              <span
+                className={cn(
+                  'text-xs',
+                  item.branchIds?.length ? 'font-medium' : 'text-muted-foreground',
+                )}
+              >
+                {branchNames(item.branchIds)}
+              </span>
+            ),
+          } satisfies Column<PagedItem>,
+        ]
+      : []),
   ];
 
   return (
@@ -258,6 +289,15 @@ export default function MenuPage() {
             getRowId={(i) => i.id}
             searchPlaceholder="Search items"
             filters={[
+              ...(multiBranch
+                ? [
+                    {
+                      key: 'branchId',
+                      label: 'Branch',
+                      options: branches.map((b) => ({ value: b.id, label: b.name })),
+                    },
+                  ]
+                : []),
               {
                 key: 'diet',
                 label: 'Type',
@@ -345,6 +385,7 @@ export default function MenuPage() {
                 item={dialog.item}
                 categories={data.categories}
                 currency={currency}
+                branches={multiBranch ? branches : []}
                 defaultCategory={categoryId || undefined}
                 onDone={() => setDialog(null)}
               />
@@ -499,13 +540,14 @@ function DietDot({ diet }: { diet: Diet }) {
 }
 
 function Thumb({ item }: { item: MenuItem }) {
-  const [failed, setFailed] = useState(false);
-  return item.imageUrl && !failed ? (
+  // Remember which URL failed, so a new photo is tried again.
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  return item.imageUrl && failedUrl !== item.imageUrl ? (
     // eslint-disable-next-line @next/next/no-img-element -- restaurant-provided image URLs
     <img
       src={item.imageUrl}
       alt=""
-      onError={() => setFailed(true)}
+      onError={() => setFailedUrl(item.imageUrl)}
       className="size-12 shrink-0 rounded-xl object-cover"
     />
   ) : (
@@ -655,6 +697,8 @@ function ItemForm(p: {
   item?: MenuItem;
   categories: MenuCategory[];
   currency: string;
+  /** Branches to choose from; empty hides the choice (single-branch restaurants). */
+  branches: { id: string; name: string }[];
   defaultCategory?: string;
   onDone: () => void;
 }) {
@@ -668,6 +712,17 @@ function ItemForm(p: {
     imageUrl: p.item?.imageUrl ?? '',
     isAvailable: p.item?.isAvailable ?? true,
   });
+  // Empty = every branch.
+  const [branchIds, setBranchIds] = useState<string[]>(p.item?.branchIds ?? []);
+  const allBranches = branchIds.length === 0;
+  const toggleBranch = (id: string) =>
+    setBranchIds((list) => {
+      const base = list.length ? list : p.branches.map((b) => b.id);
+      const next = base.includes(id) ? base.filter((x) => x !== id) : [...base, id];
+      if (next.length === 0) return list; // at least one branch must sell it
+      // Ticking every branch is the same as 'all branches' (new branches get it too).
+      return next.length === p.branches.length ? [] : next;
+    });
   const [portions, setPortions] = useState<{ id?: string; name: string; price: string }[]>(
     () =>
       p.item?.variants.map((v) => ({
@@ -680,7 +735,8 @@ function ItemForm(p: {
   const setPortion = (i: number, patch: Partial<{ name: string; price: string }>) =>
     setPortions((list) => list.map((x, j) => (j === i ? { ...x, ...patch } : x)));
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const busy = m.createItem.isPending || m.updateItem.isPending;
+  const [uploading, setUploading] = useState(false);
+  const busy = m.createItem.isPending || m.updateItem.isPending || uploading;
   const set = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
 
@@ -701,6 +757,8 @@ function ItemForm(p: {
       else if (portions.some((x) => x.price === '' || !(Number(x.price) >= 0)))
         next.portions = 'Enter a price for every portion.';
     }
+    if (p.branches.length && !allBranches && branchIds.length === 0)
+      next.branches = 'Choose at least one branch.';
     const img = form.imageUrl.trim();
     if (img && !/^https:\/\/\S+$/i.test(img) && !/^\/[\w\-./]+$/.test(img))
       next.imageUrl = 'Use an https:// link.';
@@ -717,6 +775,7 @@ function ItemForm(p: {
       description: form.description.trim() || null,
       imageUrl: img || null,
       isAvailable: form.isAvailable,
+      ...(p.branches.length ? { branchIds } : {}),
       // On edit, sending [] removes existing portions.
       ...(hasPortions || p.item?.variants.length
         ? {
@@ -874,6 +933,37 @@ function ItemForm(p: {
           ))}
         </div>
       </fieldset>
+      {p.branches.length ? (
+        <fieldset className="space-y-2 rounded-xl border p-3">
+          <legend className="text-sm font-medium">Sold at</legend>
+          <label className="flex items-center gap-2.5 text-sm">
+            <input
+              type="checkbox"
+              checked={allBranches}
+              onChange={(e) => setBranchIds(e.target.checked ? [] : [p.branches[0]!.id])}
+              className="size-4 accent-emerald-600"
+            />
+            All branches
+          </label>
+          <div className="grid gap-1.5 pl-6 sm:grid-cols-2">
+            {p.branches.map((b) => (
+              <label key={b.id} className="flex items-center gap-2.5 text-sm">
+                <input
+                  type="checkbox"
+                  checked={allBranches || branchIds.includes(b.id)}
+                  onChange={() => toggleBranch(b.id)}
+                  className="size-4 accent-emerald-600"
+                />
+                {b.name}
+              </label>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Only the ticked branches show this item on their POS and menu.
+          </p>
+          {errors.branches ? <p className="text-xs text-red-600">{errors.branches}</p> : null}
+        </fieldset>
+      ) : null}
       <Field label="Description (optional)">
         <textarea
           value={form.description}
@@ -883,15 +973,11 @@ function ItemForm(p: {
           className={cn(field, 'h-auto resize-none py-2')}
         />
       </Field>
-      <Field label="Image link (optional)" error={errors.imageUrl}>
-        <input
-          value={form.imageUrl}
-          maxLength={500}
-          onChange={(e) => set('imageUrl', e.target.value)}
-          placeholder="https://…"
-          className={field}
-        />
-      </Field>
+      <ImageUpload
+        value={form.imageUrl}
+        onChange={(url) => set('imageUrl', url)}
+        onBusy={setUploading}
+      />
       <label className="flex items-center gap-2.5 text-sm">
         <input
           type="checkbox"

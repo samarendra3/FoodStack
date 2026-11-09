@@ -32,3 +32,4 @@ infrastructure/docker/ha/secrets.env
 !*.tfvars.example
 backend.hcl
 crash.log
+uploads/

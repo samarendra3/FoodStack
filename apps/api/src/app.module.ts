@@ -15,6 +15,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { CustomersModule } from './modules/customers/customers.module';
 import { HealthModule } from './modules/health/health.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
+import { OpsModule } from './modules/ops/ops.module';
 import { MenuModule } from './modules/menu/menu.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { OrdersModule } from './modules/orders/orders.module';
@@ -22,6 +23,7 @@ import { PlatformModule } from './modules/platform/platform.module';
 import { PromotionsModule } from './modules/promotions/promotions.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
+import { TablesModule } from './modules/tables/tables.module';
 import { TenantsModule } from './modules/tenants/tenants.module';
 import { TeamModule } from './modules/team/team.module';
 import { QueueModule } from './queues/queue.module';
@@ -75,6 +77,7 @@ function isInstalled(pkg: string): boolean {
     TeamModule,
     MenuModule,
     InventoryModule,
+    OpsModule,
     ReportsModule,
     AnalyticsModule,
     PromotionsModule,
@@ -82,9 +85,10 @@ function isInstalled(pkg: string): boolean {
     CustomersModule,
     BillingModule,
     AccountModule,
+    TablesModule,
     // Feature modules (scaffolded under ./modules and ./websocket); register as each is implemented:
     // RestaurantsModule, BranchesModule, StaffModule, RolesModule,
-    // FloorsModule, TablesModule, DiningSessionsModule, KitchenModule,
+    // FloorsModule, DiningSessionsModule, KitchenModule,
     // PaymentsModule,
     // NotificationsModule, AuditLogsModule, WebsocketModule,
   ],

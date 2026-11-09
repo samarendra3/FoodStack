@@ -15,7 +15,17 @@ const imageUrl = z
     message: 'Use an https:// link or a site path starting with /',
   });
 
-export const menuQuerySchema = z.strictObject({ restaurantId: z.uuid().optional() });
+/** Branches that sell an item. Empty = every branch of the restaurant. */
+const branchIds = z
+  .array(z.uuid())
+  .max(100)
+  .transform((v) => [...new Set(v)]);
+
+export const menuQuerySchema = z.strictObject({
+  restaurantId: z.uuid().optional(),
+  /** Only items sold at this branch. */
+  branchId: z.uuid().optional(),
+});
 
 export const listItemsSchema = pageQuerySchema(
   ['name', 'priceMinor', 'updatedAt', 'category'] as const,
@@ -23,6 +33,7 @@ export const listItemsSchema = pageQuerySchema(
   {
     restaurantId: z.uuid().optional(),
     categoryId: z.uuid().optional(),
+    branchId: z.uuid().optional(),
     diet: z.enum(DIETS).optional(),
     available: z.enum(['yes', 'no']).optional(),
   },
@@ -63,6 +74,7 @@ export const createItemSchema = z.strictObject({
   imageUrl: imageUrl.nullish(),
   isAvailable: z.boolean().optional(),
   sortOrder: sortOrder.optional(),
+  branchIds: branchIds.optional(),
 });
 export type CreateItemInput = z.infer<typeof createItemSchema>;
 
@@ -77,6 +89,7 @@ export const updateItemSchema = z
     isAvailable: z.boolean(),
     sortOrder,
     variants,
+    branchIds,
   })
   .partial()
   .refine((v) => Object.keys(v).length > 0, { message: 'Nothing to update' });

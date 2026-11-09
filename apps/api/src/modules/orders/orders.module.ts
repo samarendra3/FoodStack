@@ -4,10 +4,15 @@ import { BillingModule } from '../billing/billing.module';
 import { PromotionsModule } from '../promotions/promotions.module';
 import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
+import {
+  GuestSessionsController,
+  GuestSessionsService,
+  TableSessionsController,
+} from './table-sessions';
 
 @Module({
   imports: [AuthModule, BillingModule, PromotionsModule],
-  controllers: [OrdersController],
-  providers: [OrdersService],
+  controllers: [OrdersController, TableSessionsController, GuestSessionsController],
+  providers: [OrdersService, GuestSessionsService],
 })
 export class OrdersModule {}

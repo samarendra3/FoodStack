@@ -8,6 +8,14 @@ const nextConfig: NextConfig = {
   transpilePackages: ['@foodstack/ui'],
   poweredByHeader: false,
   reactStrictMode: true,
+  // Uploaded menu photos are stored by the API; serve them from this origin under /media.
+  async rewrites() {
+    const api = (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1').replace(
+      /\/+$/,
+      '',
+    );
+    return [{ source: '/media/:path*', destination: `${api}/media/:path*` }];
+  },
 };
 
 export default nextConfig;

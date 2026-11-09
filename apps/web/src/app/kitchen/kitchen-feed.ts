@@ -22,6 +22,7 @@ export interface KitchenTicket {
   orderNumber: string;
   orderType: TicketOrderType;
   tableLabel?: string;
+  billLabel?: string;
   customerName?: string;
   createdAt: string;
   updatedAt: string;
@@ -64,6 +65,7 @@ interface ServerTicket {
   orderNumber: string;
   orderType: 'dine_in' | 'takeaway' | 'delivery' | 'qr';
   tableLabel: string | null;
+  billLabel?: string | null;
   customerName: string | null;
   createdAt: string;
   updatedAt: string;
@@ -98,6 +100,7 @@ export function useKitchenFeed(branchId: string): KitchenFeed {
           orderNumber: t.orderNumber,
           orderType: TYPE[t.orderType],
           tableLabel: t.tableLabel ?? undefined,
+          billLabel: t.billLabel ?? undefined,
           customerName: t.customerName ?? undefined,
           createdAt: t.createdAt,
           updatedAt: t.updatedAt,
@@ -177,7 +180,7 @@ export function useNewTicketChime(tickets: KitchenTicket[]) {
   return { muted, setMuted };
 }
 
-function chime() {
+export function chime() {
   try {
     const ctx = new AudioContext();
     [880, 1320].forEach((freq, i) => {

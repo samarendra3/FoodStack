@@ -86,6 +86,11 @@ const MOVES: Record<
   },
 };
 
+/** Transfers between branches also appear in the history (written by Stock Transfers). */
+const moveLabel = (t: string) =>
+  MOVES[t as MovementType]?.label ??
+  (t === 'transfer_in' ? 'Transfer in' : t === 'transfer_out' ? 'Transfer out' : t);
+
 interface Summary {
   restaurant: { id: string; name: string; currencyCode: string } | null;
   branch: { id: string; name: string };
@@ -229,7 +234,7 @@ export default function InventoryPage() {
             m.quantityDelta >= 0 ? 'text-emerald-600' : 'text-red-600',
           )}
         >
-          {MOVES[m.type].label}
+          {moveLabel(m.type)}
         </span>
       ),
     },
@@ -501,7 +506,7 @@ export default function InventoryPage() {
             columns: [
               { header: 'When', value: (m) => m.createdAt },
               { header: 'Item', value: (m) => m.itemName },
-              { header: 'Type', value: (m) => MOVES[m.type].label },
+              { header: 'Type', value: (m) => moveLabel(m.type) },
               { header: 'Change', value: (m) => m.quantityDelta },
               { header: 'Unit', value: (m) => m.unit },
               { header: 'After', value: (m) => m.quantityAfter },

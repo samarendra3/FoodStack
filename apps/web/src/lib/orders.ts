@@ -15,6 +15,8 @@ export interface Order {
   status: 'open' | 'completed' | 'cancelled';
   kitchenStatus: KitchenStatus;
   tableLabel: string | null;
+  /** Which bill at the table; null = the table's only bill. */
+  billLabel: string | null;
   note: string | null;
   couponCode: string | null;
   currencyCode: string;
@@ -59,6 +61,7 @@ export interface NewOrder {
   branchId: string;
   channel: Channel;
   tableLabel: string | null;
+  billLabel?: string | null;
   note: string | null;
   couponCode: string | null;
   customer: { phone: string; name: string | null } | null;

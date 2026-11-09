@@ -39,11 +39,11 @@ const MAIN_NAV: NavLink[] = [
   { label: 'Requests', href: '/platform/requests', icon: Inbox },
   { label: 'Subscriptions', href: '/platform/subscriptions', icon: ShieldCheck },
 ];
-// Not built yet: shown so the structure is visible, but not clickable.
+// Platform administration.
 const PLATFORM_NAV: NavLink[] = [
-  { label: 'Users', icon: UsersRound },
-  { label: 'Settings', icon: Settings },
-  { label: 'Audit Logs', icon: FileClock },
+  { label: 'Users', href: '/platform/users', icon: UsersRound },
+  { label: 'Settings', href: '/platform/settings', icon: Settings },
+  { label: 'Audit Logs', href: '/platform/audit-logs', icon: FileClock },
 ];
 
 /** Super Admin layout: green sidebar (drawer on small screens), header with search and account. */

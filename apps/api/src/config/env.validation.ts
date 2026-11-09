@@ -185,6 +185,8 @@ export const envSchema = z
 
     AWS_REGION: z.string().default('ap-south-1'),
     AWS_S3_BUCKET: z.string().optional(),
+    /** Where uploaded images (menu photos) are stored on disk. */
+    UPLOADS_DIR: z.string().min(1).default('uploads'),
   })
   .superRefine((env, ctx) => {
     if (isDeployedEnvironment(env.NODE_ENV)) {
