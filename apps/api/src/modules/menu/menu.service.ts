@@ -43,6 +43,8 @@ export interface MenuItem {
   isAvailable: boolean;
   sortOrder: number;
   updatedAt: string;
+  /** Branches that sell it; empty = every branch of the restaurant. */
+  branchIds: string[];
 }
 
 export interface MenuVariant {
@@ -140,6 +142,7 @@ export class MenuService {
       };
       if (query.categoryId) add('i.category_id = ?', query.categoryId);
       if (query.diet) add('i.diet = ?', query.diet);
+      if (query.branchId) add(soldAtSql('i'), query.branchId);
       if (query.available) add('i.is_available = ?', query.available === 'yes');
       if (query.search) add('(i.name ILIKE ? OR i.description ILIKE ?)', likeTerm(query.search));
       const page = await runPaged<
@@ -147,7 +150,8 @@ export class MenuService {
         MenuItem & { categoryName: string }
       >(db, {
         select: `i.id, i.category_id, i.name, i.description, i.price_minor, i.currency_code, i.diet,
-                 i.image_url, i.is_available, i.sort_order, i.updated_at, c.name AS category_name`,
+                 i.image_url, i.is_available, i.sort_order, i.updated_at, c.name AS category_name,
+                 ${branchIdsSql('i')}`,
         from: 'menu_items i JOIN menu_categories c ON c.id = i.category_id',
         where,
         params,
@@ -184,7 +188,7 @@ export class MenuService {
     });
   }
 
-  get(auth: AuthContext, restaurantId?: string) {
+  get(auth: AuthContext, restaurantId?: string, branchId?: string) {
     return this.run(auth, async (db, access) => {
       const restaurant = await this.restaurant(db, access, 'menu:read', restaurantId);
       const data = await this.cache.getOrLoad(
@@ -193,6 +197,21 @@ export class MenuService {
         this.cache.ttl('menu'),
         () => this.loadCatalogue(db, restaurant),
       );
+      if (branchId) {
+        // The cache holds the whole restaurant menu; narrow it to what this branch sells.
+        const items = data.items.filter(
+          // Entries cached before branch support have no branchIds: sold everywhere.
+          (i) => !i.branchIds?.length || i.branchIds.includes(branchId),
+        );
+        const counts = new Map<string, number>();
+        for (const i of items) counts.set(i.categoryId, (counts.get(i.categoryId) ?? 0) + 1);
+        return {
+          ...data,
+          items,
+          categories: data.categories.map((c) => ({ ...c, itemCount: counts.get(c.id) ?? 0 })),
+          canManage: canUse(access, 'menu:manage', restaurant.id),
+        };
+      }
       return { ...data, canManage: canUse(access, 'menu:manage', restaurant.id) };
     });
   }
@@ -349,6 +368,9 @@ export class MenuService {
         ],
       );
       if (input.variants?.length) await syncVariants(db, auth.tenantId!, row!.id, input.variants);
+      if (input.branchIds?.length) {
+        await syncBranches(db, auth.tenantId!, row!.id, category.restaurant_id, input.branchIds);
+      }
       await this.audit(db, auth, meta, 'menu.item_created', 'menu_item', row!.id, {
         name: input.name,
         priceMinor: input.priceMinor,
@@ -398,6 +420,9 @@ export class MenuService {
         ],
       );
       if (input.variants) await syncVariants(db, auth.tenantId!, id, input.variants);
+      if (input.branchIds) {
+        await syncBranches(db, auth.tenantId!, id, item.restaurant_id, input.branchIds);
+      }
       await this.audit(db, auth, meta, 'menu.item_updated', 'menu_item', id, input);
     });
   }
@@ -737,10 +762,12 @@ interface ItemRow {
   is_available: boolean;
   sort_order: number;
   updated_at: Date;
+  branch_ids: string[];
 }
 
 const ITEM_SELECT = `SELECT id, category_id, name, description, price_minor, currency_code, diet,
-                            image_url, is_available, sort_order, updated_at FROM menu_items`;
+                            image_url, is_available, sort_order, updated_at,
+                            ${branchIdsSql('menu_items')} FROM menu_items`;
 
 function toItem(r: ItemRow): MenuItem {
   return {
@@ -755,5 +782,48 @@ function toItem(r: ItemRow): MenuItem {
     isAvailable: r.is_available,
     sortOrder: r.sort_order,
     updatedAt: new Date(r.updated_at).toISOString(),
+    branchIds: r.branch_ids ?? [],
   };
+}
+
+function branchIdsSql(alias: string) {
+  return `ARRAY(SELECT mb.branch_id FROM menu_item_branches mb
+                 WHERE mb.menu_item_id = ${alias}.id ORDER BY mb.branch_id) AS branch_ids`;
+}
+
+/** SQL condition (with one ? placeholder for the branch id): the item is sold at that branch. */
+export function soldAtSql(alias: string) {
+  return `(NOT EXISTS (SELECT 1 FROM menu_item_branches mb WHERE mb.menu_item_id = ${alias}.id)
+           OR EXISTS (SELECT 1 FROM menu_item_branches mb
+                       WHERE mb.menu_item_id = ${alias}.id AND mb.branch_id = ?))`;
+}
+
+/** Replaces the branches an item is sold at; every branch must belong to its restaurant. */
+async function syncBranches(
+  db: Db,
+  tenantId: string,
+  itemId: string,
+  restaurantId: string,
+  branchIds: string[],
+) {
+  if (branchIds.length) {
+    const ok = await db.one<{ n: string }>(
+      'SELECT count(*) AS n FROM branches WHERE id = ANY($1::uuid[]) AND restaurant_id = $2',
+      [branchIds, restaurantId],
+    );
+    if (Number(ok?.n ?? 0) !== branchIds.length) {
+      throw new BadRequestException({
+        code: 'BRANCH_OTHER_RESTAURANT',
+        message: 'Choose branches of this restaurant.',
+      });
+    }
+  }
+  await db.query('DELETE FROM menu_item_branches WHERE menu_item_id = $1', [itemId]);
+  if (branchIds.length) {
+    await db.query(
+      `INSERT INTO menu_item_branches (tenant_id, menu_item_id, branch_id)
+       SELECT $1, $2, unnest($3::uuid[])`,
+      [tenantId, itemId, branchIds],
+    );
+  }
 }

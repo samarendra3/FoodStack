@@ -12,6 +12,8 @@ export const createOrderSchema = z.strictObject({
   branchId: z.uuid(),
   channel: z.enum(CHANNELS),
   tableLabel: z.string().trim().max(20).nullish(),
+  /** Which bill at the table (separate parties sharing a table). */
+  billLabel: z.string().trim().max(20).nullish(),
   note: z.string().trim().max(200).nullish(),
   couponCode: z.string().trim().max(32).nullish(),
   customer: z

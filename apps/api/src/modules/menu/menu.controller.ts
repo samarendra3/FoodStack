@@ -53,7 +53,7 @@ export class MenuController {
     @CurrentAuth() auth: AuthContext,
     @Query(new ZodValidationPipe(menuQuerySchema)) query: MenuQuery,
   ) {
-    return this.menu.get(auth, query.restaurantId);
+    return this.menu.get(auth, query.restaurantId, query.branchId);
   }
 
   @Get('categories')

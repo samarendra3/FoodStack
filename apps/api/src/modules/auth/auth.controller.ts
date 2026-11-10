@@ -1,3 +1,5 @@
+import { FailClosed } from '../../shared/rate-limit/fail-closed';
+import { requestMeta } from '../../common/http/request-meta';
 import {
   Body,
   Controller,
@@ -25,15 +27,9 @@ import {
   resetPasswordSchema,
 } from './auth.schemas';
 import { AuthService, type IssuedSession } from './auth.service';
-import type { AuthContext, RequestMeta } from './auth.types';
+import type { AuthContext } from './auth.types';
 import { clearSessionCookies, readRefreshCookie, setSessionCookies } from './cookies';
-import {
-  AllowAudience,
-  AllowInactiveSubscription,
-  type AuthedRequest,
-  CurrentAuth,
-  Public,
-} from './decorators';
+import { AllowAudience, AllowInactiveSubscription, CurrentAuth, Public } from './decorators';
 
 const MINUTE = 60_000;
 
@@ -50,6 +46,7 @@ export class AuthController {
 
   @Public()
   @Post('login')
+  @FailClosed()
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 10, ttl: MINUTE } })
   @ApiOperation({ summary: 'Sign in with email and password (202 when a TOTP step follows)' })
@@ -73,6 +70,7 @@ export class AuthController {
 
   @Public()
   @Post('mfa/verify')
+  @FailClosed()
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 10, ttl: MINUTE } })
   @ApiOperation({ summary: 'Complete sign-in with a TOTP or recovery code' })
@@ -87,6 +85,7 @@ export class AuthController {
 
   @Public()
   @Post('mfa/enroll/start')
+  @FailClosed()
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 10, ttl: MINUTE } })
   @ApiOperation({ summary: 'First sign-in: create an authenticator secret (QR code)' })
@@ -100,6 +99,7 @@ export class AuthController {
 
   @Public()
   @Post('mfa/enroll/confirm')
+  @FailClosed()
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 10, ttl: MINUTE } })
   @ApiOperation({ summary: 'Confirm the authenticator code; returns one-time recovery codes' })
@@ -150,6 +150,7 @@ export class AuthController {
 
   @Public()
   @Post('password/forgot')
+  @FailClosed()
   @HttpCode(HttpStatus.ACCEPTED)
   @Throttle({ default: { limit: 5, ttl: 15 * MINUTE } })
   @ApiOperation({
@@ -165,6 +166,7 @@ export class AuthController {
 
   @Public()
   @Post('password/reset')
+  @FailClosed()
   @HttpCode(HttpStatus.NO_CONTENT)
   @Throttle({ default: { limit: 10, ttl: 15 * MINUTE } })
   @ApiOperation({
@@ -224,15 +226,7 @@ export class AuthController {
   }
 }
 
-function meta(req: Request): RequestMeta {
-  const ua = req.headers['user-agent'];
-  const id = (req as AuthedRequest).id;
-  return {
-    ip: req.ip ?? null,
-    userAgent: typeof ua === 'string' ? ua : null,
-    requestId: id === undefined ? null : String(id),
-  };
-}
+const meta = requestMeta;
 
 function noStore(res: Response): void {
   res.setHeader('Cache-Control', 'no-store');

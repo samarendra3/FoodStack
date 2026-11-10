@@ -1,0 +1,15 @@
+# Local rehearsal: alerts are visible at http://127.0.0.1:9093 and routed nowhere.
+# Deployed environments: replace the receiver with SNS, PagerDuty or Slack. Keep the webhook
+# URLs in AWS Secrets Manager; never commit them.
+route:
+  receiver: default
+  group_by: [alertname, severity]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers: ['severity="critical"']
+      receiver: default
+      repeat_interval: 1h
+receivers:
+  - name: default

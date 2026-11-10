@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-# Shared Dockerfile for all Next.js apps. Usage: --build-arg APP=web|pos|kitchen-display|qr
+# Shared Dockerfile for all Next.js apps. Usage: --build-arg APP=web
 ARG NODE_VERSION=26
 
 FROM node:${NODE_VERSION}-alpine AS base

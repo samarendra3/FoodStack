@@ -20,7 +20,11 @@ export class Db {
 
   private scopeTenantId: string | null = null;
 
-  constructor(private readonly runner: QueryRunner) {}
+  constructor(
+    private readonly runner: QueryRunner,
+    /** Applied with every scope change; 0 = leave the connection's setting. */
+    private readonly statementTimeoutMs = 0,
+  ) {}
 
   /** The tenant this transaction is scoped to (RLS); throws when it has none. */
   tenantId(): string {
@@ -36,8 +40,22 @@ export class Db {
     if (!this.committed.has(key)) this.committed.set(key, fn);
   }
 
+  /**
+   * One transaction is one connection, which executes one statement at a time. Callers may still
+   * fire several queries at once (`Promise.all`); they are chained here in submission order
+   * instead of being handed to pg concurrently (deprecated, removed in pg 9). Same results,
+   * same speed: pg was already queueing them.
+   */
+  private tail: Promise<unknown> = Promise.resolve();
+
+  private serial<R>(work: () => Promise<R>): Promise<R> {
+    const next = this.tail.then(work, work);
+    this.tail = next.catch(() => undefined);
+    return next;
+  }
+
   async query<T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<T[]> {
-    const result = await this.runner.query(sql, params, true);
+    const result = await this.serial(() => this.runner.query(sql, params, true));
     return (result.records ?? []) as T[];
   }
 
@@ -51,10 +69,20 @@ export class Db {
   /** Changes the context mid-transaction (e.g. once a session reveals its tenant). */
   async setScope(scope: DbScope): Promise<void> {
     this.scopeTenantId = scope.tenantId ?? null;
-    await this.runner.query(
-      `SELECT set_config('app.tenant_id', $1, true), set_config('app.user_id', $2, true),
-              set_config('app.session_id', $3, true), set_config('app.platform', $4, true)`,
-      [scope.tenantId ?? '', scope.userId ?? '', scope.sessionId ?? '', scope.platform ? 'on' : ''],
+    // Through the same queue, so a scope change is ordered with the queries around it.
+    await this.serial(() =>
+      this.runner.query(
+        `SELECT set_config('app.tenant_id', $1, true), set_config('app.user_id', $2, true),
+                set_config('app.session_id', $3, true), set_config('app.platform', $4, true),
+                CASE WHEN $5::int > 0 THEN set_config('statement_timeout', $5::text, true) END`,
+        [
+          scope.tenantId ?? '',
+          scope.userId ?? '',
+          scope.sessionId ?? '',
+          scope.platform ? 'on' : '',
+          this.statementTimeoutMs,
+        ],
+      ),
     );
   }
 }
@@ -65,12 +93,18 @@ export class Db {
  */
 @Injectable()
 export class DbContext {
-  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
+  private readonly statementTimeoutMs: number;
+
+  constructor(@InjectDataSource() private readonly dataSource: DataSource) {
+    const extra = (dataSource.options as { extra?: { foodstackStatementTimeoutMs?: number } })
+      .extra;
+    this.statementTimeoutMs = extra?.foodstackStatementTimeoutMs ?? 0;
+  }
 
   async run<T>(scope: DbScope, work: (db: Db) => Promise<T>): Promise<T> {
     let db: Db | undefined;
     const result = await this.dataSource.transaction(async (manager) => {
-      db = new Db(manager.queryRunner!);
+      db = new Db(manager.queryRunner!, this.statementTimeoutMs);
       await db.setScope(scope);
       return work(db);
     });

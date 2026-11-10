@@ -1,0 +1,63 @@
+
+
+  █ THRESHOLDS 
+
+    checks
+    ✓ 'rate>0.99' rate=100.00%
+
+    http_req_duration{kind:read}
+    ✓ 'p(95)<300' p(95)=51.96ms
+    ✓ 'p(99)<800' p(99)=81.42ms
+
+    http_req_duration{kind:write}
+    ✓ 'p(95)<300' p(95)=74.34ms
+    ✓ 'p(99)<800' p(99)=183.98ms
+
+    http_req_failed
+    ✓ 'rate<0.01' rate=0.00%
+
+      {critical:yes}
+      ✓ 'rate<0.001' rate=0.00%
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 16511   13.724978/s
+    checks_succeeded...: 100.00% 16511 out of 16511
+    checks_failed......: 0.00%   0 out of 16511
+
+    ✓ login 200
+    ✓ summary 200
+    ✓ menu 200
+    ✓ order created
+    ✓ order read
+    ✓ orders listed
+    ✓ orders 200
+    ✓ next page 200
+    ✓ payments 200
+
+    CUSTOM
+    order_create_ms................: avg=44.16ms med=36.34ms p(95)=74.34ms p(99)=183.98ms max=854.7ms 
+    orders_created.................: 3880   3.225299/s
+
+    HTTP
+    http_req_duration..............: avg=30.72ms med=23.11ms p(95)=60.83ms p(99)=110.06ms max=2.92s   
+      { expected_response:true }...: avg=30.72ms med=23.11ms p(95)=60.83ms p(99)=110.06ms max=2.92s   
+      { kind:read }................: avg=24.09ms med=20ms    p(95)=51.96ms p(99)=81.42ms  max=673.07ms
+      { kind:write }...............: avg=44.16ms med=36.34ms p(95)=74.34ms p(99)=183.98ms max=854.7ms 
+    http_req_failed................: 0.00%  0 out of 16523
+      { critical:yes }.............: 0.00%  0 out of 16494
+    http_reqs......................: 16523  13.734953/s
+
+    EXECUTION
+    iteration_duration.............: avg=3.41s   med=3.27s   p(95)=5.77s   p(99)=6.52s    max=8.47s   
+    iterations.....................: 4572   3.800533/s
+    vus............................: 2      min=2          max=13
+    vus_max........................: 13     min=13         max=13
+
+    NETWORK
+    data_received..................: 167 MB 139 kB/s
+    data_sent......................: 14 MB  12 kB/s
+
+
+

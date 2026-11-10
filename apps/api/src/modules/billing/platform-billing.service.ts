@@ -482,6 +482,10 @@ export class PlatformBillingService {
         params,
         sortColumns: { createdAt: 'i.created_at', amountMinor: 'i.amount_minor' },
         tiebreak: 'i.id',
+        cursor: {
+          types: { createdAt: 'timestamptz', amountMinor: 'bigint' },
+          tiebreakType: 'uuid',
+        },
         query,
         map: (r) => ({
           ...invoiceDto(r),

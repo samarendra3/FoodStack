@@ -1,0 +1,306 @@
+{
+  "root_group": {
+    "path": "",
+    "id": "d41d8cd98f00b204e9800998ecf8427e",
+    "groups": {
+      "setup": {
+        "path": "::setup",
+        "id": "5c0f8025f7e0b6654089e5b00e950f1a",
+        "groups": {},
+        "checks": {
+          "login 200": {
+            "name": "login 200",
+            "path": "::setup::login 200",
+            "id": "647055af8ffe21e58084ae4b140cdda0",
+            "passes": 1,
+            "fails": 0
+          }
+        },
+        "name": "setup"
+      }
+    },
+    "checks": {
+      "login 200": {
+        "name": "login 200",
+        "path": "::login 200",
+        "id": "48b06dc5cde7f6ebb606ad7da726a2a5",
+        "passes": 40,
+        "fails": 0
+      },
+      "summary 200": {
+        "name": "summary 200",
+        "path": "::summary 200",
+        "id": "ef4cc48a6fc47f68a64672f955fbd56d",
+        "passes": 202,
+        "fails": 0
+      },
+      "menu 200": {
+        "name": "menu 200",
+        "path": "::menu 200",
+        "id": "2e38770593927be56b3904f3c43b3343",
+        "passes": 202,
+        "fails": 0
+      },
+      "order created": {
+        "name": "order created",
+        "path": "::order created",
+        "id": "5e7ce872bb14a562c4b9054c8eda7170",
+        "passes": 1320,
+        "fails": 0
+      },
+      "order read": {
+        "passes": 1320,
+        "fails": 0,
+        "name": "order read",
+        "path": "::order read",
+        "id": "d975e27249c9194a53c296e87dca767f"
+      },
+      "orders 200": {
+        "passes": 202,
+        "fails": 0,
+        "name": "orders 200",
+        "path": "::orders 200",
+        "id": "cba71426cf25a3e10b652088d545256e"
+      },
+      "payments 200": {
+        "passes": 202,
+        "fails": 0,
+        "name": "payments 200",
+        "path": "::payments 200",
+        "id": "3a07e7f83c3492ba60531d14249920d9"
+      },
+      "orders listed": {
+        "path": "::orders listed",
+        "id": "06bd7d40e014d038eefced671d23d3f9",
+        "passes": 1320,
+        "fails": 0,
+        "name": "orders listed"
+      },
+      "next page 200": {
+        "path": "::next page 200",
+        "id": "ecee638ab6fe8cdc1c4b12b11c404c20",
+        "passes": 558,
+        "fails": 0,
+        "name": "next page 200"
+      }
+    },
+    "name": ""
+  },
+  "metrics": {
+    "http_req_duration{kind:read}": {
+      "max": 2415.652548,
+      "avg": 53.744833211738474,
+      "min": 13.753566,
+      "med": 33.277702000000005,
+      "p(90)": 98.64930840000005,
+      "p(95)": 147.4746471499999,
+      "p(99)": 320.5447464000002,
+      "thresholds": {
+        "p(95)<300": false,
+        "p(99)<800": false
+      }
+    },
+    "http_req_duration{kind:write}": {
+      "avg": 175.6155034356063,
+      "min": 33.270784,
+      "med": 73.716341,
+      "p(90)": 308.72552670000005,
+      "p(95)": 591.9016331499998,
+      "p(99)": 2070.3476876999944,
+      "max": 4383.20076,
+      "thresholds": {
+        "p(95)<300": true,
+        "p(99)<800": true
+      }
+    },
+    "http_reqs": {
+      "count": 5403,
+      "rate": 24.644106152788613
+    },
+    "http_req_sending": {
+      "avg": 0.0923680529335554,
+      "min": 0.011104,
+      "med": 0.070871,
+      "p(90)": 0.11835000000000001,
+      "p(95)": 0.15336599999999975,
+      "p(99)": 0.4289750599999953,
+      "max": 14.518471
+    },
+    "order_create_ms": {
+      "p(95)": 591.9016331499998,
+      "p(99)": 2070.3476876999944,
+      "max": 4383.20076,
+      "avg": 175.6155034356063,
+      "min": 33.270784,
+      "med": 73.716341,
+      "p(90)": 308.72552670000005
+    },
+    "iteration_duration": {
+      "p(90)": 4935.0289684,
+      "p(95)": 5920.060976150002,
+      "p(99)": 7013.68455307,
+      "max": 9966.459318,
+      "avg": 3578.72676256898,
+      "min": 1646.396115,
+      "med": 3424.5167220000003
+    },
+    "vus": {
+      "min": 0,
+      "max": 40,
+      "value": 1
+    },
+    "http_req_waiting": {
+      "min": 13.598827,
+      "med": 41.943983,
+      "p(90)": 148.87037940000002,
+      "p(95)": 257.11669659999995,
+      "p(99)": 1074.8543743599987,
+      "max": 4382.957811,
+      "avg": 90.0196312915048
+    },
+    "http_req_receiving": {
+      "p(90)": 0.3691338000000002,
+      "p(95)": 0.5091610999999998,
+      "p(99)": 1.865205839999988,
+      "max": 21.399716,
+      "avg": 0.2874160273921889,
+      "min": 0.058008,
+      "med": 0.210349
+    },
+    "vus_max": {
+      "value": 40,
+      "min": 40,
+      "max": 40
+    },
+    "http_req_duration": {
+      "p(99)": 1075.1317378999986,
+      "max": 4383.20076,
+      "avg": 90.3994153718305,
+      "min": 13.753566,
+      "med": 42.252165,
+      "p(90)": 149.18244620000004,
+      "p(95)": 257.78880669999984
+    },
+    "http_req_tls_handshaking": {
+      "min": 0,
+      "med": 0,
+      "p(90)": 0,
+      "p(95)": 0,
+      "p(99)": 0,
+      "max": 0,
+      "avg": 0
+    },
+    "orders_created": {
+      "count": 1320,
+      "rate": 6.020769965145469
+    },
+    "http_req_failed": {
+      "passes": 0,
+      "fails": 5403,
+      "thresholds": {
+        "rate<0.01": false
+      },
+      "value": 0
+    },
+    "checks": {
+      "passes": 5367,
+      "fails": 0,
+      "thresholds": {
+        "rate>0.99": false
+      },
+      "value": 1
+    },
+    "http_req_connecting": {
+      "p(95)": 0,
+      "p(99)": 0,
+      "max": 10.492762,
+      "avg": 0.012445809550249863,
+      "min": 0,
+      "med": 0,
+      "p(90)": 0
+    },
+    "data_sent": {
+      "count": 4586445,
+      "rate": 20919.64416878152
+    },
+    "iterations": {
+      "count": 1522,
+      "rate": 6.942130217387427
+    },
+    "data_received": {
+      "rate": 229768.74216388026,
+      "count": 50374743
+    },
+    "http_req_failed{critical:yes}": {
+      "passes": 0,
+      "fails": 5358,
+      "thresholds": {
+        "rate<0.001": false
+      },
+      "value": 0
+    },
+    "http_req_duration{expected_response:true}": {
+      "p(90)": 149.18244620000004,
+      "p(95)": 257.78880669999984,
+      "p(99)": 1075.1317378999986,
+      "max": 4383.20076,
+      "avg": 90.3994153718305,
+      "min": 13.753566,
+      "med": 42.252165
+    },
+    "http_req_blocked": {
+      "avg": 0.03477691467703128,
+      "min": 0.003502,
+      "med": 0.01001,
+      "p(90)": 0.015602,
+      "p(95)": 0.0222049,
+      "p(99)": 0.19991735999999008,
+      "max": 19.052187
+    }
+  },
+  "setup_data": {
+    "branches": ["01a1afd9-751e-72a9-a0fc-c6f2b9b7eed2", "01a1afd9-7526-78bc-9dd7-245c30950b1f"],
+    "itemIds": [
+      "01a1afe4-fa66-796c-8e70-2a4c2739f816",
+      "01a1afe4-fa81-7b44-b855-1534ed4f6fcb",
+      "01a1afe4-fa97-711b-b4e2-4b1e600970d4",
+      "01a1afe4-faab-77e2-93fe-b1b50b6a34a1",
+      "01a1afe4-fac2-7b99-b147-6c7c270897a8",
+      "01a1afe4-fad5-7474-92a9-0451d0b1c72a",
+      "01a1afe4-fae8-7b43-8a7c-c10c057a63c4",
+      "01a1afe4-fafe-7c24-9104-7ae17036a6b2",
+      "01a1afe4-fb1f-7785-acbd-39a7c257338c",
+      "01a1afe4-fb33-7e68-ab22-01a877ea28ac",
+      "01a1afe4-fa72-78fe-b854-20906d083014",
+      "01a1afe4-fa88-7a66-9d8e-f52a88d3cd7f",
+      "01a1afe4-fa9d-75a6-ab15-5c6c6e3a6947",
+      "01a1afe4-fab2-77d4-a3db-1a4ee9b22d32",
+      "01a1afe4-fac9-7831-be5d-6c8de78cc7ad",
+      "01a1afe4-fad9-7e07-b15e-89a59f3f2b6f",
+      "01a1afe4-faed-73d0-8491-3cc2fb23bb48",
+      "01a1afe4-fb04-72b2-b6e4-1e5888b4ca77",
+      "01a1afe4-fb24-737c-b1bf-6d5ce25b95d4",
+      "01a1afe4-fb3b-7def-a2ab-1af507293ebc",
+      "01a1afe4-fa77-7d64-a8b7-24b874646253",
+      "01a1afe4-fa8e-7589-8612-8448554aa85c",
+      "01a1afe4-faa2-718c-9f90-af92da5543b3",
+      "01a1afe4-faba-7283-8a1e-afd7e1cea7f6",
+      "01a1afe4-face-702a-b8f4-d76674691b00",
+      "01a1afe4-fade-7178-aaf7-86886d5b59de",
+      "01a1afe4-faf2-72ca-ae9f-1ab0bb4f5d30",
+      "01a1afe4-fb0d-7305-a7bc-1d740186a33f",
+      "01a1afe4-fb29-7861-ae5a-90910b703c95",
+      "01a1afe4-fb43-78c2-a5e9-dbb9bf5183f5",
+      "01a1afe4-fa7d-7238-bcc9-c21737b9edac",
+      "01a1afe4-fa92-7cc8-b828-3e64378129bd",
+      "01a1afe4-faa6-7cb2-925e-2b2ba3464bf5",
+      "01a1afe4-fabe-7a14-b9dd-8eacd3bd4a1e",
+      "01a1afe4-fad1-7a55-9c03-926195c4a8a6",
+      "01a1afe4-fae4-7418-8cb4-962bbb22353f",
+      "01a1afe4-faf9-795e-a7b0-90290b979033",
+      "01a1afe4-fb19-7d7c-a5a2-a323ad9d9575",
+      "01a1afe4-fb2f-74e8-bac0-3cf3c1b5c97a",
+      "01a1afe4-fb47-7ddf-851e-7facc49d7988"
+    ]
+  }
+}

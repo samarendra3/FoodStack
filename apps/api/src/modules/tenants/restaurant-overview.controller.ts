@@ -120,6 +120,46 @@ export class RestaurantOverviewController {
     });
   }
 
+  @Get('branches/:id/receipt-header')
+  @RequirePermission('branch:read', { branchParam: 'id' })
+  @ApiOperation({ summary: 'Restaurant details printed on customer bills (for POS staff)' })
+  receiptHeader(@CurrentAuth() auth: AuthContext, @Param('id', ParseUUIDPipe) id: string) {
+    return this.db.run({ tenantId: auth.tenantId, userId: auth.userId }, async (db) => {
+      const r = await db.one<{
+        branch_name: string;
+        name: string;
+        legal_name: string | null;
+        logo_url: string | null;
+        phone: string | null;
+        email: string | null;
+        address_line: string | null;
+        city: string | null;
+        state: string | null;
+        postal_code: string | null;
+        gstin: string | null;
+        country_code: string;
+      }>(
+        `SELECT b.name AS branch_name, r.name, r.legal_name, r.logo_url, r.phone, r.email,
+                r.address_line, r.city, r.state, r.postal_code, r.gstin, r.country_code
+           FROM branches b JOIN restaurants r ON r.id = b.restaurant_id WHERE b.id = $1`,
+        [id],
+      );
+      if (!r) return null;
+      return {
+        branchName: r.branch_name,
+        name: r.name,
+        legalName: r.legal_name,
+        logoUrl: r.logo_url,
+        phone: r.phone,
+        email: r.email,
+        address:
+          [r.address_line, r.city, r.state, r.postal_code].filter(Boolean).join(', ') || null,
+        gstin: r.gstin,
+        countryCode: r.country_code.trim(),
+      };
+    });
+  }
+
   @Get('branches/:id')
   @RequirePermission('branch:read', { branchParam: 'id' })
   @ApiOperation({ summary: 'One branch (404 outside the tenant, 403 outside the caller scope)' })

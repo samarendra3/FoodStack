@@ -1,0 +1,64 @@
+
+
+  █ THRESHOLDS 
+
+    checks
+    ✓ 'rate>0.99' rate=100.00%
+
+    http_req_duration{kind:read}
+    ✓ 'p(95)<300' p(95)=147.47ms
+    ✓ 'p(99)<800' p(99)=320.54ms
+
+    http_req_duration{kind:write}
+    ✗ 'p(95)<300' p(95)=591.9ms
+    ✗ 'p(99)<800' p(99)=2.07s
+
+    http_req_failed
+    ✓ 'rate<0.01' rate=0.00%
+
+      {critical:yes}
+      ✓ 'rate<0.001' rate=0.00%
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 5367    24.479903/s
+    checks_succeeded...: 100.00% 5367 out of 5367
+    checks_failed......: 0.00%   0 out of 5367
+
+    ✓ login 200
+    ✓ summary 200
+    ✓ menu 200
+    ✓ order created
+    ✓ order read
+    ✓ orders 200
+    ✓ payments 200
+    ✓ orders listed
+    ✓ next page 200
+
+    CUSTOM
+    order_create_ms................: avg=175.61ms min=33.27ms med=73.71ms p(90)=308.72ms p(95)=591.9ms  p(99)=2.07s    max=4.38s
+    orders_created.................: 1320   6.02077/s
+
+    HTTP
+    http_req_duration..............: avg=90.39ms  min=13.75ms med=42.25ms p(90)=149.18ms p(95)=257.78ms p(99)=1.07s    max=4.38s
+      { expected_response:true }...: avg=90.39ms  min=13.75ms med=42.25ms p(90)=149.18ms p(95)=257.78ms p(99)=1.07s    max=4.38s
+      { kind:read }................: avg=53.74ms  min=13.75ms med=33.27ms p(90)=98.64ms  p(95)=147.47ms p(99)=320.54ms max=2.41s
+      { kind:write }...............: avg=175.61ms min=33.27ms med=73.71ms p(90)=308.72ms p(95)=591.9ms  p(99)=2.07s    max=4.38s
+    http_req_failed................: 0.00%  0 out of 5403
+      { critical:yes }.............: 0.00%  0 out of 5358
+    http_reqs......................: 5403   24.644106/s
+
+    EXECUTION
+    iteration_duration.............: avg=3.57s    min=1.64s   med=3.42s   p(90)=4.93s    p(95)=5.92s    p(99)=7.01s    max=9.96s
+    iterations.....................: 1522   6.94213/s
+    vus............................: 1      min=0         max=40
+    vus_max........................: 40     min=40        max=40
+
+    NETWORK
+    data_received..................: 50 MB  230 kB/s
+    data_sent......................: 4.6 MB 21 kB/s
+
+
+
+time="2026-11-06T08:09:57Z" level=error msg="thresholds on metrics 'http_req_duration{kind:write}' have been crossed"

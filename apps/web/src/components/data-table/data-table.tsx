@@ -20,7 +20,7 @@ import {
 import { type ReactNode, useState } from 'react';
 import { authErrorMessage } from '@/lib/auth/errors';
 import { downloadCsv } from '@/lib/csv';
-import { PAGE_SIZES, type PagedList } from '@/lib/paged';
+import { isCursorMeta, type OffsetPageMeta, PAGE_SIZES, type PagedList } from '@/lib/paged';
 
 export interface Column<T> {
   key: string;
@@ -202,7 +202,7 @@ export function DataTable<T>(p: DataTableProps<T>) {
             <button
               type="button"
               onClick={exportAll}
-              disabled={busy === 'export' || !list.meta?.total}
+              disabled={busy === 'export' || list.rows.length === 0}
               className="flex h-9 items-center gap-1.5 rounded-lg border px-3 text-sm font-medium hover:bg-muted disabled:opacity-50"
             >
               {busy === 'export' ? (
@@ -266,10 +266,10 @@ export function DataTable<T>(p: DataTableProps<T>) {
           <p className="mt-1 text-sm text-muted-foreground">{authErrorMessage(list.error)}</p>
           <button
             type="button"
-            onClick={() => list.refetch()}
+            onClick={() => (list.cursorRejected ? list.goFirst() : list.refetch())}
             className="mt-4 rounded-lg border px-3 py-1.5 text-sm hover:bg-muted"
           >
-            Try again
+            {list.cursorRejected ? 'Back to first page' : 'Try again'}
           </button>
         </div>
       ) : list.isLoading ? (
@@ -486,14 +486,20 @@ export function DataTable<T>(p: DataTableProps<T>) {
         </div>
       )}
 
-      {list.meta && list.meta.total > 0 ? <Pagination list={list} /> : null}
+      {isCursorMeta(list.meta) ? (
+        list.rows.length > 0 || list.meta.hasPreviousPage ? (
+          <CursorPagination list={list} />
+        ) : null
+      ) : list.meta && list.meta.total > 0 ? (
+        <Pagination list={list} />
+      ) : null}
     </div>
   );
 }
 
 /** Page size, range summary and first/previous/next/last controls. */
 export function Pagination<T>({ list }: { list: PagedList<T> }) {
-  const m = list.meta!;
+  const m = list.meta as OffsetPageMeta;
   const first = (m.page - 1) * m.limit + 1;
   const last = Math.min(m.page * m.limit, m.total);
   const btn =
@@ -558,6 +564,71 @@ export function Pagination<T>({ list }: { list: PagedList<T> }) {
           className={btn}
         >
           <ChevronsRight className="size-4" />
+        </button>
+      </nav>
+    </div>
+  );
+}
+
+/**
+ * Keyset pagination: page size and Previous / Next (plus "back to first"). No total or page
+ * numbers: counting is what makes deep pages slow on large lists.
+ */
+export function CursorPagination<T>({ list }: { list: PagedList<T> }) {
+  const m = list.meta;
+  if (!isCursorMeta(m)) return null;
+  const btn =
+    'flex h-8 items-center gap-1 rounded-lg border px-2.5 text-muted-foreground hover:bg-muted disabled:pointer-events-none disabled:opacity-40';
+  const busy = list.isFetching;
+  return (
+    <div className="flex flex-col gap-3 border-t px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex items-center gap-3 text-muted-foreground">
+        <label className="flex items-center gap-2">
+          Rows
+          <select
+            value={m.limit}
+            onChange={(e) => list.update({ limit: Number(e.target.value) })}
+            className="h-8 rounded-lg border bg-background px-2 text-foreground"
+          >
+            {PAGE_SIZES.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </label>
+        <span aria-live="polite" className="tabular-nums">
+          {list.rows.length === 0
+            ? 'No more rows'
+            : `Showing ${list.rows.length.toLocaleString()} ${list.rows.length === 1 ? 'row' : 'rows'}`}
+        </span>
+        {busy ? <Loader2 className="size-3.5 animate-spin" aria-label="Loading" /> : null}
+      </div>
+      <nav className="flex items-center gap-1" aria-label="Pagination">
+        <button
+          type="button"
+          aria-label="First page"
+          disabled={!m.hasPreviousPage || busy}
+          onClick={list.goFirst}
+          className={btn}
+        >
+          <ChevronsLeft className="size-4" />
+        </button>
+        <button
+          type="button"
+          disabled={!m.prevCursor || busy}
+          onClick={list.goPrevious}
+          className={btn}
+        >
+          <ChevronLeft className="size-4" /> Previous
+        </button>
+        <button
+          type="button"
+          disabled={!m.nextCursor || busy}
+          onClick={list.goNext}
+          className={btn}
+        >
+          Next <ChevronRight className="size-4" />
         </button>
       </nav>
     </div>

@@ -1,0 +1,108 @@
+{
+  "database": {
+    "perEndpoint": {
+      "/menu": {
+        "p50": 74.82490000000689,
+        "p95": 103.96119999999064,
+        "p99": 121.2043999999878,
+        "statementsPerRequest": 13
+      },
+      "/menu/categories": {
+        "p50": 61.19529999999213,
+        "p95": 115.51000000000931,
+        "p99": 209.19689999998081,
+        "statementsPerRequest": 12
+      },
+      "/inventory/summary?branchId=01a1af8e-8c36-7b31-a3cc-b011f9039152": {
+        "p50": 57.97509999998147,
+        "p95": 120.31969999996363,
+        "p99": 323.81669999999576,
+        "statementsPerRequest": 11
+      },
+      "/plans": {
+        "p50": 21.634500000043772,
+        "p95": 34.68829999997979,
+        "p99": 44.40299999999115,
+        "statementsPerRequest": 4
+      }
+    },
+    "concurrent": {
+      "requests": 800,
+      "rps": 40.01273525337648,
+      "p50": 408.7606000000378,
+      "p95": 1233.7853999999934,
+      "p99": 2263.5225999999675,
+      "statementsPerRequest": 10,
+      "pgPerRequest": {
+        "xact": 1.67625,
+        "returned": 448.88375,
+        "fetched": 169.19625,
+        "hit": 127.19375,
+        "read": 0
+      }
+    },
+    "cache": {
+      "hits": 0,
+      "misses": 0,
+      "fallbacks": 0,
+      "coalesced": 0,
+      "errors": 0,
+      "hitRatio": null
+    }
+  },
+  "cache": {
+    "perEndpoint": {
+      "/menu": {
+        "p50": 45.52990000002319,
+        "p95": 111.77460000000428,
+        "p99": 180.43900000001304,
+        "statementsPerRequest": 10
+      },
+      "/menu/categories": {
+        "p50": 30.931399999943096,
+        "p95": 53.5464000000502,
+        "p99": 74.84529999998631,
+        "statementsPerRequest": 10
+      },
+      "/inventory/summary?branchId=01a1af8e-8c36-7b31-a3cc-b011f9039152": {
+        "p50": 45.35470000002533,
+        "p95": 85.65779999998631,
+        "p99": 158.11729999998352,
+        "statementsPerRequest": 9
+      },
+      "/plans": {
+        "p50": 15.694900000002235,
+        "p95": 32.4537999999593,
+        "p99": 57.522300000011455,
+        "statementsPerRequest": 0
+      }
+    },
+    "concurrent": {
+      "requests": 800,
+      "rps": 64.54418597348676,
+      "p50": 375.274400000053,
+      "p95": 503.29180000000633,
+      "p99": 583.3684000000358,
+      "statementsPerRequest": 7.25,
+      "pgPerRequest": {
+        "xact": 1.415,
+        "returned": 59.8425,
+        "fetched": 49.91,
+        "hit": 58.7675,
+        "read": 0
+      }
+    },
+    "cache": {
+      "hits": 1569,
+      "misses": 2,
+      "fallbacks": 0,
+      "coalesced": 109,
+      "errors": 0,
+      "hitRatio": 0.999
+    },
+    "memory": {
+      "keys": 90,
+      "bytes": 119382
+    }
+  }
+}

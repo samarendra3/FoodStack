@@ -9,6 +9,15 @@ import { REDIS_CLIENT } from '../../shared/redis/redis.constants';
 
 const PERIOD_S = 30;
 export const RECOVERY_CODE_COUNT = 10;
+export const MFA_ATTEMPT_WINDOW_SECONDS = 15 * 60;
+
+/** INCR + "set the TTL if the key has none", in one atomic step. Returns the new count. */
+export const MFA_FAILURE_SCRIPT = `
+local count = redis.call('INCR', KEYS[1])
+if redis.call('TTL', KEYS[1]) < 0 then
+  redis.call('EXPIRE', KEYS[1], tonumber(ARGV[1]))
+end
+return count`;
 
 /**
  * TOTP (RFC 6238: SHA-1, 6 digits, 30 s, ±1 step). Secrets are AES-256-GCM encrypted at rest and
@@ -71,8 +80,12 @@ export class MfaService {
   /** Counts a failed attempt; true once the limit is reached. */
   async registerFailure(challengeId: string, limit = 5): Promise<boolean> {
     const key = `${this.prefix}:mfa-attempts:${challengeId}`;
-    const count = await this.redis.incr(key);
-    if (count === 1) await this.redis.expire(key, 15 * 60);
+    // One atomic script: the counter can never exist without a TTL (two separate commands
+    // could leave it immortal if the second failed). It also repairs a TTL-less key written
+    // by the old two-command version. Errors propagate, so verification fails closed.
+    const count = Number(
+      await this.redis.eval(MFA_FAILURE_SCRIPT, 1, key, String(MFA_ATTEMPT_WINDOW_SECONDS)),
+    );
     return count >= limit;
   }
 

@@ -1,0 +1,96 @@
+# High-availability rehearsal (local): N API replicas behind a load balancer, PgBouncer in
+# transaction mode, scalable workers. Mirrors the AWS design (ALB → ECS tasks → RDS Proxy /
+# PgBouncer → RDS). Uses a separate database (HA_DATABASE_NAME, default foodstack_load).
+#
+#   node infrastructure/docker/ha/gen-secrets.mjs > infrastructure/docker/ha/secrets.env   # once
+#   docker compose -f docker-compose.yml -f docker-compose.ha.yml --profile ha up -d --scale api-ha=2 --scale worker-ha=2
+#   curl http://127.0.0.1:4200/api/v1/health
+#
+# Production rules apply (NODE_ENV=production): secrets.env must provide JWT keys, a
+# non-example MFA key and COOKIE_SECURE=true. It is git-ignored.
+x-app: &app
+  image: foodstack-api:latest
+  env_file: [.env, infrastructure/docker/ha/secrets.env]
+  depends_on:
+    pgbouncer: { condition: service_healthy }
+    redis: { condition: service_healthy }
+
+services:
+  pgbouncer:
+    profiles: [ha]
+    image: edoburu/pgbouncer:v1.24.1-p1
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DATABASE_USER}
+      DB_PASSWORD: ${DATABASE_PASSWORD}
+      AUTH_TYPE: scram-sha-256
+      # Transaction pooling: RLS context is set with set_config(..., true) (transaction-local),
+      # so connections are safe to share between transactions.
+      POOL_MODE: transaction
+      # Per-API pools multiply; PgBouncer caps what reaches PostgreSQL.
+      MAX_CLIENT_CONN: 1000
+      DEFAULT_POOL_SIZE: 20
+      MAX_DB_CONNECTIONS: 40
+      SERVER_RESET_QUERY: DISCARD ALL
+      IGNORE_STARTUP_PARAMETERS: extra_float_digits,options
+      LISTEN_PORT: 6432
+      # SHOW STATS / POOLS for the exporter (read-only admin console access).
+      STATS_USERS: ${DATABASE_USER}
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -p 6432 -U "$${DB_USER}"']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api-ha:
+    <<: *app
+    profiles: [ha]
+    environment:
+      NODE_ENV: production
+      SWAGGER_ENABLED: 'false'
+      DATABASE_HOST: pgbouncer
+      DATABASE_PORT: 6432
+      DATABASE_POOLER: pgbouncer
+      DATABASE_NAME: ${HA_DATABASE_NAME:-foodstack_load}
+      REDIS_HOST: redis
+      QUEUE_PREFIX: foodstack-ha
+      TRUST_PROXY: 'true'
+      METRICS_HOST: 0.0.0.0
+      LOG_LEVEL: warn
+    # SIGTERM → stop accepting, finish in-flight requests, close pool (enableShutdownHooks).
+    stop_grace_period: 30s
+
+  worker-ha:
+    <<: *app
+    profiles: [ha]
+    command: ['node', 'dist/worker.js']
+    environment:
+      NODE_ENV: production
+      SWAGGER_ENABLED: 'false'
+      DATABASE_HOST: pgbouncer
+      DATABASE_PORT: 6432
+      DATABASE_POOLER: pgbouncer
+      DATABASE_NAME: ${HA_DATABASE_NAME:-foodstack_load}
+      REDIS_HOST: redis
+      QUEUE_PREFIX: foodstack-ha
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      METRICS_HOST: 0.0.0.0
+      LOG_LEVEL: warn
+    stop_grace_period: 45s
+    healthcheck:
+      test: ['CMD', 'node', 'dist/worker-health.js']
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  lb:
+    profiles: [ha]
+    image: nginx:1.29-alpine
+    volumes:
+      - ./infrastructure/docker/ha/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports: ['127.0.0.1:4200:8080']
+    depends_on: [api-ha]

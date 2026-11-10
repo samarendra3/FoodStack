@@ -1,0 +1,62 @@
+
+
+  █ THRESHOLDS 
+
+    checks
+    ✓ 'rate>0.99' rate=100.00%
+
+    http_req_duration{kind:read}
+    ✗ 'p(99)<2000' p(99)=3.77s
+
+    http_req_duration{kind:write}
+    ✗ 'p(99)<2000' p(99)=4.45s
+
+    http_req_failed
+    ✓ 'rate<0.01' rate=0.00%
+
+      {critical:yes}
+      ✓ 'rate<0.001' rate=0.00%
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 7033    32.52066/s
+    checks_succeeded...: 100.00% 7033 out of 7033
+    checks_failed......: 0.00%   0 out of 7033
+
+    ✓ login 200
+    ✓ summary 200
+    ✓ menu 200
+    ✓ order created
+    ✓ order read
+    ✓ orders 200
+    ✓ next page 200
+    ✓ orders listed
+    ✓ payments 200
+
+    CUSTOM
+    order_create_ms................: avg=1.01s    med=657.23ms p(95)=3.73s  p(99)=4.45s  max=6.45s 
+    orders_created.................: 1926   8.905843/s
+
+    HTTP
+    http_req_duration..............: avg=915.7ms  med=460.25ms p(95)=3.38s  p(99)=11.32s max=17.76s
+      { expected_response:true }...: avg=915.7ms  med=460.25ms p(95)=3.38s  p(99)=11.32s max=17.76s
+      { kind:read }................: avg=579.66ms med=327.96ms p(95)=2.17s  p(99)=3.77s  max=4.07s 
+      { kind:write }...............: avg=1.01s    med=657.23ms p(95)=3.73s  p(99)=4.45s  max=6.45s 
+    http_req_failed................: 0.00%  0 out of 7185
+      { critical:yes }.............: 0.00%  0 out of 7027
+    http_reqs......................: 7185   33.22351/s
+
+    EXECUTION
+    iteration_duration.............: avg=6.33s    med=4.98s    p(95)=17.36s p(99)=24.71s max=25.95s
+    iterations.....................: 2083   9.631812/s
+    vus............................: 2      min=2         max=155
+    vus_max........................: 155    min=155       max=155
+
+    NETWORK
+    data_received..................: 59 MB  272 kB/s
+    data_sent......................: 6.2 MB 29 kB/s
+
+
+
+time="2026-11-06T06:55:15Z" level=error msg="thresholds on metrics 'http_req_duration{kind:read}, http_req_duration{kind:write}' have been crossed"

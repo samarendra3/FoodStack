@@ -1,10 +1,19 @@
-import { Injectable } from '@nestjs/common';
+import { registerAnalyticsLimiter } from '../../shared/metrics/metrics.module';
+import { Injectable, ServiceUnavailableException } from '@nestjs/common';
+import { ConcurrencyLimiter, LimiterTimeoutError } from '../../common/utils/concurrency-limiter';
+import { AppConfigService } from '../../config/app-config.service';
 import { type Db, DbContext } from '../../core/db/db-context';
 import { CacheEntry, CacheNs } from '../../shared/cache/cache.keys';
 import { CacheService } from '../../shared/cache/cache.service';
 import { AccessService } from '../auth/access.service';
-import type { AuthContext } from '../auth/auth.types';
-import { type AnalyticsScope, resolveScope, scopeDigest } from './analytics-scope';
+import type { AuthContext, TenantAccess } from '../auth/auth.types';
+import {
+  type AnalyticsScope,
+  CUSTOMER_PERMISSION,
+  requireOnAllBranches,
+  resolveScope,
+  scopeDigest,
+} from './analytics-scope';
 import {
   activeTablesQuery,
   customersQuery,
@@ -54,7 +63,18 @@ export class AnalyticsService {
     private readonly db: DbContext,
     private readonly access: AccessService,
     private readonly cache: CacheService,
-  ) {}
+    config: AppConfigService,
+  ) {
+    const configured = config.get('ANALYTICS_MAX_CONCURRENCY');
+    const max =
+      configured > 0 ? configured : Math.max(1, Math.floor(config.get('DATABASE_POOL_MAX') / 2));
+    this.limiter = new ConcurrencyLimiter(max, config.get('ANALYTICS_QUEUE_TIMEOUT_MS'));
+    const limiter = this.limiter;
+    registerAnalyticsLimiter(() => ({ running: limiter.running, waiting: limiter.waiting, max }));
+  }
+
+  /** Bounds the pooled connections analytics can hold at once (see ANALYTICS_MAX_CONCURRENCY). */
+  private readonly limiter: ConcurrencyLimiter;
 
   summary(auth: AuthContext, query: AnalyticsQuery) {
     return this.withScope(auth, query, async (db, scope) => {
@@ -238,7 +258,10 @@ export class AnalyticsService {
   }
 
   customers(auth: AuthContext, query: AnalyticsQuery) {
-    return this.withScope(auth, query, async (db, scope) => {
+    return this.withScope(auth, query, async (db, scope, access) => {
+      // Customer-level detail needs the permission that gates customer data (the customers
+      // list uses order:read) on every branch in scope, on top of report:view.
+      requireOnAllBranches(access, scope, CUSTOMER_PERMISSION);
       const c = await this.customerStats(db, auth, scope);
       return {
         ...meta(scope),
@@ -264,12 +287,27 @@ export class AnalyticsService {
   private withScope<T>(
     auth: AuthContext,
     query: AnalyticsQuery,
-    work: (db: Db, scope: AnalyticsScope) => Promise<T>,
+    work: (db: Db, scope: AnalyticsScope, access: TenantAccess) => Promise<T>,
   ): Promise<T> {
-    return this.db.run({ tenantId: auth.tenantId, userId: auth.userId }, async (db) => {
-      const access = await this.access.forRequest(db, auth);
-      return work(db, await resolveScope(db, access, query));
-    });
+    // The slot is taken before a connection is checked out, so at most `max` analytics
+    // requests hold connections; the rest wait here, not in the pool's acquire queue.
+    return this.limiter
+      .run(() =>
+        this.db.run({ tenantId: auth.tenantId, userId: auth.userId }, async (db) => {
+          const access = await this.access.forRequest(db, auth);
+          return work(db, await resolveScope(db, access, query), access);
+        }),
+      )
+      .catch((error: unknown) => {
+        if (error instanceof LimiterTimeoutError) {
+          throw new ServiceUnavailableException({
+            code: 'ANALYTICS_BUSY',
+            message: 'Analytics are busy right now. Please try again in a few seconds.',
+            retryAfterSeconds: 5,
+          });
+        }
+        throw error;
+      });
   }
 
   private core(db: Db, auth: AuthContext, scope: AnalyticsScope) {

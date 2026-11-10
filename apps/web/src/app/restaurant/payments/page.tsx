@@ -25,10 +25,15 @@ const METHOD: Record<PaymentRow['method'], string> = { cash: 'Cash', card: 'Card
 export default function PaymentsPage() {
   const overview = useRestaurantOverview();
   const branches = overview.data?.branches ?? [];
-  const list = usePagedList<PaymentRow>('payments-list', '/payments', {
-    sortBy: 'createdAt',
-    filters: { method: '', refunded: '', branchId: '', from: '', to: '' },
-  });
+  const list = usePagedList<PaymentRow>(
+    'payments-list',
+    '/payments',
+    {
+      sortBy: 'createdAt',
+      filters: { method: '', refunded: '', branchId: '', from: '', to: '' },
+    },
+    { cursor: true },
+  );
 
   const columns: Column<PaymentRow>[] = [
     {

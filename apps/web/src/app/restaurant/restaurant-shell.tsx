@@ -38,6 +38,7 @@ import {
   useSignOut,
 } from '@/components/shell/header-widgets';
 import { OrderUsageBanner } from '@/components/subscription/order-usage-banner';
+import { AnnouncementBar } from '@/components/shell/announcement-banner';
 import { TrialReminderBanner } from '@/components/subscription/subscription-gate';
 import { hasPermissionAnywhere } from '@/lib/auth/access';
 import { initials, roleLabel } from '@/lib/auth/roles';
@@ -171,6 +172,7 @@ export function RestaurantShell({ children }: { children: ReactNode }) {
           </header>
           <TrialReminderBanner />
           <OrderUsageBanner />
+          <AnnouncementBar className="px-4 pt-4 sm:px-6" />
           <main className="min-w-0 flex-1 px-4 py-5 sm:px-6">
             <motion.div
               key={pathname}

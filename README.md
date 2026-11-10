@@ -5,19 +5,15 @@ The architecture lives in [`docs/`](docs/system-architecture.md).
 
 ## Layout
 
-| Path                                                     | What                                                                                                |
-| -------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `apps/api`                                               | NestJS 12 API, `/api/v1`, Swagger at `/api/docs` (port 4000)                                        |
-| `apps/web`                                               | Restaurant admin dashboard (port 3000)                                                              |
-| `apps/pos`                                               | POS billing (port 3001)                                                                             |
-| `apps/kitchen-display`                                   | Kitchen display (port 3002)                                                                         |
-| `apps/qr`                                                | Customer QR ordering (port 3003)                                                                    |
-| `apps/waiter-mobile`                                     | Waiter app, React Native + Expo (`pnpm --filter @foodstack/waiter-mobile dev`)                      |
-| `packages/ui`                                            | Design tokens, shadcn/ui components, shared layouts                                                 |
-| `packages/types` · `validators` · `api-client` · `utils` | Shared code                                                                                         |
-| `packages/config` · `eslint-config`                      | Shared tsconfig and ESLint configs                                                                  |
-| `infrastructure/docker`                                  | Dockerfiles, Postgres init scripts · `infrastructure/aws`, `infrastructure/monitoring` are reserved |
-| `tests/integration` · `tests/e2e`                        | Cross-app integration and end-to-end tests                                                          |
+| Path                                                     | What                                                                                                     |
+| -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `apps/api`                                               | NestJS 12 API, `/api/v1`, Swagger at `/api/docs` (port 4000)                                             |
+| `apps/web`                                               | Restaurant admin, POS (`/pos`), kitchen (`/kitchen`), waiter (`/waiter`), QR ordering (`/t`) — port 3000 |
+| `packages/ui`                                            | Design tokens, shadcn/ui components, shared layouts                                                      |
+| `packages/types` · `validators` · `api-client` · `utils` | Shared code                                                                                              |
+| `packages/config` · `eslint-config`                      | Shared tsconfig and ESLint configs                                                                       |
+| `infrastructure/docker`                                  | Dockerfiles, Postgres init scripts · `infrastructure/aws`, `infrastructure/monitoring` are reserved      |
+| `tests/integration` · `tests/e2e`                        | Cross-app integration and end-to-end tests                                                               |
 
 ## Prerequisites
 
@@ -73,7 +69,7 @@ link, or rejects it. `tenant:create` above does the same without a request.
 
 | Command                                                                      | Does                                                                          |
 | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `pnpm dev`                                                                   | Run everything in watch mode (`pnpm --filter @foodstack/pos dev` for one app) |
+| `pnpm dev`                                                                   | Run everything in watch mode (`pnpm --filter @foodstack/web dev` for one app) |
 | `pnpm build` · `lint` · `typecheck` · `test`                                 | Turborepo tasks across the workspace                                          |
 | `pnpm test:e2e`                                                              | Database and API end-to-end tests (needs Postgres from `pnpm docker:up`)      |
 | `pnpm format` / `format:check`                                               | Prettier                                                                      |

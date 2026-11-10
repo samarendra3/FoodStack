@@ -1,0 +1,63 @@
+
+
+  █ THRESHOLDS 
+
+    checks
+    ✓ 'rate>0.99' rate=100.00%
+
+    http_req_duration{kind:read}
+    ✓ 'p(95)<300' p(95)=43.67ms
+    ✓ 'p(99)<800' p(99)=79.6ms
+
+    http_req_duration{kind:write}
+    ✓ 'p(95)<300' p(95)=92.34ms
+    ✓ 'p(99)<800' p(99)=146.25ms
+
+    http_req_failed
+    ✓ 'rate<0.01' rate=0.00%
+
+      {critical:yes}
+      ✓ 'rate<0.001' rate=0.00%
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 2807    12.972941/s
+    checks_succeeded...: 100.00% 2807 out of 2807
+    checks_failed......: 0.00%   0 out of 2807
+
+    ✓ login 200
+    ✓ summary 200
+    ✓ menu 200
+    ✓ order created
+    ✓ order read
+    ✓ orders listed
+    ✓ orders 200
+    ✓ payments 200
+    ✓ next page 200
+
+    CUSTOM
+    order_create_ms................: avg=48.88ms min=19.93ms med=40.75ms p(90)=78.6ms  p(95)=92.34ms p(99)=146.25ms max=508.91ms
+    orders_created.................: 700    3.235147/s
+
+    HTTP
+    http_req_duration..............: avg=31.33ms min=7.46ms  med=20.65ms p(90)=52.49ms p(95)=72.84ms p(99)=156.28ms max=2.36s   
+      { expected_response:true }...: avg=31.33ms min=7.46ms  med=20.65ms p(90)=52.49ms p(95)=72.84ms p(99)=156.28ms max=2.36s   
+      { kind:read }................: avg=20.88ms min=7.46ms  med=16.32ms p(90)=34.34ms p(95)=43.67ms p(99)=79.6ms   max=512.76ms
+      { kind:write }...............: avg=48.88ms min=19.93ms med=40.75ms p(90)=78.6ms  p(95)=92.34ms p(99)=146.25ms max=508.91ms
+    http_req_failed................: 0.00%  0 out of 2827
+      { critical:yes }.............: 0.00%  0 out of 2802
+    http_reqs......................: 2827   13.065374/s
+
+    EXECUTION
+    iteration_duration.............: avg=3.36s   min=1.65s   med=3.23s   p(90)=4.47s   p(95)=5.51s   p(99)=6.4s     max=8.45s   
+    iterations.....................: 804    3.715798/s
+    vus............................: 1      min=0         max=20
+    vus_max........................: 20     min=20        max=20
+
+    NETWORK
+    data_received..................: 26 MB  118 kB/s
+    data_sent......................: 2.4 MB 11 kB/s
+
+
+

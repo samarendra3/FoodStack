@@ -1,4 +1,10 @@
-import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { AppConfigService } from '../../config/app-config.service';
 import { type Db, DbContext } from '../../core/db/db-context';
 import type { AuthContext, RequestMeta } from '../auth/auth.types';
@@ -57,6 +63,16 @@ export class AccessRequestsService {
    */
   async submit(input: AccessRequestInput, meta: RequestMeta): Promise<void> {
     if (input.website) return;
+    // Super Admins can pause new sign-ups (Platform → Settings).
+    const open = await this.db.run({}, (db) =>
+      db.one<{ signups_open: boolean }>('SELECT signups_open FROM platform_settings'),
+    );
+    if (open && !open.signups_open) {
+      throw new ServiceUnavailableException({
+        code: 'SIGNUPS_PAUSED',
+        message: 'New registrations are paused right now. Please try again later.',
+      });
+    }
     const stored = await this.db.run({}, (db) =>
       db.one<{ id: string }>(
         `INSERT INTO access_requests

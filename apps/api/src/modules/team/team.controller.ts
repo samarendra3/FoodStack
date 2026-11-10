@@ -1,3 +1,4 @@
+import { requestMeta } from '../../common/http/request-meta';
 import {
   Body,
   Controller,
@@ -13,8 +14,8 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
-import type { AuthContext, RequestMeta } from '../auth/auth.types';
-import { type AuthedRequest, CurrentAuth, RequirePermission } from '../auth/decorators';
+import type { AuthContext } from '../auth/auth.types';
+import { CurrentAuth, RequirePermission } from '../auth/decorators';
 import {
   type ChangeRoleInput,
   changeRoleSchema,
@@ -102,14 +103,4 @@ export class TeamController {
   ) {
     await this.team.resendInvite(auth, id, requestMeta(req));
   }
-}
-
-function requestMeta(req: Request): RequestMeta {
-  const ua = req.headers['user-agent'];
-  const id = (req as AuthedRequest).id;
-  return {
-    ip: req.ip ?? null,
-    userAgent: typeof ua === 'string' ? ua : null,
-    requestId: id === undefined ? null : String(id),
-  };
 }

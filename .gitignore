@@ -20,3 +20,16 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 .idea/
+
+# Local HA/monitoring rehearsal secrets
+infrastructure/docker/ha/secrets.env
+
+# Terraform local artifacts (lock files are committed)
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+backend.hcl
+crash.log
+uploads/

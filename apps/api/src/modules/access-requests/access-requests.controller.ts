@@ -1,3 +1,4 @@
+import { requestMeta } from '../../common/http/request-meta';
 import {
   Body,
   Controller,
@@ -17,14 +18,8 @@ import type { Request } from 'express';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { AppConfigService } from '../../config/app-config.service';
 import { CSRF_HEADER } from '../auth/auth.controller';
-import type { AuthContext, RequestMeta } from '../auth/auth.types';
-import {
-  AllowAudience,
-  type AuthedRequest,
-  CurrentAuth,
-  Public,
-  RequirePermission,
-} from '../auth/decorators';
+import type { AuthContext } from '../auth/auth.types';
+import { AllowAudience, CurrentAuth, Public, RequirePermission } from '../auth/decorators';
 import {
   type AccessRequestInput,
   accessRequestSchema,
@@ -117,14 +112,4 @@ export class PlatformAccessRequestsController {
   ) {
     await this.requests.reject(id, body, auth, requestMeta(req));
   }
-}
-
-function requestMeta(req: Request): RequestMeta {
-  const ua = req.headers['user-agent'];
-  const id = (req as AuthedRequest).id;
-  return {
-    ip: req.ip ?? null,
-    userAgent: typeof ua === 'string' ? ua : null,
-    requestId: id === undefined ? null : String(id),
-  };
 }

@@ -4,6 +4,7 @@ import { cn } from '@foodstack/ui/lib/utils';
 import { useQuery } from '@tanstack/react-query';
 import {
   Armchair,
+  Download,
   ArrowDownRight,
   ArrowRight,
   ArrowUpRight,
@@ -47,6 +48,8 @@ import {
   type Trend,
   useAnalytics,
 } from '@/lib/analytics';
+import { trendCsvRows } from '@/lib/analytics-export';
+import { downloadCsv } from '@/lib/csv';
 import { canAccessPath, hasPermissionAnywhere } from '@/lib/auth/access';
 import { authErrorMessage } from '@/lib/auth/errors';
 import { useEntitlement } from '@/lib/billing';
@@ -443,32 +446,45 @@ function RevenueTrend({ filters, currency }: { filters: Filters; currency: strin
             : 'Orders placed and cancelled, local time'
         }
         aside={
-          <div
-            className="flex rounded-lg border border-slate-200 p-0.5 text-xs dark:border-white/10"
-            role="group"
-            aria-label="Trend metric"
-          >
-            {(
-              [
-                ['money', 'Revenue'],
-                ['orders', 'Orders'],
-              ] as const
-            ).map(([k, l]) => (
-              <button
-                key={k}
-                type="button"
-                aria-pressed={metric === k}
-                onClick={() => setMetric(k)}
-                className={cn(
-                  'rounded-md px-2.5 py-1 font-medium',
-                  metric === k
-                    ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
-                    : 'text-muted-foreground',
-                )}
-              >
-                {l}
-              </button>
-            ))}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={!t || empty}
+              onClick={() =>
+                t && downloadCsv(`sales-${t.range.from}-to-${t.range.to}.csv`, trendCsvRows(t))
+              }
+              aria-label="Export sales report as CSV"
+              className="flex h-7 items-center gap-1 rounded-lg border px-2 text-xs font-medium hover:bg-muted disabled:opacity-40"
+            >
+              <Download className="size-3.5" /> CSV
+            </button>
+            <div
+              className="flex rounded-lg border border-slate-200 p-0.5 text-xs dark:border-white/10"
+              role="group"
+              aria-label="Trend metric"
+            >
+              {(
+                [
+                  ['money', 'Revenue'],
+                  ['orders', 'Orders'],
+                ] as const
+              ).map(([k, l]) => (
+                <button
+                  key={k}
+                  type="button"
+                  aria-pressed={metric === k}
+                  onClick={() => setMetric(k)}
+                  className={cn(
+                    'rounded-md px-2.5 py-1 font-medium',
+                    metric === k
+                      ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
+                      : 'text-muted-foreground',
+                  )}
+                >
+                  {l}
+                </button>
+              ))}
+            </div>
           </div>
         }
       />
@@ -962,9 +978,12 @@ function SalesDetail({ filters, currency }: { filters: Filters; currency: string
 }
 
 function CustomersRow({ filters, currency }: { filters: Filters; currency: string }) {
-  const q = useAnalytics<CustomerStats>('customers', filters);
+  // Customer-level analytics also need order:read (the API answers 403 without it): don't ask.
+  const canSeeCustomers = hasPermissionAnywhere(useProfile(), 'order:read');
+  const q = useAnalytics<CustomerStats>('customers', filters, {}, canSeeCustomers);
   const c = q.data;
-  const pct = (v: number | null) => (v === null ? '—' : `${v}%`);
+  const pct = (v: number | null) => (v === null ? '—' : `%`);
+  if (!canSeeCustomers) return null;
   const tiles: [string, string | undefined, string][] = [
     ['Customers', c && count(c.totalCustomers.value), 'With a completed order'],
     ['New', c && count(c.newCustomers), 'First order in this period'],

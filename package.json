@@ -7,7 +7,7 @@
   },
   "scripts": {
     "dev": "turbo run dev",
-    "dev:web": "turbo run dev --filter=@foodstack/web --filter=@foodstack/pos --filter=@foodstack/kitchen-display --filter=@foodstack/qr",
+    "dev:web": "turbo run dev --filter=@foodstack/web",
     "dev:api": "turbo run dev --filter=@foodstack/api",
     "build": "turbo run build",
     "lint": "turbo run lint",
@@ -20,11 +20,9 @@
     "db:migrate": "pnpm --filter @foodstack/api migration:run",
     "db:migrate:revert": "pnpm --filter @foodstack/api migration:revert",
     "docker:up": "docker compose up -d postgres redis mailpit",
-    "docker:down": "docker compose down",
-    "prepare": "husky"
+    "docker:down": "docker compose down"
   },
   "devDependencies": {
-    "husky": "9.1.7",
     "lint-staged": "17.6.0",
     "prettier": "3.9.10",
     "turbo": "2.11.10",

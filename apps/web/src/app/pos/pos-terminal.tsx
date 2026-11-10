@@ -5,6 +5,7 @@ import { ShoppingBag, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useState } from 'react';
 import { type Diet, usePosCatalog } from './catalog';
+import { TableBillsButton } from './table-bills';
 import { useWorkspaceBranch } from '@/components/workspace/workspace-page';
 import { authErrorMessage } from '@/lib/auth/errors';
 import { useNotify } from '@/lib/notify';
@@ -158,6 +159,11 @@ export function PosTerminal() {
         </AlertBanner>
       ) : null}
 
+      {catalog.tablesAreSample ? null : (
+        <div className="flex items-center justify-end border-b border-slate-200 px-4 py-2 dark:border-white/10">
+          <TableBillsButton branchId={branchId} />
+        </div>
+      )}
       <div className="flex min-h-0 flex-1">
         <ProductSection
           items={catalog.items}

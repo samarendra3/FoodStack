@@ -31,7 +31,11 @@ const API = '/api/v1';
 const SEQ = 200;
 const WARMUP = 20;
 const CONCURRENCY = 20;
-const PER_WORKER = 20;
+// PHASE4_ROUNDS > 0: interleaved A/B/B/A throughput rounds instead of the single comparison
+// (written to phase4-throughput.md). One sample per mode in a fixed order is too noisy on a laptop.
+const ROUNDS = Number(process.env.PHASE4_ROUNDS ?? 0);
+const PER_WORKER = Number(process.env.PHASE4_PER_WORKER ?? 20);
+const OUT = ROUNDS > 0 ? 'phase4-throughput' : 'phase4-cache';
 const suffix = () => randomBytes(4).toString('hex');
 const freshIp = () => `10.${[1, 2, 3].map(() => Math.floor(Math.random() * 250) + 1).join('.')}`;
 
@@ -144,8 +148,8 @@ describe('Phase 4 cache benchmark', () => {
   afterAll(async () => {
     const dir = join(__dirname, 'results');
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, 'phase4-cache.md'), out.join('\n') + '\n');
-    writeFileSync(join(dir, 'phase4-cache.json'), JSON.stringify(results, null, 2) + '\n');
+    writeFileSync(join(dir, `${OUT}.md`), out.join('\n') + '\n');
+    writeFileSync(join(dir, `${OUT}.json`), JSON.stringify(results, null, 2) + '\n');
     if (migrator?.isInitialized) {
       for (const table of [
         'inventory_stock',
@@ -277,7 +281,7 @@ describe('Phase 4 cache benchmark', () => {
     return results[mode]!;
   }
 
-  it('measures database-only vs cache-enabled', async () => {
+  (ROUNDS > 0 ? it.skip : it)('measures database-only vs cache-enabled', async () => {
     const db = await run('database');
     const cached = await run('cache');
     const cpu = cpus()[0]?.model ?? 'unknown CPU';
@@ -329,5 +333,51 @@ describe('Phase 4 cache benchmark', () => {
       '- PostgreSQL figures are `pg_stat_database` deltas for the test database divided by requests; they include other activity on that database during the run (none expected).',
     );
     expect(c2.statementsPerRequest).toBeLessThan(c1.statementsPerRequest);
+  });
+
+  (ROUNDS > 0 ? it : it.skip)('interleaved throughput rounds (A/B/B/A)', async () => {
+    const order: ('database' | 'cache')[] = [];
+    for (let r = 0; r < ROUNDS; r++)
+      order.push(
+        ...(r % 2 === 0 ? (['database', 'cache'] as const) : (['cache', 'database'] as const)),
+      );
+    const samples: { mode: string; rps: number; p50: number; p95: number; statements: number }[] =
+      [];
+    for (const mode of order) {
+      const r = (await run(mode)).concurrent as Record<string, number>;
+      samples.push({
+        mode,
+        rps: r.rps!,
+        p50: r.p50!,
+        p95: r.p95!,
+        statements: r.statementsPerRequest!,
+      });
+    }
+    const median = (xs: number[]) => {
+      const s = [...xs].sort((a, b) => a - b);
+      return s.length % 2 ? s[(s.length - 1) / 2]! : (s[s.length / 2 - 1]! + s[s.length / 2]!) / 2;
+    };
+    const by = (mode: string) => samples.filter((s) => s.mode === mode);
+    out.push(
+      '# Phase 4 cache throughput — interleaved rounds (measured)',
+      '',
+      `Machine: ${cpus()[0]?.model ?? 'unknown CPU'}, ${cpus().length} logical CPUs, ${(totalmem() / 2 ** 30).toFixed(0)} GiB RAM. ` +
+        `${ROUNDS} rounds, order A/B then B/A alternating; each sample is a fresh app, ${CONCURRENCY} workers × ${PER_WORKER} requests over the four cached endpoints. Run ${new Date().toISOString()}.`,
+      '',
+      '| # | Mode | Req/s | p50 ms | p95 ms | Statements/req |',
+      '|---:|---|---:|---:|---:|---:|',
+      ...samples.map(
+        (s, i) =>
+          `| ${i + 1} | ${s.mode} | ${f(s.rps)} | ${f(s.p50)} | ${f(s.p95)} | ${s.statements.toFixed(1)} |`,
+      ),
+      '',
+      '| Mode | Median req/s | Min | Max | Median p95 ms |',
+      '|---|---:|---:|---:|---:|',
+      ...['database', 'cache'].map((m) => {
+        const rps = by(m).map((s) => s.rps);
+        return `| ${m} | ${f(median(rps))} | ${f(Math.min(...rps))} | ${f(Math.max(...rps))} | ${f(median(by(m).map((s) => s.p95)))} |`;
+      }),
+    );
+    expect(samples).toHaveLength(ROUNDS * 2);
   });
 });

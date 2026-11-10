@@ -49,6 +49,8 @@ export class ProblemDetailsFilter implements ExceptionFilter {
       this.logger.error(exception instanceof Error ? exception.stack : String(exception));
     }
 
+    const retryAfter = retryAfterSeconds(exception);
+    if (retryAfter !== undefined) response.setHeader('Retry-After', String(retryAfter));
     response.status(problem.status).type('application/problem+json').json(problem);
   }
 
@@ -99,4 +101,13 @@ export class ProblemDetailsFilter implements ExceptionFilter {
       detail: 'An unexpected error occurred.',
     };
   }
+}
+
+/** `retryAfterSeconds` in an HttpException body becomes a Retry-After header (429/503). */
+function retryAfterSeconds(exception: unknown): number | undefined {
+  if (!(exception instanceof HttpException)) return undefined;
+  const body = exception.getResponse();
+  if (!body || typeof body !== 'object') return undefined;
+  const value = (body as { retryAfterSeconds?: unknown }).retryAfterSeconds;
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined;
 }

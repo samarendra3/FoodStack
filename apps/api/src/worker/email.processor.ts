@@ -1,3 +1,4 @@
+import { counter, histogram, PREFIX } from '../shared/metrics/metrics';
 import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { type Job, UnrecoverableError } from 'bullmq';
@@ -64,8 +65,15 @@ export class EmailProcessor extends WorkerHost implements OnApplicationBootstrap
   }
 
   @OnWorkerEvent('completed')
-  onCompleted(): void {
+  onCompleted(job?: Job<EmailJobData>): void {
     this.processed++;
+    workerJobs.inc({ queue: 'notifications', outcome: 'completed' });
+    if (job?.processedOn && job.finishedOn) {
+      workerJobSeconds.observe(
+        { queue: 'notifications' },
+        (job.finishedOn - job.processedOn) / 1000,
+      );
+    }
   }
 
   /** Job id, attempt and sanitized reason only: no recipient, subject or body. */
@@ -75,8 +83,22 @@ export class EmailProcessor extends WorkerHost implements OnApplicationBootstrap
     if (!job) return;
     const attempts = job.opts.attempts ?? 1;
     const final = job.attemptsMade >= attempts || error instanceof UnrecoverableError;
+    workerJobs.inc({ queue: 'notifications', outcome: final ? 'failed' : 'retried' });
     const line = `Email job ${job.id} attempt ${job.attemptsMade}/${attempts} failed: ${error.message}`;
     if (final) this.logger.error(line);
     else this.logger.warn(line);
   }
 }
+
+const workerJobs = counter({
+  name: `${PREFIX}worker_jobs_total`,
+  help: 'Worker job attempts by queue and outcome (completed, retried, failed = permanent)',
+  labelNames: ['queue', 'outcome'] as const,
+});
+
+const workerJobSeconds = histogram({
+  name: `${PREFIX}worker_job_duration_seconds`,
+  help: 'Worker job processing time (successful attempts)',
+  labelNames: ['queue'] as const,
+  buckets: [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 15, 30],
+});

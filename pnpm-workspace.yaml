@@ -10,14 +10,8 @@ allowBuilds:
   unrs-resolver: true
   '@scarf/scarf': false
 
-# Reviewed advisories (`pnpm audit` in CI fails on anything not listed). Re-check on every Expo
-# upgrade and remove entries once fixed. All four come only through Expo's development tooling
-# in apps/waiter-mobile (@expo/cli, @expo/config); none reach the API, web bundles or the app
-# binary. No in-range fix exists: @expo/cli requires zod ^3 (patched only in 4.6.6), and
-# glob/minimatch are patched only in later majors that Expo does not support.
+# Reviewed advisories (`pnpm audit` fails on anything not listed). Dev-only lint tooling; never
+# reaches the API or web bundles. Remove once eslint-config-next pulls a patched minimatch.
 auditConfig:
   ignoreGhsas:
-    - GHSA-mrhx-c7xc-m3w5 # high: zod <4.6.6 memory exhaustion (via @expo/cli)
-    - GHSA-g3hv-75wg-m249 # moderate: minimatch globparts DoS (via @expo/config)
-    - GHSA-3g3m-2fjr-6pw4 # moderate: glob AbortSignal bypass (via @expo/config)
-    - GHSA-gcqx-w48m-w2h4 # low: deepmerge prototype poisoning, no fix released (via @expo/config)
+    - GHSA-g3hv-75wg-m249 # moderate: minimatch globparts DoS (via eslint-config-next)

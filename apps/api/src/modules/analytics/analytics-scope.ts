@@ -7,6 +7,8 @@ import { type LocalRange, localToday, resolveRange } from './analytics-range';
 import type { AnalyticsQuery } from './analytics.schemas';
 
 export const REPORT_PERMISSION = 'report:view';
+/** Customer-level analytics follow the customers list, which is gated by order:read. */
+export const CUSTOMER_PERMISSION = 'order:read';
 
 /** Everything a query needs, derived from the caller's access — never from raw input alone. */
 export interface AnalyticsScope {
@@ -106,6 +108,17 @@ export async function resolveScope(
     channel: query.channel ?? null,
     method: query.method ?? null,
   };
+}
+
+/** 403 unless the caller holds `permission` on every branch the scope covers. */
+export function requireOnAllBranches(
+  access: TenantAccess,
+  scope: AnalyticsScope,
+  permission: string,
+): void {
+  if (!scope.branchIds.every((branchId) => hasPermission(access, permission, { branchId }))) {
+    throw forbidden('You cannot view customer analytics for this selection.');
+  }
 }
 
 /**

@@ -2,7 +2,7 @@
 
 import { EmptyState } from '@foodstack/ui/components/empty-state';
 import { Logo } from '@foodstack/ui/components/logo';
-import { MapPin } from 'lucide-react';
+import { ArrowLeft, MapPin } from 'lucide-react';
 import Link from 'next/link';
 import { createContext, type ReactNode, useContext, useState } from 'react';
 import { AccountMenu } from '@/components/account-menu';
@@ -54,6 +54,17 @@ function Workspace({ title, icon, emptyTitle, emptyDescription, children }: Work
     >
       <header className="sticky top-0 z-10 flex h-14 shrink-0 items-center justify-between gap-3 bg-sidebar px-4 text-sidebar-foreground sm:px-6">
         <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+          {canManage ? (
+            <Link
+              href="/restaurant/dashboard"
+              title="Back to admin"
+              aria-label="Back to admin"
+              className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-white/10 px-2 text-sm font-medium text-slate-200 hover:bg-white/10 hover:text-white sm:px-3"
+            >
+              <ArrowLeft className="size-4" />
+              <span className="hidden sm:inline">Back to admin</span>
+            </Link>
+          ) : null}
           <Logo inverted className="hidden sm:inline-flex" />
           <span className="hidden h-6 w-px bg-white/10 sm:block" aria-hidden />
           <span className="flex items-center gap-2 font-medium text-white [&_svg]:size-5 [&_svg]:text-emerald-300">

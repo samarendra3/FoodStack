@@ -5,7 +5,9 @@ import { Banknote, CheckCircle2, ChefHat, CreditCard, Loader2, QrCode, X } from 
 import { motion } from 'motion/react';
 import { type FormEvent, useState } from 'react';
 import { authErrorMessage } from '@/lib/auth/errors';
+import { useProfile } from '@/components/auth/auth-provider';
 import { type Order, type PaymentMethod, useOrderMutations } from '@/lib/orders';
+import { printReceipt, useReceiptHeader } from '@/lib/receipt';
 
 const METHODS: { id: PaymentMethod; label: string; icon: typeof Banknote }[] = [
   { id: 'cash', label: 'Cash', icon: Banknote },
@@ -30,6 +32,8 @@ export function PaymentDialog({
   onClose: () => void;
 }) {
   const { pay } = useOrderMutations();
+  const profile = useProfile();
+  const header = useReceiptHeader(order.branchId);
   const [current, setCurrent] = useState(order);
   const [method, setMethod] = useState<PaymentMethod>(defaultMethod ?? 'cash');
   const [amount, setAmount] = useState((order.dueMinor / 100).toFixed(2));
@@ -58,6 +62,21 @@ export function PaymentDialog({
         reference: reference.trim() || null,
       });
       setCurrent(next);
+      if (next.status === 'completed') {
+        // Fully paid: print the customer bill straight away.
+        printReceipt({
+          header: header.data ?? null,
+          fallbackName: profile.activeTenant?.name ?? 'Restaurant',
+          orders: [next],
+          tableText: next.tableLabel,
+          cashier: profile.user.fullName,
+          payment: {
+            method,
+            amountMinor: next.paidMinor,
+            tenderedMinor: method === 'cash' && tendered ? tenderedMinor : null,
+          },
+        });
+      }
       setAmount((next.dueMinor / 100).toFixed(2));
       setTendered('');
       setReference('');

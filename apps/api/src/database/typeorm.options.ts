@@ -46,7 +46,13 @@ export function buildDataSourceOptions(
       max: env.DATABASE_POOL_MAX,
       idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 5_000,
-      statement_timeout: env.DATABASE_STATEMENT_TIMEOUT_MS,
+      // Applied per transaction by DbContext (set_config(..., true)): works through PgBouncer in
+      // transaction mode, which rejects it as a startup parameter. Not a pg option (ignored by pg).
+      foodstackStatementTimeoutMs: env.DATABASE_STATEMENT_TIMEOUT_MS,
+      // Direct connections also get it at connect time (belt and braces for non-DbContext queries).
+      ...(env.DATABASE_POOLER === 'pgbouncer'
+        ? {}
+        : { statement_timeout: env.DATABASE_STATEMENT_TIMEOUT_MS }),
     },
   };
 }

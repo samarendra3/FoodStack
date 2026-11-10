@@ -1,0 +1,5 @@
+# Reviewed false positives (gitleaks). Do not add real secrets here.
+# Example MFA key: base64("dev-only-mfa-key-do-not-use-32b!"). Production config validation rejects it
+# (apps/api/src/config/env.validation.ts, EXAMPLE_MFA_ENCRYPTION_KEY).
+6b7778c5ed4b6c1bdda93c958aa3a76c4cb56e29:.env.example:generic-api-key:77
+6b7778c5ed4b6c1bdda93c958aa3a76c4cb56e29:apps/api/src/config/env.validation.ts:generic-api-key:57

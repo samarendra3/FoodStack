@@ -21,10 +21,15 @@ const when = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle
 export default function OrdersPage() {
   const overview = useRestaurantOverview();
   const [openId, setOpenId] = useState<string | null>(null);
-  const list = usePagedList<OrderRow>('orders-list', '/orders', {
-    sortBy: 'createdAt',
-    filters: { status: '', channel: '', branchId: '', from: '', to: '' },
-  });
+  const list = usePagedList<OrderRow>(
+    'orders-list',
+    '/orders',
+    {
+      sortBy: 'createdAt',
+      filters: { status: '', channel: '', branchId: '', from: '', to: '' },
+    },
+    { cursor: true },
+  );
   const branches = overview.data?.branches ?? [];
 
   const columns: Column<OrderRow>[] = [

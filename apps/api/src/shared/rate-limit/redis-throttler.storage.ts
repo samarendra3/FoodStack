@@ -1,6 +1,7 @@
 import { Logger } from '@nestjs/common';
 import type { ThrottlerStorage } from '@nestjs/throttler';
 import type Redis from 'ioredis';
+import { RateLimitUnavailableError } from './fail-closed';
 
 type ThrottlerStorageRecord = Awaited<ReturnType<ThrottlerStorage['increment']>>;
 
@@ -37,9 +38,10 @@ const toSeconds = (ms: number) => Math.max(0, Math.ceil(ms / 1000));
 /**
  * Shares rate-limit counters across API instances through Redis.
  *
- * Fails open: if Redis is unreachable the request is allowed (and the outage logged), because
- * locking every restaurant out of the API is worse than briefly losing rate limiting. Account
- * lockout for credentials is enforced separately in the database.
+ * On a Redis failure it throws RateLimitUnavailableError (outage logged, at most once per
+ * interval). OutageAwareThrottlerGuard then fails closed (503) on @FailClosed() routes — sign-in,
+ * MFA, password reset — and open everywhere else, because locking every restaurant out of
+ * day-to-day work is worse than briefly losing the general limit.
  */
 export class RedisThrottlerStorage implements ThrottlerStorage {
   private readonly logger = new Logger('RateLimit');
@@ -77,7 +79,8 @@ export class RedisThrottlerStorage implements ThrottlerStorage {
       };
     } catch (error) {
       this.logFailure(error as Error);
-      return { totalHits: 0, timeToExpire: toSeconds(ttl), isBlocked: false, timeToBlockExpire: 0 };
+      // The guard decides: fail closed on @FailClosed() routes, open elsewhere.
+      throw new RateLimitUnavailableError(error);
     }
   }
 
