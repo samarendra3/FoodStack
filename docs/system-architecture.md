@@ -23,7 +23,7 @@ flowchart LR
     RA[Restaurant Admin<br/>Next.js]
     POS[POS PWA<br/>Next.js + IndexedDB]
     KDS[Kitchen Display<br/>Next.js PWA]
-    WA[Waiter App<br/>React Native + Expo]
+    WA[Waiter App<br/>Next.js]
     QR[Customer QR Ordering<br/>Next.js]
   end
 
@@ -91,14 +91,14 @@ flowchart TB
 
 All frontends live in one Turborepo, share `packages/ui` (shadcn-based design system), `packages/api-client` (typed client generated from OpenAPI), `packages/validators` (Zod schemas shared with the backend), and `packages/auth`.
 
-| App                                          | Users                                                       | Responsibility                                                                                                                                             | Backend communication                                                                                                                    |
-| -------------------------------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| **Super Admin** (`apps/super-admin`)         | Platform staff                                              | Tenants, plans, subscriptions, billing of tenants, feature flags, impersonation (audited), platform health, support tooling                                | REST (platform-scoped endpoints `/api/v1/platform/*`), separate auth audience, mandatory MFA, IP allow-list                              |
-| **Restaurant Admin** (`apps/web`)            | Owner, admin, branch manager, inventory manager, accountant | Restaurant/branch setup, menu, pricing, taxes, staff, tables, inventory, suppliers, CRM, loyalty, reports, settings, subscription                          | REST + TanStack Query; Socket.IO for live dashboards                                                                                     |
-| **POS** (`apps/pos`)                         | Cashier, manager                                            | Touch-first billing, order types (dine-in/takeaway/delivery), split/merge bills, discounts, payments, shifts & cash drawer, KOT printing, **offline mode** | REST + sync API (`/api/v1/sync/*`), Socket.IO; IndexedDB local store; service worker                                                     |
-| **Kitchen Display** (`apps/kitchen-display`) | Kitchen staff                                               | Station-wise ticket queues, item status (accepted/preparing/ready), timers, bump/recall                                                                    | Socket.IO primarily (room per branch+station), REST to update status; small offline buffer                                               |
-| **Waiter** (`apps/waiter-mobile`)            | Waiters                                                     | Table map, take orders at table, send KOT, request bill, see ready items, call alerts                                                                      | REST + Socket.IO, Expo app on phones; short offline queue                                                                                |
-| **Customer QR** (`apps/qr`)                  | Guests (anonymous / OTP)                                    | Scan table QR → menu → cart → place order (optionally requires waiter approval) → pay online → order status                                                | Public REST `/api/v1/public/*` with signed table token, Socket.IO room per table session; SSR for fast mobile load; heavily rate-limited |
+| App                                           | Users                                                       | Responsibility                                                                                                                                             | Backend communication                                                                                                                    |
+| --------------------------------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| **Super Admin** (`apps/super-admin`)          | Platform staff                                              | Tenants, plans, subscriptions, billing of tenants, feature flags, impersonation (audited), platform health, support tooling                                | REST (platform-scoped endpoints `/api/v1/platform/*`), separate auth audience, mandatory MFA, IP allow-list                              |
+| **Restaurant Admin** (`apps/web`)             | Owner, admin, branch manager, inventory manager, accountant | Restaurant/branch setup, menu, pricing, taxes, staff, tables, inventory, suppliers, CRM, loyalty, reports, settings, subscription                          | REST + TanStack Query; Socket.IO for live dashboards                                                                                     |
+| **POS** (`apps/web` → `/pos`)                 | Cashier, manager                                            | Touch-first billing, order types (dine-in/takeaway/delivery), split/merge bills, discounts, payments, shifts & cash drawer, KOT printing, **offline mode** | REST + sync API (`/api/v1/sync/*`), Socket.IO; IndexedDB local store; service worker                                                     |
+| **Kitchen Display** (`apps/web` → `/kitchen`) | Kitchen staff                                               | Station-wise ticket queues, item status (accepted/preparing/ready), timers, bump/recall                                                                    | Socket.IO primarily (room per branch+station), REST to update status; small offline buffer                                               |
+| **Waiter** (`apps/web` → `/waiter`)           | Waiters                                                     | Table map, take orders at table, send KOT, request bill, see ready items, call alerts                                                                      | REST + Socket.IO, mobile web; short offline queue                                                                                        |
+| **Customer QR** (`apps/web` → `/t`)           | Guests (anonymous / OTP)                                    | Scan table QR → menu → cart → place order (optionally requires waiter approval) → pay online → order status                                                | Public REST `/api/v1/public/*` with signed table token, Socket.IO room per table session; SSR for fast mobile load; heavily rate-limited |
 
 Communication rules:
 
@@ -196,18 +196,14 @@ Rule: no dependency is added without checking its latest stable release, Node 26
 
 ## 9. Recommended Folder Structure
 
-> Status: implemented so far are `apps/{api,web,pos,kitchen-display,qr,waiter-mobile}` and `packages/{ui,types,validators,api-client,utils,config,eslint-config}` (`types` + `utils` hold what the plan calls `domain` until the order state machine arrives). `infrastructure/aws` replaces `infrastructure/terraform`; cross-app tests live in `tests/{integration,e2e}`; `super-admin`, `auth`, `offline`, `testing` are added in their phases.
+> Status: implemented so far are `apps/{api,web}` (POS, kitchen, waiter and QR ordering are routes inside `apps/web`; the separate placeholder apps were removed) and `packages/{ui,types,validators,api-client,utils,config,eslint-config}` (`types` + `utils` hold what the plan calls `domain` until the order state machine arrives). `infrastructure/aws` replaces `infrastructure/terraform`; cross-app tests live in `tests/{integration,e2e}`; `super-admin`, `auth`, `offline`, `testing` are added in their phases.
 
 ```
 foodstack/
 ├─ apps/
 │  ├─ api/                 NestJS (http + ws entrypoint, worker entrypoint)
 │  ├─ super-admin/         Next.js
-│  ├─ web/                 Next.js (restaurant admin)
-│  ├─ pos/                 Next.js PWA
-│  ├─ kitchen-display/     Next.js PWA
-│  ├─ waiter-mobile/       React Native + Expo
-│  └─ qr/                  Next.js (public)
+│  └─ web/                 Next.js (admin + /pos, /kitchen, /waiter, /t QR ordering)
 ├─ packages/
 │  ├─ ui/                  design system (shadcn components, tokens, charts)
 │  ├─ api-client/          generated OpenAPI client + TanStack Query hooks

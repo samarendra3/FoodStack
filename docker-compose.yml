@@ -144,45 +144,6 @@ services:
     ports: ['127.0.0.1:3000:3000']
     depends_on: [api]
 
-  pos:
-    profiles: [apps]
-    build:
-      {
-        <<: *next-build,
-        args:
-          { APP: pos, NEXT_PUBLIC_API_URL: '${NEXT_PUBLIC_API_URL:-http://localhost:4000/api/v1}' },
-      }
-    environment: { <<: *app-env, PORT: 3000 }
-    ports: ['127.0.0.1:3001:3000']
-    depends_on: [api]
-
-  kitchen-display:
-    profiles: [apps]
-    build:
-      {
-        <<: *next-build,
-        args:
-          {
-            APP: kitchen-display,
-            NEXT_PUBLIC_API_URL: '${NEXT_PUBLIC_API_URL:-http://localhost:4000/api/v1}',
-          },
-      }
-    environment: { <<: *app-env, PORT: 3000 }
-    ports: ['127.0.0.1:3002:3000']
-    depends_on: [api]
-
-  qr:
-    profiles: [apps]
-    build:
-      {
-        <<: *next-build,
-        args:
-          { APP: qr, NEXT_PUBLIC_API_URL: '${NEXT_PUBLIC_API_URL:-http://localhost:4000/api/v1}' },
-      }
-    environment: { <<: *app-env, PORT: 3000 }
-    ports: ['127.0.0.1:3003:3000']
-    depends_on: [api]
-
 volumes:
   postgres-data:
   redis-data:
