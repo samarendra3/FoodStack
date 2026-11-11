@@ -330,6 +330,7 @@ function TableOrder({
   const q = search.trim().toLowerCase();
   const items = (menu.data?.items ?? []).filter(
     (i) =>
+      i.isAvailable &&
       visible.has(i.categoryId) &&
       (!category || i.categoryId === category) &&
       (!q || i.name.toLowerCase().includes(q) || i.description?.toLowerCase().includes(q)),

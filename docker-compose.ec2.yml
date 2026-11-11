@@ -1,6 +1,8 @@
 services:
   api:
     ports: !reset []
+    volumes:
+      - /srv/foodstack/uploads:/app/uploads
 
   web:
     ports: !reset []
