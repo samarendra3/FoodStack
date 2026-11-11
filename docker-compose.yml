@@ -111,16 +111,20 @@ services:
   # Background worker: same image as the api, no HTTP listener (dist/worker.js). Delivers queued
   # email from the transactional outbox. Scale independently: docker compose up -d --scale worker=3
   # The api keeps working while it is down: email stays in the outbox until a worker returns.
+  
   worker:
     profiles: [apps]
     build: *api-build
     env_file: .env
     environment:
       <<: *api-env
-      SMTP_HOST: mailpit
-      SMTP_PORT: 1025
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SMTP_SECURE: ${SMTP_SECURE}
+      MAIL_FROM: "${MAIL_FROM}"
     command: ['node', 'dist/worker.js']
-    # SIGTERM: stop taking jobs, finish active sends (bounded by EMAIL_SEND_TIMEOUT_MS), exit.
     stop_grace_period: 45s
     depends_on:
       migrate: { condition: service_completed_successfully }
