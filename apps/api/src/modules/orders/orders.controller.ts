@@ -148,8 +148,9 @@ export class OrdersController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body(new ZodValidationPipe(paymentSchema)) body: PaymentInput,
     @Req() req: Request,
+    @Headers('idempotency-key') key: string | undefined,
   ) {
-    return this.orders.addPayment(auth, id, body, requestMeta(req));
+    return this.orders.addPayment(auth, id, body, requestMeta(req), idempotencyKey(key));
   }
 
   @Post('payments/:id/refunds')

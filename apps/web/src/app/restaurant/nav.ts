@@ -285,6 +285,13 @@ export const RESTAURANT_NAV: readonly NavGroup[] = [
     title: 'Billing & finance',
     items: [
       {
+        id: 'billing-desk',
+        label: 'Billing desk',
+        href: '/restaurant/billing',
+        icon: Wallet,
+        anyPermission: ['order:read', 'pos:access'],
+      },
+      {
         id: 'bills',
         label: 'Bills & Invoices',
         href: '/restaurant/orders?status=completed',

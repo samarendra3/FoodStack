@@ -7,6 +7,7 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  ParseUUIDPipe,
   Put,
   Post,
   Query,
@@ -20,9 +21,15 @@ import { requestMeta } from '../../common/http/request-meta';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import type { AuthContext } from '../auth/auth.types';
 import { CurrentAuth, Public, RequirePermission } from '../auth/decorators';
+import {
+  BillingDeskService,
+  billingListSchema,
+  reconciliationSchema,
+  resolveSchema,
+} from './billing-desk';
 import { OnlinePaymentsService } from './online-payments';
 
-export { OnlinePaymentsService };
+export { BillingDeskService, OnlinePaymentsService };
 
 const restaurantQuery = z.strictObject({ restaurantId: z.uuid() });
 const connectSchema = z.strictObject({
@@ -39,7 +46,45 @@ const connectSchema = z.strictObject({
 @ApiTags('Online payments')
 @Controller()
 export class OnlinePaymentsController {
-  constructor(private readonly payments: OnlinePaymentsService) {}
+  constructor(
+    private readonly payments: OnlinePaymentsService,
+    private readonly desk: BillingDeskService,
+  ) {}
+
+  // ---- billing desk ----
+
+  @Get('billing/bills')
+  @RequirePermission('menu:read')
+  @ApiOperation({ summary: 'Bills of a branch and day by payment status, with totals' })
+  bills(
+    @CurrentAuth() auth: AuthContext,
+    @Query(new ZodValidationPipe(billingListSchema)) q: z.infer<typeof billingListSchema>,
+  ) {
+    return this.desk.list(auth, q);
+  }
+
+  @Get('billing/reconciliation')
+  @RequirePermission('menu:read')
+  @ApiOperation({ summary: 'Collections by method, refunds, review queue and integrity checks' })
+  reconciliation(
+    @CurrentAuth() auth: AuthContext,
+    @Query(new ZodValidationPipe(reconciliationSchema)) q: z.infer<typeof reconciliationSchema>,
+  ) {
+    return this.desk.reconciliation(auth, q);
+  }
+
+  @Post('billing/payment-reviews/:intentId/resolve')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('order:refund')
+  @ApiOperation({ summary: 'Close an online payment parked for review (after handling it)' })
+  resolve(
+    @CurrentAuth() auth: AuthContext,
+    @Param('intentId', ParseUUIDPipe) intentId: string,
+    @Body(new ZodValidationPipe(resolveSchema)) body: z.infer<typeof resolveSchema>,
+    @Req() req: Request,
+  ) {
+    return this.desk.resolveReview(auth, intentId, body.note, requestMeta(req));
+  }
 
   @Get('payments/gateway-account')
   @RequirePermission('restaurant:manage')

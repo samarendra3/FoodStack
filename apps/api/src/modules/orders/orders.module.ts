@@ -5,7 +5,11 @@ import { PromotionsModule } from '../promotions/promotions.module';
 import { OrdersController } from './orders.controller';
 import { OrderEventsService } from './order-events';
 import { WaiterAssignmentsService } from './waiter-assignments';
-import { OnlinePaymentsController, OnlinePaymentsService } from './online-payments.controller';
+import {
+  BillingDeskService,
+  OnlinePaymentsController,
+  OnlinePaymentsService,
+} from './online-payments.controller';
 import { OrdersService } from './orders.service';
 import {
   GuestSessionsController,
@@ -26,6 +30,7 @@ import {
     OrderEventsService,
     WaiterAssignmentsService,
     OnlinePaymentsService,
+    BillingDeskService,
     GuestSessionsService,
   ],
 })

@@ -441,4 +441,146 @@ describe('Online payments into the restaurant account (integration)', () => {
     const b = await guestWithOrder();
     await guest('post', `/orders/${a.order.id}/pay`, b.token).expect(404);
   });
+
+  // ---- Phase 7: billing desk and reconciliation ----
+
+  describe('billing desk', () => {
+    let branchId: string;
+    beforeAll(async () => {
+      branchId = (
+        await migrator.query(`SELECT id FROM branches WHERE tenant_id = $1`, [alphaId])
+      )[0].id;
+    });
+    const counterOrder = async () =>
+      (
+        await call('owner', 'post', '/orders')
+          .set('Idempotency-Key', `o-${suffix()}${suffix()}`)
+          .send({
+            branchId,
+            channel: 'dine_in',
+            tableLabel: 'D1',
+            lines: [{ menuItemId: chai, quantity: 2 }],
+          })
+          .expect(201)
+      ).body.data as { id: string; totalMinor: number };
+
+    it('never collects twice for a retried or double-tapped payment', async () => {
+      const o = await counterOrder();
+      const key = `pay-${suffix()}${suffix()}`;
+      const pay = (orderId: string) =>
+        call('owner', 'post', `/orders/${orderId}/payments`)
+          .set('Idempotency-Key', key)
+          .send({ method: 'cash', amountMinor: 1000 });
+      const [a, b] = await Promise.all([pay(o.id), pay(o.id)]);
+      expect([a.status, b.status]).toEqual([201, 201]);
+      const rows = await migrator.query(
+        `SELECT count(*)::int AS n FROM payments WHERE order_id = $1`,
+        [o.id],
+      );
+      expect(rows[0].n).toBe(1);
+      const other = await counterOrder();
+      await pay(other.id).expect(409); // same key, different bill
+    });
+
+    it('lists bills by payment status with day totals', async () => {
+      const o = await counterOrder();
+      let desk = (await call('owner', 'get', `/billing/bills?branchId=${branchId}`).expect(200))
+        .body.data;
+      expect(desk.bills.find((b: { id: string }) => b.id === o.id)).toMatchObject({
+        paymentStatus: 'pending',
+        dueMinor: o.totalMinor,
+      });
+      await call('owner', 'post', `/orders/${o.id}/payments`)
+        .set('Idempotency-Key', `p-${suffix()}${suffix()}`)
+        .send({ method: 'card', amountMinor: 1000 })
+        .expect(201);
+      desk = (
+        await call(
+          'owner',
+          'get',
+          `/billing/bills?branchId=${branchId}&paymentStatus=partially_paid`,
+        ).expect(200)
+      ).body.data;
+      expect(desk.bills.map((b: { id: string }) => b.id)).toContain(o.id);
+      expect(
+        desk.bills.every((b: { paymentStatus: string }) => b.paymentStatus === 'partially_paid'),
+      ).toBe(true);
+      expect(desk.totals.partially_paid.count).toBeGreaterThanOrEqual(1);
+      const paid = (
+        await call(
+          'owner',
+          'get',
+          `/billing/bills?branchId=${branchId}&paymentStatus=paid,refunded,partially_refunded`,
+        ).expect(200)
+      ).body.data;
+      expect(paid.bills.some((b: { methods: string[] }) => b.methods.includes('online'))).toBe(
+        true,
+      );
+      // Waiters may view bills (order:read) but never collect money (needs pos:access).
+      await call('waiter', 'get', `/billing/bills?branchId=${branchId}`).expect(200);
+      await call('waiter', 'post', `/orders/${o.id}/payments`)
+        .set('Idempotency-Key', `w-${suffix()}${suffix()}`)
+        .send({ method: 'cash', amountMinor: 100 })
+        .expect(403);
+      const foreign = await call('bravoOwner', 'get', `/billing/bills?branchId=${branchId}`);
+      expect(foreign.status).toBe(403);
+    });
+
+    it('reconciles collections, surfaces payments needing review, and checks integrity', async () => {
+      const rec = (
+        await call('owner', 'get', `/billing/reconciliation?branchId=${branchId}`).expect(200)
+      ).body.data;
+      const online = rec.methods.find((m: { method: string }) => m.method === 'online');
+      expect(online.refundedMinor).toBe(1000); // the online refund made earlier
+      expect(online.netMinor).toBe(online.collectedMinor - 1000);
+      expect(rec.totalNetMinor).toBe(rec.totalCollectedMinor - rec.totalRefundedMinor);
+      expect(rec.integrity).toEqual({
+        paidMismatch: 0,
+        completedUnpaid: 0,
+        orphanOnlinePayments: 0,
+        ok: true,
+      });
+      expect(rec.needsReview.length).toBeGreaterThanOrEqual(1);
+
+      const review = rec.needsReview[0];
+      await call('waiter', 'post', `/billing/payment-reviews/${review.intentId}/resolve`)
+        .send({ note: 'Refunded in Razorpay dashboard' })
+        .expect(403);
+      await call('owner', 'post', `/billing/payment-reviews/${review.intentId}/resolve`)
+        .send({ note: 'Refunded in Razorpay dashboard' })
+        .expect(200);
+      await call('owner', 'post', `/billing/payment-reviews/${review.intentId}/resolve`)
+        .send({ note: 'again' })
+        .expect(409);
+      const after = (
+        await call('owner', 'get', `/billing/reconciliation?branchId=${branchId}`).expect(200)
+      ).body.data;
+      expect(
+        after.needsReview.some((r: { intentId: string }) => r.intentId === review.intentId),
+      ).toBe(false);
+    });
+
+    it('derives payment status from the money and nothing else', async () => {
+      const o = await counterOrder();
+      const status = async () =>
+        (await migrator.query(`SELECT payment_status FROM orders WHERE id = $1`, [o.id]))[0]
+          .payment_status;
+      expect(await status()).toBe('pending');
+      const pay = (
+        await call('owner', 'post', `/orders/${o.id}/payments`)
+          .set('Idempotency-Key', `p-${suffix()}${suffix()}`)
+          .send({ method: 'cash', amountMinor: o.totalMinor })
+          .expect(201)
+      ).body.data;
+      expect(await status()).toBe('paid');
+      await call('owner', 'post', `/payments/${pay.payments[0].id}/refunds`)
+        .send({ amountMinor: 500, reason: 'Late' })
+        .expect(201);
+      expect(await status()).toBe('partially_refunded');
+      await call('owner', 'post', `/payments/${pay.payments[0].id}/refunds`)
+        .send({ amountMinor: o.totalMinor - 500, reason: 'Late' })
+        .expect(201);
+      expect(await status()).toBe('refunded');
+    });
+  });
 });

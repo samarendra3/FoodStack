@@ -13,7 +13,7 @@ import {
   Receipt,
   X,
 } from 'lucide-react';
-import { type FormEvent, useEffect, useState } from 'react';
+import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { useAuth, useProfile } from '@/components/auth/auth-provider';
 import { authErrorMessage } from '@/lib/auth/errors';
 import { type Order, type PaymentMethod, useOrderMutations } from '@/lib/orders';
@@ -210,8 +210,11 @@ function TableBill({
   const tenderedMinor = Math.round(Number(tendered) * 100);
   const change = method === 'cash' && tendered ? tenderedMinor - due : null;
 
+  // One key per settle attempt; each order gets its own derived key. Kept across retries.
+  const attempt = useRef<string | null>(null);
   const collect = async (e: FormEvent) => {
     e.preventDefault();
+    attempt.current ??= crypto.randomUUID();
     setError(null);
     if (change !== null && change < 0) return setError('Cash received is less than the bill.');
     setPaying(true);
@@ -226,6 +229,7 @@ function TableBill({
             method,
             amountMinor: o.dueMinor,
             reference: reference.trim() || null,
+            requestId: `${attempt.current}-${o.id}`,
           });
         }
       }
@@ -241,6 +245,7 @@ function TableBill({
           tenderedMinor: method === 'cash' && tendered ? tenderedMinor : null,
         },
       };
+      attempt.current = null; // settled: the next collection is a new attempt
       printReceipt(receipt); // the customer bill prints as soon as payment is taken
       setSettled({ bill: billName, total: due, change, more: bills.length > 1, receipt });
       setTendered('');

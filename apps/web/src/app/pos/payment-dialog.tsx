@@ -3,7 +3,7 @@
 import { cn } from '@foodstack/ui/lib/utils';
 import { Banknote, CheckCircle2, ChefHat, CreditCard, Loader2, QrCode, X } from 'lucide-react';
 import { motion } from 'motion/react';
-import { type FormEvent, useState } from 'react';
+import { type FormEvent, useRef, useState } from 'react';
 import { authErrorMessage } from '@/lib/auth/errors';
 import { useProfile } from '@/components/auth/auth-provider';
 import { type Order, type PaymentMethod, useOrderMutations } from '@/lib/orders';
@@ -40,6 +40,8 @@ export function PaymentDialog({
   const [tendered, setTendered] = useState('');
   const [reference, setReference] = useState('');
   const [error, setError] = useState<string | null>(null);
+  // One key per collection attempt (kept across retries, renewed after success).
+  const requestKey = useRef(`pos-pay-${crypto.randomUUID()}`);
   const fmt = (m: number) => money(m, current.currencyCode);
   const amountMinor = Math.round(Number(amount) * 100);
   const tenderedMinor = Math.round(Number(tendered) * 100);
@@ -60,7 +62,9 @@ export function PaymentDialog({
         method,
         amountMinor,
         reference: reference.trim() || null,
+        requestId: requestKey.current,
       });
+      requestKey.current = `pos-pay-${crypto.randomUUID()}`;
       setCurrent(next);
       if (next.status === 'completed') {
         // Fully paid: print the customer bill straight away.

@@ -1,6 +1,6 @@
 # Restaurant Operations — Audit & Implementation Plan
 
-Status: **APPROVED. Phases 1–5 complete; phase 6 built and tested against a simulated gateway (awaiting a real Razorpay test-mode run); phases 7–11 pending.**
+Status: **APPROVED. Phases 1–5 complete; phase 6 built and tested against a simulated gateway (awaiting a real Razorpay test-mode run); phase 7 complete; phases 8–11 pending.**
 Scope: QR ordering, payments, kitchen, automatic waiter assignment, billing, invoices and receipt
 sharing, as one order lifecycle on the existing FoodStack architecture.
 
@@ -216,7 +216,8 @@ Approved order of work: 1 outbox and timeline · 2 signed QR links and QR improv
 | 4 | Item-level kitchen status + unified workflow | **Complete** (tests below) |
 | 5 | Automatic workload-based waiter assignment | **Complete** (tests below) |
 | 6 | Restaurant-owned online payments (Razorpay) | **Built, feature-flagged OFF**; verified against a simulated gateway; real test-mode run pending |
-| 7–11 | — | Pending (9, 10 need provider accounts) |
+| 7 | Billing desk + payment reconciliation | **Complete** (tests below) |
+| 8–11 | — | Pending (9, 10 need provider accounts) |
 
 ### Phase 1 report — Durable transactional outbox and readable order timeline
 
@@ -448,3 +449,43 @@ Approved order of work: 1 outbox and timeline · 2 signed QR links and QR improv
 **Limitations**
 - Online payment is offered to QR guests. Staff POS still takes counter payments (cash / card / UPI reference).
 - Refunds go to the gateway inside the database transaction. If the gateway accepts but the database commit then fails (rare), the refund exists at Razorpay without a FoodStack record; reconciliation in Phase 7 will surface it.
+
+### Phase 7 report — Billing dashboard and payment reconciliation
+
+**Delivered**
+- Migration `1798000037000-BillingPaymentStatus` (reversible):
+  - `orders.payment_status`, a **stored generated column** (`pending | partially_paid | paid | partially_refunded | refunded | cancelled`) derived only from the money columns, so it can never drift; indexed per branch and day
+  - `payments.client_request_id`, unique per tenant
+- **No double collection:**
+  - `POST /orders/:id/payments` accepts `Idempotency-Key`; concurrent or retried requests with the same key return the first result (advisory lock + unique index); reusing a key on another bill → 409
+  - POS payment dialog, table-bill settlement and the new desk all send a stable key per collection attempt
+- `GET /billing/bills?branchId&paymentStatus&date&q` (order read or POS access, branch-checked): the day's bills in the branch's timezone, with:
+  - table, bill and customer name and phone (POS customer or QR guest)
+  - subtotal, discount, tax, total, paid, refunded and due
+  - payment status, methods used, the guest's stated preference, and a needs-review flag
+  - totals per status
+
+  Search covers table, bill, order number and phone.
+- `GET /billing/reconciliation?branchId&date`:
+  - collected, refunded and net **per method** and in total
+  - bills still owing; online attempts started but never finished
+  - **online payments needing review**
+  - **integrity checks** that must be 0: paid total ≠ sum of payments; completed but not fully paid; online payment without a confirmed attempt
+- `POST /billing/payment-reviews/:intentId/resolve {note}` (refund permission; audited): closes a parked online payment after staff handle it in the gateway.
+- Order summaries include `paymentStatus`.
+- Web: **Billing desk** (`/restaurant/billing`, in Billing & finance):
+  - tiles for amount to collect, paid and refunded
+  - tabs: To collect / Paid / Refunded / Cancelled / Reconciliation
+  - **Open bill** (existing detail with timeline, refunds and cancel)
+  - **Collect** (cash / card / UPI, partial allowed, reference)
+  - reconciliation table, balance banner, review queue with **Mark resolved**
+
+**Security**
+- Viewing bills needs `order:read` or `pos:access` for the branch (waiters can view, as before). Collecting needs `pos:access`. Refunds and resolving reviews need `order:refund`. Completed payments are not editable (append-only payments; refunds only through the audited endpoint).
+
+**Tests (evidence)** — new in `online-payments.int-spec.ts → billing desk` (4 tests):
+- two concurrent collections with one key → 1 payment; same key on another bill → 409
+- status filtering and totals; waiter can view but cannot collect (403); other tenant 403
+- reconciliation: online refund reflected in net; totals add up; integrity all zero; review resolved (waiter 403, second resolve 409)
+- payment status transitions pending → paid → partially_refunded → refunded
+- Full API integration **354/354**, API unit **177/177**, web unit **36/36**; `tsc` and ESLint clean.

@@ -93,7 +93,16 @@ export function useOrderMutations() {
         method: PaymentMethod;
         amountMinor: number;
         reference: string | null;
-      }) => client.request<Order>(`/orders/${orderId}/payments`, { method: 'POST', body }),
+        /** Same key for retries of one collection: the server never charges twice. */
+        requestId?: string;
+      }) => {
+        const { requestId, ...payment } = body;
+        return client.request<Order>(`/orders/${orderId}/payments`, {
+          method: 'POST',
+          body: payment,
+          ...(requestId ? { idempotencyKey: requestId } : {}),
+        });
+      },
       onSuccess: refresh,
     }),
   };

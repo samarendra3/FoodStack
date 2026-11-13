@@ -59,6 +59,9 @@ export interface OrderRow {
   cancelled_at: Date | null;
   kitchen_updated_at: Date;
   payment_preference: 'counter_cash' | 'counter_card' | 'online' | null;
+  /** Generated column: the payment state machine, derived from the money columns. */
+  payment_status:
+    'cancelled' | 'pending' | 'partially_paid' | 'paid' | 'partially_refunded' | 'refunded';
 }
 
 /** Who performs an order write: a signed-in staff member, or a QR guest (no user, "system"). */
@@ -621,9 +624,41 @@ export class OrdersService {
     });
   }
 
-  /** Records a payment; several payments may settle one bill (split / partial). */
-  addPayment(auth: AuthContext, id: string, input: PaymentInput, meta: RequestMeta) {
+  /**
+   * Records a payment; several payments may settle one bill (split / partial). With an
+   * Idempotency-Key, a retried or double-tapped collection returns the first result instead of
+   * charging twice.
+   */
+  addPayment(
+    auth: AuthContext,
+    id: string,
+    input: PaymentInput,
+    meta: RequestMeta,
+    clientRequestId: string | null = null,
+  ) {
     return this.run(auth, async (db, access) => {
+      if (clientRequestId) {
+        await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+          `payment-request:${auth.tenantId}:${clientRequestId}`,
+        ]);
+        const seen = await db.one<{ order_id: string }>(
+          'SELECT order_id FROM payments WHERE client_request_id = $1',
+          [clientRequestId],
+        );
+        if (seen) {
+          if (seen.order_id !== id) {
+            throw conflict('IDEMPOTENCY_KEY_REUSED', 'This request key was used for another bill.');
+          }
+          const order = await this.load(db, id);
+          this.require(
+            access,
+            order.branch_id,
+            ['pos:access'],
+            'You cannot take payments at this branch.',
+          );
+          return this.detail(db, id);
+        }
+      }
       const order = await this.load(db, id, true);
       this.require(
         access,
@@ -631,7 +666,7 @@ export class OrdersService {
         ['pos:access'],
         'You cannot take payments at this branch.',
       );
-      await this.applyPayment(db, actorOf(auth), order, input, meta);
+      await this.applyPayment(db, actorOf(auth), order, input, meta, undefined, clientRequestId);
       return this.detail(db, id);
     });
   }
@@ -678,6 +713,7 @@ export class OrdersService {
     input: Omit<PaymentInput, 'method'> & { method: PaymentInput['method'] | 'online' },
     meta: RequestMeta,
     gateway?: { provider: string; paymentId: string; intentId: string },
+    clientRequestId: string | null = null,
   ) {
     if (order.status !== 'open') throw conflict('ORDER_CLOSED', 'This order is already closed.');
     const due = Number(order.total_minor) - Number(order.paid_minor);
@@ -689,8 +725,8 @@ export class OrdersService {
     }
     const payment = await db.one<{ id: string }>(
       `INSERT INTO payments (tenant_id, order_id, branch_id, method, amount_minor, reference, created_by,
-                             gateway, gateway_payment_id, payment_intent_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+                             gateway, gateway_payment_id, payment_intent_id, client_request_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
       [
         actor.tenantId,
         order.id,
@@ -702,6 +738,7 @@ export class OrdersService {
         gateway?.provider ?? null,
         gateway?.paymentId ?? null,
         gateway?.intentId ?? null,
+        clientRequestId,
       ],
     );
     const paidInFull = input.amountMinor === due;
@@ -1732,6 +1769,7 @@ function summary(o: OrderRow) {
     channel: o.channel,
     paymentPreference: o.payment_preference,
     status: o.status,
+    paymentStatus: o.payment_status,
     kitchenStatus: o.kitchen_status,
     tableLabel: o.table_label,
     billLabel: o.bill_label,
