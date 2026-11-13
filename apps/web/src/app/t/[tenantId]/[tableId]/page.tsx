@@ -55,9 +55,15 @@ interface PublicMenu {
       priceMinor: number;
       diet: 'veg' | 'non_veg' | 'egg';
       isAvailable: boolean;
+      /** Portions such as Full / Half. When present, the guest must pick one. */
+      variants?: { id: string; name: string; priceMinor: number }[];
     }[];
   }[];
 }
+
+/** Cart keys are "itemId" for single-price items and "itemId:variantId" for a portion. */
+const keyOf = (itemId: string, variantId?: string | null) =>
+  variantId ? `${itemId}:${variantId}` : itemId;
 
 const KITCHEN: Record<GuestOrder['kitchenStatus'], { label: string; cls: string }> = {
   new: { label: 'Sent to kitchen', cls: 'bg-sky-50 text-sky-700' },
@@ -177,9 +183,26 @@ export default function GuestTablePage({
     () => new Map((menu.data?.categories ?? []).flatMap((c) => c.items).map((i) => [i.id, i])),
     [menu.data],
   );
-  const lines = Object.entries(cart).filter(([id, q]) => q > 0 && items.get(id)?.isAvailable);
-  const cartTotal = lines.reduce((t, [id, q]) => t + (items.get(id)?.priceMinor ?? 0) * q, 0);
-  const cartCount = lines.reduce((t, [, q]) => t + q, 0);
+  // Resolve each cart entry to an item (and portion). Entries whose item or portion no longer
+  // exists, or an item that now has portions but was saved without one, are dropped.
+  const lines = Object.entries(cart).flatMap(([key, quantity]) => {
+    const [itemId, variantId] = key.split(':');
+    const item = items.get(itemId!);
+    if (!item?.isAvailable || quantity <= 0) return [];
+    const variants = item.variants ?? [];
+    const variant = variantId ? variants.find((v) => v.id === variantId) : undefined;
+    if (variants.length ? !variant : variantId) return [];
+    return [
+      {
+        menuItemId: item.id,
+        variantId: variant?.id ?? null,
+        quantity,
+        priceMinor: variant?.priceMinor ?? item.priceMinor,
+      },
+    ];
+  });
+  const cartTotal = lines.reduce((t, l) => t + l.priceMinor * l.quantity, 0);
+  const cartCount = lines.reduce((t, l) => t + l.quantity, 0);
   const add = (id: string, d: number) =>
     setCart((c) => ({ ...c, [id]: Math.max(0, Math.min(99, (c[id] ?? 0) + d)) }));
 
@@ -194,7 +217,11 @@ export default function GuestTablePage({
         method: 'POST',
         headers: { 'X-Guest-Token': token },
         idempotencyKey: pendingKey.current,
-        body: { lines: lines.map(([menuItemId, quantity]) => ({ menuItemId, quantity })) },
+        body: {
+          lines: lines.map(({ menuItemId, variantId, quantity }) =>
+            variantId ? { menuItemId, variantId, quantity } : { menuItemId, quantity },
+          ),
+        },
       });
       pendingKey.current = null;
       setCart({});
@@ -317,46 +344,71 @@ export default function GuestTablePage({
                     </span>
                     <div className="min-w-0 flex-1">
                       <p className="font-medium">{i.name}</p>
-                      <p className="text-sm text-slate-600">{money(i.priceMinor)}</p>
                       {i.description ? (
                         <p className="mt-0.5 line-clamp-2 text-xs text-slate-500">
                           {i.description}
                         </p>
                       ) : null}
+                      {!i.isAvailable ? (
+                        <p className="mt-1 text-xs text-slate-500">Sold out</p>
+                      ) : (
+                        <div className="mt-2 space-y-2">
+                          {(i.variants?.length
+                            ? i.variants.map((v) => ({
+                                key: keyOf(i.id, v.id),
+                                label: v.name as string | null,
+                                price: v.priceMinor,
+                              }))
+                            : [{ key: keyOf(i.id), label: null, price: i.priceMinor }]
+                          ).map((o) => {
+                            const qty = cart[o.key] ?? 0;
+                            const what = o.label ? `${i.name} (${o.label})` : i.name;
+                            return (
+                              <div key={o.key} className="flex items-center justify-between gap-3">
+                                <span className="text-sm text-slate-600">
+                                  {o.label ? (
+                                    <span className="font-medium text-slate-800">{o.label} · </span>
+                                  ) : null}
+                                  <span className="tabular-nums">{money(o.price)}</span>
+                                </span>
+                                {qty ? (
+                                  <div className="flex items-center gap-2 rounded-lg border border-emerald-600 px-1">
+                                    <button
+                                      type="button"
+                                      aria-label={`Remove one ${what}`}
+                                      onClick={() => add(o.key, -1)}
+                                      className="p-1.5 text-emerald-700"
+                                    >
+                                      <Minus className="size-4" />
+                                    </button>
+                                    <span className="w-4 text-center text-sm font-semibold tabular-nums">
+                                      {qty}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      aria-label={`Add one ${what}`}
+                                      onClick={() => add(o.key, 1)}
+                                      className="p-1.5 text-emerald-700"
+                                    >
+                                      <Plus className="size-4" />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    aria-label={`Add ${what}`}
+                                    onClick={() => add(o.key, 1)}
+                                    className="rounded-lg border border-emerald-600 px-4 py-1.5 text-sm font-semibold text-emerald-700"
+                                  >
+                                    Add
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
-                    {!i.isAvailable ? (
-                      <span className="text-xs text-slate-500">Sold out</span>
-                    ) : cart[i.id] ? (
-                      <div className="flex items-center gap-2 rounded-lg border border-emerald-600 px-1">
-                        <button
-                          type="button"
-                          aria-label={`Remove one ${i.name}`}
-                          onClick={() => add(i.id, -1)}
-                          className="p-1.5 text-emerald-700"
-                        >
-                          <Minus className="size-4" />
-                        </button>
-                        <span className="w-4 text-center text-sm font-semibold tabular-nums">
-                          {cart[i.id]}
-                        </span>
-                        <button
-                          type="button"
-                          aria-label={`Add one ${i.name}`}
-                          onClick={() => add(i.id, 1)}
-                          className="p-1.5 text-emerald-700"
-                        >
-                          <Plus className="size-4" />
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => add(i.id, 1)}
-                        className="rounded-lg border border-emerald-600 px-4 py-1.5 text-sm font-semibold text-emerald-700"
-                      >
-                        Add
-                      </button>
-                    )}
                   </li>
                 ))}
               </ul>

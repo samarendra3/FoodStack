@@ -64,8 +64,8 @@ export class PublicMenuController {
       );
       const items = await db.query<Record<string, unknown>>(
         `SELECT m.id, m.category_id, m.name, m.description, m.price_minor, m.diet, m.image_url, m.is_available,
-                coalesce((SELECT json_agg(json_build_object('name', v.name, 'priceMinor', v.price_minor) ORDER BY v.sort_order)
-                            FROM menu_item_variants v WHERE v.menu_item_id = m.id), '[]') AS variants
+                coalesce((SELECT json_agg(json_build_object('id', v.id, 'name', v.name, 'priceMinor', v.price_minor) ORDER BY v.sort_order)
+                            FROM menu_item_variants v WHERE v.menu_item_id = m.id AND v.deleted_at IS NULL), '[]') AS variants
            FROM menu_items m
           WHERE m.restaurant_id = $1 AND m.deleted_at IS NULL
             AND ($2::uuid IS NULL OR NOT EXISTS (SELECT 1 FROM menu_item_branches mb WHERE mb.menu_item_id = m.id)
@@ -95,10 +95,12 @@ export class PublicMenuController {
                 diet: i.diet,
                 imageUrl: i.image_url,
                 isAvailable: i.is_available,
-                variants: (i.variants as { name: string; priceMinor: string }[]).map((v) => ({
-                  ...v,
-                  priceMinor: Number(v.priceMinor),
-                })),
+                variants: (i.variants as { id: string; name: string; priceMinor: string }[]).map(
+                  (v) => ({
+                    ...v,
+                    priceMinor: Number(v.priceMinor),
+                  }),
+                ),
               })),
           }))
           .filter((c) => c.items.length > 0),
