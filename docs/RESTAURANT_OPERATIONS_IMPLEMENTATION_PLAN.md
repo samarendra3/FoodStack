@@ -1,6 +1,6 @@
 # Restaurant Operations — Audit & Implementation Plan
 
-Status: **APPROVED (decisions in §4 resolved below). Phase 1 complete; phases 2–11 pending.**
+Status: **APPROVED. Phases 1–2 complete; phases 3–11 pending.**
 Scope: QR ordering, payments, kitchen, automatic waiter assignment, billing, invoices and receipt
 sharing, as one order lifecycle on the existing FoodStack architecture.
 
@@ -211,7 +211,8 @@ Approved order of work: 1 outbox and timeline · 2 signed QR links and QR improv
 | # | Phase | Status |
 |---|---|---|
 | 1 | Durable outbox + order timeline | **Complete** (tests below) |
-| 2–11 | — | Pending |
+| 2 | Signed QR links + QR ordering improvements | **Complete** (tests below) |
+| 3–11 | — | Pending |
 
 ### Phase 1 report — Durable transactional outbox and readable order timeline
 
@@ -241,3 +242,40 @@ Approved order of work: 1 outbox and timeline · 2 signed QR links and QR improv
 **Known limitations**
 - Orders created before this migration have no timeline entries (the UI says so).
 - Replay window is 2 hours; longer gaps are covered by each screen's full re-fetch on reconnect.
+
+### Phase 2 report — Secure QR links (rotatable) and QR ordering improvements
+
+**Delivered**
+- Migration `1798000032000-SecureQrAndGuestDetails` (reversible):
+  - `dining_tables.qr_key` (random, 122+ bits; existing tables generated in the migration) and `qr_rotated_at`
+  - `restaurants.qr_legacy_links`: **ON for restaurants that existed before**, so printed codes keep working until reprinted; **OFF for new restaurants**
+  - `table_guests.phone` (E.164 check) with `receipt_consent`, `marketing_consent`, `consent_at`
+  - `orders.payment_preference` (`counter_cash | counter_card | online`)
+- QR links are now `/t/{tenant}/{table}?k={key}`. A **new** guest must present the current key (constant-time compare), otherwise `410 QR_LINK_EXPIRED`. A guest already seated (valid device token) keeps working after a rotation. Keyless links work only while the restaurant allows old codes.
+- Manager APIs (`branch:manage`, branch-scoped, audited; the key is never written to audit logs):
+  - `GET /tables/qr-links?branchId`
+  - `GET /tables/:id/qr`
+  - `POST /tables/:id/qr/rotate`
+  - `PUT /tables/qr-settings {branchId, legacyLinks}`
+- Guests:
+  - `PUT /public/guest/contact {phone, receiptConsent, marketingConsent}`. Indian 10-digit numbers are normalised to +91; receipt consent is forced off without a number; marketing is never assumed.
+  - The guest view returns `contact` for prefill.
+  - Guest orders accept `paymentPreference` (`counter_cash | counter_card`; online comes with Phase 6).
+- Web:
+  - **QR Menu admin** prints keyed codes. It has a per-table **New code** (rotate) button and a banner to turn old codes off or on.
+  - The **table session panel** shows the keyed guest link to managers only.
+  - The **guest page** has a **Checkout** sheet with payment choice (Cash or Card at counter), an optional mobile number, and separate receipt and marketing consent checkboxes.
+  - **Order detail** shows "Guest will pay".
+- Already true and kept: per-device guest tokens (separate carts and bills per guest at one table), repeat orders, server-side pricing, sold-out rejection (`Some items are sold out.`), live order status on the guest page.
+
+**Tests (evidence)**
+- New in `integration/table-sessions.int-spec.ts`:
+  - key required (no key / wrong key → 410, right key → 200); legacy toggle on and off
+  - rotation: old key refused for new devices, seated guest restored, new key works; another tenant gets 404; key absent from the audit log
+  - contact normalisation and validation; consent forced off without a number; 401 without a guest token
+  - payment preference stored; `online` rejected (400)
+- Full API integration **328/328**, API unit **177/177**, web unit **31/31**; `tsc` and ESLint clean on both apps.
+- Production builds not run locally (they disrupt the running dev servers); run in CI or before deploy.
+
+**Deployment notes**
+- After deploying, reprint QR codes from **QR Menu**, place them, then click **Turn off old codes** for each restaurant.

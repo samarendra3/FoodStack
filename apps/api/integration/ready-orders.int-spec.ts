@@ -395,7 +395,15 @@ describe('Ready-order events (integration)', () => {
     const join = await request(app.getHttpServer())
       .post(`${API}/public/guest/join`)
       .set('X-Forwarded-For', freshIp())
-      .send({ tenantId: alphaId, tableId: table })
+      .send({
+        tenantId: alphaId,
+        tableId: table,
+        key: (
+          (await migrator.query('SELECT qr_key FROM dining_tables WHERE id = $1', [table])) as {
+            qr_key: string;
+          }[]
+        )[0]!.qr_key,
+      })
       .expect(200);
     const res = await request(app.getHttpServer())
       .post(`${API}/public/guest/orders`)

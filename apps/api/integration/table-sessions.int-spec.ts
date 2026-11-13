@@ -33,15 +33,18 @@ describe('QR guests and table sessions (integration)', () => {
   const item: Record<string, string> = {};
 
   const http = () => request(app.getHttpServer());
-  const staff = (who: string, method: 'get' | 'post', url: string) =>
+  const staff = (who: string, method: 'get' | 'post' | 'put', url: string) =>
     http()
       [method](`${API}${url}`)
       .set('X-Forwarded-For', freshIp())
       .set('Authorization', `Bearer ${tokens[who]}`);
+  /** Table QR keys (the `?k=` of each printed code), loaded after the tables are created. */
+  const qrKeys: Record<string, string> = {};
   const join = (tenantId: string, tableId: string, token?: string, name?: string) => {
     const r = http().post(`${API}/public/guest/join`).set('X-Forwarded-For', freshIp());
     if (token) r.set('X-Guest-Token', token);
-    return r.send({ tenantId, tableId, ...(name ? { name } : {}) });
+    const key = qrKeys[tableId];
+    return r.send({ tenantId, tableId, ...(key ? { key } : {}), ...(name ? { name } : {}) });
   };
   const me = (token: string) =>
     http().get(`${API}/public/guest`).set('X-Forwarded-For', freshIp()).set('X-Guest-Token', token);
@@ -135,6 +138,11 @@ describe('QR guests and table sessions (integration)', () => {
         .send({ branchId: bravo.main, label: 'B1' })
         .expect(201)
     ).body.data.id;
+    for (const r of (await migrator.query(
+      `SELECT id, qr_key FROM dining_tables WHERE id = ANY($1::uuid[])`,
+      [[table1, table2, bravoTable]],
+    )) as { id: string; qr_key: string }[])
+      qrKeys[r.id] = r.qr_key;
   });
 
   afterAll(async () => {
@@ -378,5 +386,108 @@ describe('QR guests and table sessions (integration)', () => {
       .send({ method: 'cash', amountMinor: 100 })
       .expect(404);
     await staff('bravoOwner', 'post', `/table-sessions/${s.session.id}/close`).expect(404);
+  });
+
+  // ---- Phase 2: secure QR links, guest contact & consent, payment choice ----
+
+  const rawJoin = (body: Record<string, unknown>, token?: string) => {
+    const r = http().post(`${API}/public/guest/join`).set('X-Forwarded-For', freshIp());
+    if (token) r.set('X-Guest-Token', token);
+    return r.send(body);
+  };
+
+  it('requires the table QR key for new guests unless old links are allowed', async () => {
+    // Restaurants created after the migration start with old (keyless) links off.
+    const none = await rawJoin({ tenantId: alpha.id, tableId: table2 }).expect(410);
+    expect(none.body.code ?? none.body.error?.code).toBeDefined();
+    await rawJoin({ tenantId: alpha.id, tableId: table2, key: 'x'.repeat(32) }).expect(410);
+    await rawJoin({ tenantId: alpha.id, tableId: table2, key: qrKeys[table2] }).expect(200);
+
+    // A manager can temporarily allow the old printed codes.
+    await staff('owner', 'put', '/tables/qr-settings')
+      .send({ branchId: alpha.main, legacyLinks: true })
+      .expect(200);
+    await rawJoin({ tenantId: alpha.id, tableId: table2 }).expect(200);
+    await staff('owner', 'put', '/tables/qr-settings')
+      .send({ branchId: alpha.main, legacyLinks: false })
+      .expect(200);
+    await rawJoin({ tenantId: alpha.id, tableId: table2 }).expect(410);
+  });
+
+  it('rotates a table key: old code stops working, seated guests are unaffected', async () => {
+    const oldKey = qrKeys[table2]!;
+    const seated = (await rawJoin({ tenantId: alpha.id, tableId: table2, key: oldKey }).expect(200))
+      .body.data.token as string;
+    expect((await staff('owner', 'get', `/tables/${table2}/qr`).expect(200)).body.data.key).toBe(
+      oldKey,
+    );
+
+    const rotated = (await staff('owner', 'post', `/tables/${table2}/qr/rotate`).expect(200)).body
+      .data.key as string;
+    expect(rotated).not.toBe(oldKey);
+    await rawJoin({ tenantId: alpha.id, tableId: table2, key: oldKey }).expect(410); // new device
+    // The guest already seated re-opens the page (old link, own token): still their bill.
+    const back = (
+      await rawJoin({ tenantId: alpha.id, tableId: table2, key: oldKey }, seated).expect(200)
+    ).body.data;
+    expect(back.restored).toBe(true);
+    await rawJoin({ tenantId: alpha.id, tableId: table2, key: rotated }).expect(200);
+    qrKeys[table2] = rotated;
+
+    // Keys are manager-only and tenant-scoped; the audit log never stores the key.
+    await staff('bravoOwner', 'get', `/tables/${table2}/qr`).expect(404);
+    await staff('bravoOwner', 'post', `/tables/${table2}/qr/rotate`).expect(404);
+    const audit = (await migrator.query(
+      `SELECT metadata FROM audit_logs WHERE action = 'table.qr_rotated' AND entity_id = $1`,
+      [table2],
+    )) as { metadata: unknown }[];
+    expect(JSON.stringify(audit)).not.toContain(rotated);
+  });
+
+  it('stores an optional mobile number with explicit consent', async () => {
+    const token = (await join(alpha.id, table1).expect(200)).body.data.token as string;
+    const put = (body: object) =>
+      http()
+        .put(`${API}/public/guest/contact`)
+        .set('X-Forwarded-For', freshIp())
+        .set('X-Guest-Token', token)
+        .send(body);
+    const saved = (
+      await put({ phone: '98765 43210', receiptConsent: true, marketingConsent: false }).expect(200)
+    ).body.data.contact;
+    expect(saved).toEqual({
+      phone: '+919876543210',
+      receiptConsent: true,
+      marketingConsent: false,
+    });
+    await put({ phone: '12345', receiptConsent: true, marketingConsent: false }).expect(400);
+    // No number → no receipt consent, whatever the client sends.
+    const cleared = (
+      await put({ phone: null, receiptConsent: true, marketingConsent: true }).expect(200)
+    ).body.data.contact;
+    expect(cleared).toEqual({ phone: null, receiptConsent: false, marketingConsent: true });
+    // Without a guest token nothing is written.
+    await http()
+      .put(`${API}/public/guest/contact`)
+      .set('X-Forwarded-For', freshIp())
+      .send({ phone: null, receiptConsent: false, marketingConsent: false })
+      .expect(401);
+  });
+
+  it("records the guest's payment choice on the order", async () => {
+    const token = (await join(alpha.id, table1).expect(200)).body.data.token as string;
+    const name = Object.keys(item)[0]!;
+    const send = (paymentPreference: string) =>
+      http()
+        .post(`${API}/public/guest/orders`)
+        .set('X-Forwarded-For', freshIp())
+        .set('X-Guest-Token', token)
+        .set('Idempotency-Key', randomUUID())
+        .send({ paymentPreference, lines: [{ menuItemId: item[name], quantity: 1 }] });
+    const res = await send('counter_card').expect(201);
+    const detail = (await staff('owner', 'get', `/orders/${res.body.data.order.id}`).expect(200))
+      .body.data;
+    expect(detail.paymentPreference).toBe('counter_card');
+    await send('online').expect(400); // online payment arrives with the payment phase
   });
 });

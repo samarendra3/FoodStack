@@ -109,9 +109,15 @@ export function TableSessionPanel({
       style: 'currency',
       currency: d?.session.currencyCode ?? 'INR',
     }).format(m / 100);
+  // The link carries the table's QR secret; only managers may see it (others get no link).
+  const qr = useQuery({
+    queryKey: ['table-qr', tableId],
+    queryFn: () => client.request<{ key: string }>(`/tables/${tableId}/qr`),
+    retry: false,
+  });
   const qrUrl =
-    typeof window !== 'undefined' && profile.activeTenant
-      ? `${window.location.origin}/t/${profile.activeTenant.id}/${tableId}`
+    typeof window !== 'undefined' && profile.activeTenant && qr.data
+      ? `${window.location.origin}/t/${profile.activeTenant.id}/${tableId}?k=${qr.data.key}`
       : '';
 
   const refresh = async () => {
@@ -175,24 +181,26 @@ export function TableSessionPanel({
           ) : null}
           {q.isPending ? <Loader2 className="mx-auto size-5 animate-spin text-slate-400" /> : null}
 
-          <div className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 p-3 text-sm dark:bg-white/5">
-            <QrCode className="size-4 text-slate-500" />
-            <span className="text-muted-foreground">Guest ordering link for this table:</span>
-            <code className="min-w-0 flex-1 truncate text-xs">{qrUrl}</code>
-            <button
-              type="button"
-              className={btn}
-              onClick={() => {
-                void navigator.clipboard.writeText(qrUrl).then(() => {
-                  setCopied(true);
-                  setTimeout(() => setCopied(false), 1500);
-                });
-              }}
-            >
-              {copied ? <Check className="size-4" /> : <Copy className="size-4" />}{' '}
-              {copied ? 'Copied' : 'Copy'}
-            </button>
-          </div>
+          {qrUrl ? (
+            <div className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 p-3 text-sm dark:bg-white/5">
+              <QrCode className="size-4 text-slate-500" />
+              <span className="text-muted-foreground">Guest ordering link for this table:</span>
+              <code className="min-w-0 flex-1 truncate text-xs">{qrUrl}</code>
+              <button
+                type="button"
+                className={btn}
+                onClick={() => {
+                  void navigator.clipboard.writeText(qrUrl).then(() => {
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 1500);
+                  });
+                }}
+              >
+                {copied ? <Check className="size-4" /> : <Copy className="size-4" />}{' '}
+                {copied ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+          ) : null}
 
           {d === null ? (
             <p className="py-8 text-center text-sm text-muted-foreground">

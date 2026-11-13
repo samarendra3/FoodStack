@@ -12,6 +12,8 @@ export interface Order {
   branchId: string;
   orderNumber: number;
   channel: Channel;
+  /** How a QR guest said they will pay (null for staff orders). */
+  paymentPreference?: 'counter_cash' | 'counter_card' | 'online' | null;
   status: 'open' | 'completed' | 'cancelled';
   kitchenStatus: KitchenStatus;
   tableLabel: string | null;

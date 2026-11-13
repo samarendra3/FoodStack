@@ -4,6 +4,7 @@ import {
   ConflictException,
   Controller,
   Get,
+  GoneException,
   Headers,
   HttpCode,
   HttpStatus,
@@ -12,6 +13,7 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Put,
   Query,
   Req,
   UnauthorizedException,
@@ -19,7 +21,7 @@ import {
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { requestMeta } from '../../common/http/request-meta';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
@@ -57,9 +59,44 @@ const TOKEN = /^([0-9a-f-]{36})\.([A-Za-z0-9_-]{43})$/;
 const joinSchema = z.strictObject({
   tenantId: z.uuid(),
   tableId: z.uuid(),
+  /** The table's QR secret (`?k=` in the printed link). */
+  key: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z0-9_-]{16,64}$/)
+    .optional(),
   name: z.string().trim().max(20).optional(),
 });
-const guestOrderSchema = createOrderSchema.pick({ lines: true, note: true });
+const guestOrderSchema = createOrderSchema.pick({
+  lines: true,
+  note: true,
+  paymentPreference: true,
+});
+/** Indian 10-digit mobiles get +91; anything else must already be in +<country><number> form. */
+export const normalizePhone = (raw: string) => {
+  const v = raw.replace(/[\s()-]/g, '');
+  if (/^[6-9][0-9]{9}$/.test(v)) return `+91${v}`;
+  if (/^0[6-9][0-9]{9}$/.test(v)) return `+91${v.slice(1)}`;
+  if (/^91[6-9][0-9]{9}$/.test(v)) return `+${v}`;
+  return v;
+};
+const contactSchema = z.strictObject({
+  phone: z
+    .string()
+    .trim()
+    .transform(normalizePhone)
+    .pipe(z.string().regex(/^\+[1-9][0-9]{7,14}$/, 'Enter a valid mobile number'))
+    .nullable(),
+  /** Send this guest's bill / receipt to the phone (transactional). */
+  receiptConsent: z.boolean(),
+  /** Offers and promotions. Never assumed; off unless ticked. */
+  marketingConsent: z.boolean(),
+});
+const keyMatches = (given: string, expected: string) => {
+  const a = Buffer.from(given);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+};
 const payScopeSchema = paymentSchema.extend({
   guestId: z.uuid().optional(),
   unassigned: z.boolean().optional(),
@@ -92,8 +129,11 @@ export class GuestSessionsService {
         branch_id: string;
         restaurant_id: string;
         tenant_status: string;
+        qr_key: string;
+        qr_legacy_links: boolean;
       }>(
-        `SELECT t.id, t.branch_id, b.restaurant_id, tn.status AS tenant_status
+        `SELECT t.id, t.branch_id, b.restaurant_id, tn.status AS tenant_status, t.qr_key,
+                r.qr_legacy_links
            FROM dining_tables t
            JOIN branches b ON b.id = t.branch_id
            JOIN restaurants r ON r.id = b.restaurant_id AND r.status = 'active'
@@ -128,6 +168,17 @@ export class GuestSessionsService {
         }
       }
 
+      // A NEW guest needs the table's current QR key. (A guest already seated, restored above,
+      // keeps working after a rotation.) Links printed before keys existed work only while the
+      // restaurant still allows legacy links.
+      const allowed = input.key ? keyMatches(input.key, table.qr_key) : table.qr_legacy_links;
+      if (!allowed) {
+        throw new GoneException({
+          code: 'QR_LINK_EXPIRED',
+          message: 'This QR code is no longer valid. Please scan the code on your table.',
+        });
+      }
+
       // New guest (first scan, a closed sitting, or another table): join or open the sitting.
       const sessionId = await openTableSession(db, input.tenantId, table.branch_id, table.id, 'qr');
       // openTableSession holds the per-table lock, so guest numbers cannot collide.
@@ -142,6 +193,18 @@ export class GuestSessionsService {
         [input.tenantId, sessionId, hash(fresh), input.name || `Guest ${next!.n}`, next!.n],
       );
       return { token: fresh, restored: false, ...(await this.view(db, sessionId, g!.id)) };
+    });
+  }
+
+  /** Saves (or clears) the guest's mobile number and consent choices. */
+  contact(token: string | undefined, input: z.infer<typeof contactSchema>) {
+    return this.asGuest(token, async (db, g) => {
+      await db.query(
+        `UPDATE table_guests SET phone = $2, receipt_consent = $3, marketing_consent = $4,
+                consent_at = now() WHERE id = $1`,
+        [g.id, input.phone, input.phone ? input.receiptConsent : false, input.marketingConsent],
+      );
+      return this.view(db, g.session_id, g.id);
     });
   }
 
@@ -180,6 +243,7 @@ export class GuestSessionsService {
           tableLabel: s.table_label,
           billLabel: g.display_name,
           note: input.note ?? null,
+          paymentPreference: input.paymentPreference ?? null,
           couponCode: null,
           customer: null,
           lines: input.lines,
@@ -199,10 +263,22 @@ export class GuestSessionsService {
       `SELECT r.id AS restaurant_id, r.name FROM branches b JOIN restaurants r ON r.id = b.restaurant_id WHERE b.id = $1`,
       [s!.branch_id],
     );
+    const c = await db.one<{
+      phone: string | null;
+      receipt_consent: boolean;
+      marketing_consent: boolean;
+    }>(`SELECT phone, receipt_consent, marketing_consent FROM table_guests WHERE id = $1`, [
+      guestId,
+    ]);
     return {
       restaurant: { id: r!.restaurant_id, name: r!.name },
       session: v.session,
       guest: v.guests[0] ?? null,
+      contact: {
+        phone: c?.phone ?? null,
+        receiptConsent: c?.receipt_consent ?? false,
+        marketingConsent: c?.marketing_consent ?? false,
+      },
     };
   }
 
@@ -261,6 +337,16 @@ export class GuestSessionsController {
     @Headers('x-guest-token') token: string | undefined,
   ) {
     return this.guests.join(body, token);
+  }
+
+  @Put('contact')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @ApiOperation({ summary: "Set the guest's mobile number and receipt / marketing consent" })
+  contact(
+    @Headers('x-guest-token') token: string | undefined,
+    @Body(new ZodValidationPipe(contactSchema)) body: z.infer<typeof contactSchema>,
+  ) {
+    return this.guests.contact(token, body);
   }
 
   @Get()

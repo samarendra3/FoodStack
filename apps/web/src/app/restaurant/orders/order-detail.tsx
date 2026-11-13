@@ -190,6 +190,18 @@ export function OrderDetail({
                 <dd className="tabular-nums">{fmt(o.totalMinor)}</dd>
               </div>
               {o.dueMinor > 0 ? <Row k="Due" v={fmt(o.dueMinor)} /> : null}
+              {o.paymentPreference ? (
+                <Row
+                  k="Guest will pay"
+                  v={
+                    {
+                      counter_cash: 'Cash at counter',
+                      counter_card: 'Card at counter',
+                      online: 'Online',
+                    }[o.paymentPreference]
+                  }
+                />
+              ) : null}
             </dl>
 
             <OrderTimeline orderId={id} fmt={fmt} />

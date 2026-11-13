@@ -11,11 +11,13 @@ import {
   Param,
   ParseUUIDPipe,
   Patch,
+  Put,
   Post,
   Query,
   Req,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { randomBytes } from 'node:crypto';
 import type { Request } from 'express';
 import { z } from 'zod';
 import { requestMeta } from '../../common/http/request-meta';
@@ -32,6 +34,7 @@ const area = z.string().trim().min(1).max(40);
 const seats = z.number().int().min(1).max(50);
 
 const listSchema = z.strictObject({ branchId: z.uuid() });
+const qrSettingsSchema = z.strictObject({ branchId: z.uuid(), legacyLinks: z.boolean() });
 const createSchema = z.strictObject({
   branchId: z.uuid(),
   area: area.default('Main area'),
@@ -192,6 +195,104 @@ export class TablesController {
         created: rows.length,
       });
       return { created: rows.length, skipped: labels.length - rows.length };
+    });
+  }
+
+  // ---- QR links (secret per table, rotatable) ----
+
+  @Get('qr-links')
+  @RequirePermission('branch:manage')
+  @ApiOperation({
+    summary: "Each table's current QR key (managers only) and the legacy-link setting",
+  })
+  qrLinks(
+    @CurrentAuth() auth: AuthContext,
+    @Query(new ZodValidationPipe(listSchema)) q: z.infer<typeof listSchema>,
+  ) {
+    return this.run(auth, async (db, access) => {
+      this.assertManage(access, q.branchId);
+      const r = await db.one<{ qr_legacy_links: boolean }>(
+        `SELECT r.qr_legacy_links FROM branches b JOIN restaurants r ON r.id = b.restaurant_id
+          WHERE b.id = $1`,
+        [q.branchId],
+      );
+      const rows = await db.query<{
+        id: string;
+        label: string;
+        qr_key: string;
+        qr_rotated_at: Date | null;
+      }>(
+        `SELECT id, label, qr_key, qr_rotated_at FROM dining_tables
+          WHERE branch_id = $1 AND deleted_at IS NULL ORDER BY lower(area), sort_order, lower(label)`,
+        [q.branchId],
+      );
+      return {
+        legacyLinks: r?.qr_legacy_links ?? false,
+        tables: rows.map((t) => ({
+          id: t.id,
+          label: t.label,
+          key: t.qr_key,
+          rotatedAt: t.qr_rotated_at ? new Date(t.qr_rotated_at).toISOString() : null,
+        })),
+      };
+    });
+  }
+
+  @Get(':id/qr')
+  @RequirePermission('branch:manage')
+  @ApiOperation({ summary: "One table's current QR key (managers only)" })
+  qrLink(@CurrentAuth() auth: AuthContext, @Param('id', ParseUUIDPipe) id: string) {
+    return this.run(auth, async (db, access) => {
+      await this.tableForManage(db, access, id);
+      const t = await db.one<{ qr_key: string }>('SELECT qr_key FROM dining_tables WHERE id = $1', [
+        id,
+      ]);
+      return { id, key: t!.qr_key };
+    });
+  }
+
+  @Post(':id/qr/rotate')
+  @HttpCode(200)
+  @RequirePermission('branch:manage')
+  @ApiOperation({ summary: "Replace a table's QR key: the old printed code stops working" })
+  rotateQr(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: Request,
+  ) {
+    return this.run(auth, async (db, access) => {
+      await this.tableForManage(db, access, id);
+      const key = randomBytes(16).toString('base64url');
+      await db.query(`UPDATE dining_tables SET qr_key = $2, qr_rotated_at = now() WHERE id = $1`, [
+        id,
+        key,
+      ]);
+      // The key itself is never written to the audit log.
+      await this.audit(db, auth, req, 'table.qr_rotated', id, {});
+      return { id, key };
+    });
+  }
+
+  @Put('qr-settings')
+  @RequirePermission('branch:manage')
+  @ApiOperation({ summary: 'Allow or block QR links printed before table keys existed' })
+  qrSettings(
+    @CurrentAuth() auth: AuthContext,
+    @Body(new ZodValidationPipe(qrSettingsSchema)) body: z.infer<typeof qrSettingsSchema>,
+    @Req() req: Request,
+  ) {
+    return this.run(auth, async (db, access) => {
+      this.assertManage(access, body.branchId);
+      const r = await db.one<{ id: string }>(
+        `UPDATE restaurants r SET qr_legacy_links = $2 FROM branches b
+          WHERE b.id = $1 AND r.id = b.restaurant_id RETURNING r.id`,
+        [body.branchId, body.legacyLinks],
+      );
+      if (!r) throw forbidden();
+      await this.audit(db, auth, req, 'restaurant.qr_legacy_links', r.id, {
+        legacyLinks: body.legacyLinks,
+      });
+      return { legacyLinks: body.legacyLinks };
     });
   }
 

@@ -58,6 +58,7 @@ interface OrderRow {
   completed_at: Date | null;
   cancelled_at: Date | null;
   kitchen_updated_at: Date;
+  payment_preference: 'counter_cash' | 'counter_card' | 'online' | null;
 }
 
 /** Who performs an order write: a signed-in staff member, or a QR guest (no user, "system"). */
@@ -250,8 +251,8 @@ export class OrdersService {
                              bill_label, customer_id, note, coupon_code, currency_code, tax_rate_bp,
                              subtotal_minor, discount_minor, tax_minor, total_minor,
                              client_request_id, created_by, updated_by, table_session_id, guest_id,
-                             kitchen_status)
-         VALUES ($1,$2,$3,$4,$5,$6,$18,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$17,$19,$20,$21) RETURNING id`,
+                             kitchen_status, payment_preference)
+         VALUES ($1,$2,$3,$4,$5,$6,$18,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$17,$19,$20,$21,$22) RETURNING id`,
         [
           actor.tenantId,
           q.restaurantId,
@@ -276,6 +277,7 @@ export class OrdersService {
           guest?.guestId ?? null,
           // QR guest orders skip the kitchen's Accept step and start straight in Preparing.
           input.channel === 'qr' ? 'preparing' : 'new',
+          input.paymentPreference ?? null,
         ],
       );
       // All lines in one statement. WITH ORDINALITY keeps the cart order: ids are uuidv7
@@ -1482,6 +1484,7 @@ function summary(o: OrderRow) {
     branchId: o.branch_id,
     orderNumber: o.order_number,
     channel: o.channel,
+    paymentPreference: o.payment_preference,
     status: o.status,
     kitchenStatus: o.kitchen_status,
     tableLabel: o.table_label,

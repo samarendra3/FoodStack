@@ -16,6 +16,8 @@ export const createOrderSchema = z.strictObject({
   billLabel: z.string().trim().max(20).nullish(),
   note: z.string().trim().max(200).nullish(),
   couponCode: z.string().trim().max(32).nullish(),
+  /** How the guest will pay (QR checkout). Online is added with the payment phase. */
+  paymentPreference: z.enum(['counter_cash', 'counter_card']).nullish(),
   customer: z
     .strictObject({
       phone: z

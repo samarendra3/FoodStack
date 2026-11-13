@@ -42,7 +42,18 @@ interface GuestView {
     paidMinor: number;
     outstandingMinor: number;
   };
+  contact?: { phone: string | null; receiptConsent: boolean; marketingConsent: boolean };
 }
+type PayChoice = 'counter_cash' | 'counter_card';
+const PAY_LABEL: Record<PayChoice, string> = {
+  counter_cash: 'Cash at counter',
+  counter_card: 'Card at counter',
+};
+/** The table's QR secret from the scanned link (`?k=`). */
+const qrKey = () =>
+  typeof window === 'undefined'
+    ? undefined
+    : (new URLSearchParams(window.location.search).get('k') ?? undefined);
 interface PublicMenu {
   restaurant: { name: string; currencyCode: string; taxRateBp: number };
   categories: {
@@ -119,6 +130,11 @@ export default function GuestTablePage({
   const [placing, setPlacing] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const pendingKey = useRef<string | null>(null);
+  const [checkout, setCheckout] = useState(false);
+  const [pay, setPay] = useState<PayChoice>('counter_cash');
+  const [phone, setPhone] = useState<string | null>(null);
+  const [receiptConsent, setReceiptConsent] = useState<boolean | null>(null);
+  const [marketingConsent, setMarketingConsent] = useState<boolean | null>(null);
 
   /** Joins or restores; always safe to call again (re-scan, expiry, closed sitting). */
   const joinQuery = useQuery({
@@ -127,7 +143,7 @@ export default function GuestTablePage({
       const saved = read(tokenKey(tenantId));
       const v = await api.request<GuestView>('/public/guest/join', {
         method: 'POST',
-        body: { tenantId, tableId },
+        body: { tenantId, tableId, ...(qrKey() ? { key: qrKey() } : {}) },
         headers: saved ? { 'X-Guest-Token': saved } : undefined,
       });
       write(tokenKey(tenantId), v.token!);
@@ -210,6 +226,32 @@ export default function GuestTablePage({
     if (!token || lines.length === 0 || placing) return;
     setPlacing(true);
     setNotice(null);
+    // Contact details are optional; save them first if the guest changed anything.
+    const saved = view?.contact;
+    const nextPhone = (phone ?? saved?.phone ?? '').trim();
+    const nextReceipt = receiptConsent ?? saved?.receiptConsent ?? true;
+    const nextMarketing = marketingConsent ?? saved?.marketingConsent ?? false;
+    if (
+      nextPhone !== (saved?.phone ?? '') ||
+      nextReceipt !== (saved?.receiptConsent ?? false) ||
+      nextMarketing !== (saved?.marketingConsent ?? false)
+    ) {
+      try {
+        await api.request('/public/guest/contact', {
+          method: 'PUT',
+          headers: { 'X-Guest-Token': token },
+          body: {
+            phone: nextPhone || null,
+            receiptConsent: Boolean(nextPhone) && nextReceipt,
+            marketingConsent: nextMarketing,
+          },
+        });
+      } catch (e) {
+        setPlacing(false);
+        setNotice(messageOf(e));
+        return;
+      }
+    }
     // Same key for retries of this cart; a new key only after success.
     pendingKey.current ??= crypto.randomUUID();
     try {
@@ -218,12 +260,14 @@ export default function GuestTablePage({
         headers: { 'X-Guest-Token': token },
         idempotencyKey: pendingKey.current,
         body: {
+          paymentPreference: pay,
           lines: lines.map(({ menuItemId, variantId, quantity }) =>
             variantId ? { menuItemId, variantId, quantity } : { menuItemId, quantity },
           ),
         },
       });
       pendingKey.current = null;
+      setCheckout(false);
       setCart({});
       setTab('bill');
       setNotice('Order sent to the kitchen.');
@@ -487,11 +531,30 @@ export default function GuestTablePage({
         </div>
       )}
 
+      {checkout && cartCount > 0 ? (
+        <CheckoutSheet
+          total={money(cartTotal)}
+          count={cartCount}
+          pay={pay}
+          setPay={setPay}
+          phone={phone ?? view?.contact?.phone ?? ''}
+          setPhone={setPhone}
+          receipt={receiptConsent ?? view?.contact?.receiptConsent ?? true}
+          setReceipt={setReceiptConsent}
+          marketing={marketingConsent ?? view?.contact?.marketingConsent ?? false}
+          setMarketing={setMarketingConsent}
+          placing={placing}
+          notice={notice}
+          onClose={() => setCheckout(false)}
+          onConfirm={place}
+        />
+      ) : null}
+
       {cartCount > 0 && tab === 'menu' ? (
         <div className="fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white p-3">
           <button
             type="button"
-            onClick={place}
+            onClick={() => setCheckout(true)}
             disabled={placing}
             className="mx-auto flex w-full max-w-xl items-center justify-between rounded-xl bg-emerald-600 px-4 py-3 font-semibold text-white disabled:opacity-70"
           >
@@ -503,7 +566,7 @@ export default function GuestTablePage({
               )}
               {cartCount} item{cartCount === 1 ? '' : 's'} · {money(cartTotal)}
             </span>
-            <span>{placing ? 'Placing…' : 'Place order'}</span>
+            <span>Checkout</span>
           </button>
           {menu.data && menu.data.restaurant.taxRateBp ? (
             <p className="mt-1 text-center text-xs text-slate-500">
@@ -512,6 +575,125 @@ export default function GuestTablePage({
           ) : null}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/** Checkout: payment choice and (optional) mobile number with consent, then place the order. */
+function CheckoutSheet(p: {
+  total: string;
+  count: number;
+  pay: PayChoice;
+  setPay: (v: PayChoice) => void;
+  phone: string;
+  setPhone: (v: string) => void;
+  receipt: boolean;
+  setReceipt: (v: boolean) => void;
+  marketing: boolean;
+  setMarketing: (v: boolean) => void;
+  placing: boolean;
+  notice: string | null;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-30 flex items-end justify-center bg-slate-900/40"
+      onClick={p.onClose}
+    >
+      <div
+        role="dialog"
+        aria-label="Checkout"
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-xl space-y-4 rounded-t-2xl bg-white p-4 pb-6"
+      >
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Checkout</h2>
+          <button type="button" onClick={p.onClose} className="text-sm text-slate-500">
+            Back to menu
+          </button>
+        </div>
+
+        <fieldset className="space-y-2">
+          <legend className="mb-1 text-sm font-medium">How will you pay?</legend>
+          {(Object.keys(PAY_LABEL) as PayChoice[]).map((k) => (
+            <label
+              key={k}
+              className={cn(
+                'flex cursor-pointer items-center gap-3 rounded-xl border p-3 text-sm',
+                p.pay === k ? 'border-emerald-600 bg-emerald-50' : 'border-slate-200',
+              )}
+            >
+              <input
+                type="radio"
+                name="pay"
+                checked={p.pay === k}
+                onChange={() => p.setPay(k)}
+                className="accent-emerald-600"
+              />
+              {PAY_LABEL[k]}
+            </label>
+          ))}
+          <p className="text-xs text-slate-500">
+            Your order goes to the kitchen now; pay at the counter whenever you are ready.
+          </p>
+        </fieldset>
+
+        <div className="space-y-2">
+          <label className="block text-sm font-medium" htmlFor="guest-phone">
+            Mobile number <span className="font-normal text-slate-500">(optional)</span>
+          </label>
+          <input
+            id="guest-phone"
+            type="tel"
+            inputMode="tel"
+            autoComplete="tel"
+            placeholder="98765 43210"
+            value={p.phone}
+            onChange={(e) => p.setPhone(e.target.value)}
+            className="h-11 w-full rounded-lg border border-slate-300 px-3 text-base outline-none focus:border-emerald-600"
+          />
+          {p.phone.trim() ? (
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={p.receipt}
+                onChange={(e) => p.setReceipt(e.target.checked)}
+                className="mt-0.5 accent-emerald-600"
+              />
+              Send my bill / receipt to this number
+            </label>
+          ) : null}
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={p.marketing}
+              onChange={(e) => p.setMarketing(e.target.checked)}
+              className="mt-0.5 accent-emerald-600"
+            />
+            I&apos;d like to receive offers from this restaurant
+          </label>
+        </div>
+
+        {p.notice ? <p className="text-sm text-red-600">{p.notice}</p> : null}
+
+        <button
+          type="button"
+          onClick={p.onConfirm}
+          disabled={p.placing}
+          className="flex w-full items-center justify-between rounded-xl bg-emerald-600 px-4 py-3 font-semibold text-white disabled:opacity-70"
+        >
+          <span className="flex items-center gap-2">
+            {p.placing ? (
+              <Loader2 className="size-5 animate-spin" />
+            ) : (
+              <ShoppingBag className="size-5" />
+            )}
+            {p.count} item{p.count === 1 ? '' : 's'} · {p.total}
+          </span>
+          <span>{p.placing ? 'Placing…' : 'Place order'}</span>
+        </button>
+      </div>
     </div>
   );
 }
