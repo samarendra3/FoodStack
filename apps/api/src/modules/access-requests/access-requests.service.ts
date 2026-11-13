@@ -159,9 +159,7 @@ export class AccessRequestsService {
           metadata: { slug: input.slug },
           ...meta,
         });
-        const token = tenant.ownerHasPassword
-          ? null
-          : (await issueUserToken(db, tenant.ownerId, 'password_reset', SET_PASSWORD_TTL_MS)).token;
+        const token = (await issueUserToken(db, tenant.ownerId, 'password_reset', SET_PASSWORD_TTL_MS)).token;
         // Queued with the approval: no welcome email for a rolled-back approval.
         const appUrl = this.config.get('APP_URL');
         const name = request.contact_name;
