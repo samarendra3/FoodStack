@@ -26,6 +26,8 @@ import {
 } from '@/lib/ready-orders';
 
 const MUTE_KEY = 'foodstack.waiter.bell-muted';
+/** The ringtone lasts ~2.6 s; repeat with a short pause, like an incoming call. */
+const RING_EVERY_MS = 4_000;
 
 function minutesAgo(iso: string) {
   const m = Math.max(0, Math.floor((Date.now() - Date.parse(iso)) / 60_000));
@@ -72,7 +74,6 @@ export function ReadyAlerts({
 
   const onNew = useCallback(
     (fresh: ReadyOrder[]) => {
-      if (!muted) playBell();
       for (const o of fresh.slice(0, 3)) {
         toast.success(`Ready · ${where(o)}`, {
           description: `Order #${o.orderNumber} · ${o.items.map((i) => `${i.qty}× ${i.name}`).join(', ')}`,
@@ -81,12 +82,22 @@ export function ReadyAlerts({
       }
       if (fresh.length > 3) toast.info(`${fresh.length - 3} more orders ready`);
     },
-    [muted, toast],
+    [toast],
   );
 
   const feed = useReadyOrders(branchId, onNew);
   const pending = feed.unacknowledged.length;
   const total = feed.orders.length;
+
+  // Keep ringing (every RING_EVERY_MS) while any ready order is unacknowledged. Stops as soon as
+  // the waiter acknowledges, views or serves them all, another waiter serves them, or on mute.
+  const ringing = pending > 0 && !muted && soundOn;
+  useEffect(() => {
+    if (!ringing) return;
+    playBell();
+    const timer = setInterval(playBell, RING_EVERY_MS);
+    return () => clearInterval(timer);
+  }, [ringing]);
 
   const toggleMute = () => {
     const m = !muted;
