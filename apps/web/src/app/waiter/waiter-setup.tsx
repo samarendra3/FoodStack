@@ -19,6 +19,7 @@ import { useProfile } from '@/components/auth/auth-provider';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { canAccessPath } from '@/lib/auth/access';
 import { useTables } from '@/lib/tables';
+import { ReadyAlerts } from './ready-alerts';
 import { WaiterFloor } from './waiter-floor';
 
 /*
@@ -56,6 +57,8 @@ export function WaiterSetup() {
   const tables = useTables(branchId || undefined);
   const list = tables.data?.tables ?? [];
   const ready = list.length > 0;
+  // "View order" from a ready alert: which table the floor should open (n forces re-open).
+  const [focus, setFocus] = useState<{ label: string; n: number } | null>(null);
 
   const steps = [
     { label: 'Account and branch access', done: true },
@@ -133,6 +136,13 @@ export function WaiterSetup() {
             </label>
           ) : null}
 
+          {ready && branchId ? (
+            <ReadyAlerts
+              key={branchId}
+              branchId={branchId}
+              onViewTable={(label) => setFocus((f) => ({ label, n: (f?.n ?? 0) + 1 }))}
+            />
+          ) : null}
           <ThemeToggle className={iconButton} />
           <span
             className="mx-1 hidden h-6 w-px bg-slate-200 sm:block dark:bg-white/10"
@@ -144,7 +154,7 @@ export function WaiterSetup() {
 
       {ready ? (
         <main className="flex-1">
-          <WaiterFloor key={branchId} branchId={branchId} tables={list} />
+          <WaiterFloor key={branchId} branchId={branchId} tables={list} focus={focus} />
         </main>
       ) : (
         <main className="flex flex-1 items-start justify-center px-4 py-10 sm:py-16">

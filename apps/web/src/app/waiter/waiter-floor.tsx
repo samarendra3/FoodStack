@@ -113,10 +113,26 @@ function Segmented<T extends string>({
 
 type StatusFilter = 'all' | 'free' | 'occupied';
 
-export function WaiterFloor({ branchId, tables }: { branchId: string; tables: DiningTable[] }) {
+export function WaiterFloor({
+  branchId,
+  tables,
+  focus,
+}: {
+  branchId: string;
+  tables: DiningTable[];
+  /** Open this table (by label), e.g. from a ready-order alert. */
+  focus?: { label: string; n: number } | null;
+}) {
   const [tableId, setTableId] = useState<string | null>(null);
   const [status, setStatus] = useState<StatusFilter>('all');
   const [area, setArea] = useState('');
+  // Each new focus request (from a ready alert) opens that table once.
+  const [seenFocus, setSeenFocus] = useState(focus?.n ?? 0);
+  if (focus && focus.n !== seenFocus) {
+    setSeenFocus(focus.n);
+    const hit = tables.find((t) => t.label.toLowerCase() === focus.label.toLowerCase());
+    if (hit) setTableId(hit.id);
+  }
   const table = tables.find((t) => t.id === tableId);
 
   if (table) {

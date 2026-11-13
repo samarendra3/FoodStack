@@ -15,6 +15,7 @@ import { writeAudit } from '../auth/user-tokens';
 import { PromotionsService } from '../promotions/promotions.service';
 import { CacheNs } from '../../shared/cache/cache.keys';
 import { CacheService } from '../../shared/cache/cache.service';
+import { OrderEventsService, type ReadyOrderEvent } from './order-events';
 import {
   type CreateOrderInput,
   KITCHEN_STATUSES,
@@ -32,6 +33,7 @@ const notFound = (what: string) =>
 
 interface OrderRow {
   id: string;
+  tenant_id: string;
   branch_id: string;
   restaurant_id: string;
   order_number: number;
@@ -143,6 +145,7 @@ export class OrdersService {
     private readonly promotions: PromotionsService,
     private readonly subscriptions: SubscriptionLifecycleService,
     private readonly cache: CacheService,
+    private readonly events: OrderEventsService,
   ) {}
 
   create(
@@ -225,8 +228,9 @@ export class OrdersService {
         `INSERT INTO orders (tenant_id, restaurant_id, branch_id, order_number, channel, table_label,
                              bill_label, customer_id, note, coupon_code, currency_code, tax_rate_bp,
                              subtotal_minor, discount_minor, tax_minor, total_minor,
-                             client_request_id, created_by, updated_by, table_session_id, guest_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$18,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$17,$19,$20) RETURNING id`,
+                             client_request_id, created_by, updated_by, table_session_id, guest_id,
+                             kitchen_status)
+         VALUES ($1,$2,$3,$4,$5,$6,$18,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$17,$19,$20,$21) RETURNING id`,
         [
           actor.tenantId,
           q.restaurantId,
@@ -249,6 +253,8 @@ export class OrdersService {
           guest ? guest.billLabel : (input.tableLabel && input.billLabel) || null,
           sessionId,
           guest?.guestId ?? null,
+          // QR guest orders skip the kitchen's Accept step and start straight in Preparing.
+          input.channel === 'qr' ? 'preparing' : 'new',
         ],
       );
       // All lines in one statement. WITH ORDINALITY keeps the cart order: ids are uuidv7
@@ -613,9 +619,67 @@ export class OrdersService {
 
   /** Moves a ticket one step forward (new → accepted → preparing → ready → served). */
   setKitchenStatus(auth: AuthContext, id: string, to: KitchenStatus, meta: RequestMeta) {
+    return this.transitionKitchen(
+      auth,
+      id,
+      to,
+      meta,
+      ['kds:access'],
+      'You cannot update kitchen tickets.',
+    );
+  }
+
+  // ---- waiter: ready-order pickup ----
+
+  /** Orders the kitchen has marked ready and nobody has served yet (the missed-event backlog). */
+  readyOrders(auth: AuthContext, branchId: string) {
     return this.run(auth, async (db, access) => {
+      this.require(access, branchId, ['waiter:access'], 'You cannot view this branch.');
+      const rows = await db.query<OrderRow>(
+        `SELECT * FROM orders WHERE branch_id = $1 AND status <> 'cancelled' AND kitchen_status = 'ready'
+          ORDER BY kitchen_updated_at`,
+        [branchId],
+      );
+      const items = await this.readyItems(
+        db,
+        rows.map((o) => o.id),
+      );
+      return rows.map((o) => this.readyEvent('order.ready', o, items));
+    });
+  }
+
+  /** Checks the caller may watch this branch's pickup feed (no DB connection is kept afterwards). */
+  authorizeWaiterFeed(auth: AuthContext, branchId: string) {
+    return this.run(auth, async (_db, access) => {
+      this.require(access, branchId, ['waiter:access'], 'You cannot view this branch.');
+      if (!auth.tenantId) throw forbidden('You cannot view this branch.');
+      return auth.tenantId;
+    });
+  }
+
+  /** A waiter hands over a ready order: ready → served. */
+  markServed(auth: AuthContext, id: string, meta: RequestMeta) {
+    return this.transitionKitchen(
+      auth,
+      id,
+      'served',
+      meta,
+      ['waiter:access', 'kds:access'],
+      'You cannot serve orders in this branch.',
+    );
+  }
+
+  private async transitionKitchen(
+    auth: AuthContext,
+    id: string,
+    to: KitchenStatus,
+    meta: RequestMeta,
+    anyOf: string[],
+    message: string,
+  ) {
+    const { result, event } = await this.run(auth, async (db, access) => {
       const order = await this.load(db, id, true);
-      this.require(access, order.branch_id, ['kds:access'], 'You cannot update kitchen tickets.');
+      this.require(access, order.branch_id, anyOf, message);
       if (order.status === 'cancelled')
         throw conflict('ORDER_CANCELLED', 'This order was cancelled.');
       const from = KITCHEN_STATUSES.indexOf(order.kitchen_status);
@@ -631,8 +695,60 @@ export class OrdersService {
         from: order.kitchen_status,
         to,
       });
-      return { id, status: to };
+      let event: ReadyOrderEvent | null = null;
+      if (to === 'ready' || to === 'served') {
+        const fresh = await this.load(db, id);
+        event = this.readyEvent(
+          to === 'ready' ? 'order.ready' : 'order.served',
+          fresh,
+          await this.readyItems(db, [id]),
+        );
+      }
+      return { result: { id, status: to }, event };
     });
+    // run() has committed by now: waiters are never told about a change that rolled back.
+    if (event) await this.events.publish(event);
+    return result;
+  }
+
+  private readyItems(db: Db, orderIds: string[]) {
+    return db.query<{
+      id: string;
+      order_id: string;
+      name: string;
+      variant_name: string | null;
+      quantity: number;
+      note: string | null;
+    }>(
+      `SELECT id, order_id, name, variant_name, quantity, note FROM order_items
+        WHERE order_id = ANY($1::uuid[]) AND status = 'active' ORDER BY created_at, id`,
+      [orderIds],
+    );
+  }
+
+  private readyEvent(
+    type: ReadyOrderEvent['type'],
+    o: OrderRow,
+    items: Awaited<ReturnType<OrdersService['readyItems']>>,
+  ): ReadyOrderEvent {
+    return {
+      type,
+      tenantId: o.tenant_id,
+      branchId: o.branch_id,
+      orderId: o.id,
+      orderNumber: String(o.order_number),
+      tableLabel: o.table_label,
+      billLabel: o.bill_label,
+      readyAt: new Date(o.kitchen_updated_at).toISOString(),
+      items: items
+        .filter((i) => i.order_id === o.id)
+        .map((i) => ({
+          id: i.id,
+          name: i.variant_name ? `${i.name} (${i.variant_name})` : i.name,
+          qty: i.quantity,
+          note: i.note,
+        })),
+    };
   }
 
   // ---- table sessions (guest-wise and whole-table billing) ----
