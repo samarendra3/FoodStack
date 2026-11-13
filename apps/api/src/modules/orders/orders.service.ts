@@ -15,7 +15,7 @@ import { writeAudit } from '../auth/user-tokens';
 import { PromotionsService } from '../promotions/promotions.service';
 import { CacheNs } from '../../shared/cache/cache.keys';
 import { CacheService } from '../../shared/cache/cache.service';
-import { OrderEventsService, type ReadyOrderEvent } from './order-events';
+import { type EventActor, OrderEventsService, type ReadyPayload } from './order-events';
 import {
   type CreateOrderInput,
   KITCHEN_STATUSES,
@@ -67,6 +67,26 @@ export interface Actor {
   sessionId: string | null;
   audience: 'tenant' | 'system';
 }
+/** Timeline shows only these facts per event type (the pickup card's item list is not repeated). */
+const TIMELINE_FIELDS: Record<string, string[]> = {
+  'order.created': ['orderNumber', 'channel', 'tableLabel', 'itemCount', 'totalMinor'],
+  'order.status': ['from', 'to'],
+  'order.ready': ['from', 'to'],
+  'order.served': ['from', 'to'],
+  'order.cancelled': ['reason'],
+  'order.item_voided': ['itemId', 'reason'],
+  'payment.recorded': ['method', 'amountMinor', 'paidInFull'],
+  'payment.refunded': ['amountMinor', 'reason'],
+};
+function pickTimelineDetails(type: string, payload: Record<string, unknown>) {
+  const out: Record<string, unknown> = {};
+  for (const k of TIMELINE_FIELDS[type] ?? []) if (k in payload) out[k] = payload[k];
+  return out;
+}
+
+const eventActor = (a: Actor): EventActor =>
+  a.userId ? { kind: 'staff', userId: a.userId } : { kind: 'system' };
+
 export const actorOf = (auth: AuthContext): Actor => ({
   tenantId: auth.tenantId!,
   userId: auth.userId,
@@ -148,13 +168,14 @@ export class OrdersService {
     private readonly events: OrderEventsService,
   ) {}
 
-  async create(
+  create(
     auth: AuthContext,
     input: CreateOrderInput,
     clientRequestId: string | null,
     meta: RequestMeta,
   ) {
-    const order = await this.run(auth, async (db, access) => {
+    // order.created is recorded inside createInTx (outbox): one path for POS, waiter and QR.
+    return this.run(auth, async (db, access) => {
       this.require(
         access,
         input.branchId,
@@ -163,16 +184,6 @@ export class OrdersService {
       );
       return this.createInTx(db, actorOf(auth), input, clientRequestId, meta, null);
     });
-    // After commit: ring the branch's kitchens (POS and waiter orders; QR orders publish the
-    // same event from the guest flow). Kitchens de-duplicate by order id, so an idempotent
-    // retry that returns the same order cannot ring twice.
-    await this.publishCreated(auth.tenantId!, input.branchId, order.id);
-    return order;
-  }
-
-  /** Tells the branch's kitchen screens a new order exists. Call only after commit. */
-  publishCreated(tenantId: string, branchId: string, orderId: string) {
-    return this.events.publish({ type: 'order.created', tenantId, branchId, orderId });
   }
 
   /**
@@ -301,6 +312,22 @@ export class OrdersService {
         number: number!.last_number,
         totalMinor: q.totalMinor + tax,
       });
+      // Same transaction: the kitchens are told only if the order commits. An idempotent retry
+      // returns early above, so it can never record (or ring) twice.
+      await this.events.record(db, {
+        tenantId: actor.tenantId,
+        branchId: input.branchId,
+        orderId: order!.id,
+        type: 'order.created',
+        payload: {
+          orderNumber: String(number!.last_number),
+          channel: input.channel,
+          tableLabel: input.tableLabel || null,
+          itemCount: q.lines.reduce((n, l) => n + l.quantity, 0),
+          totalMinor: q.totalMinor + tax,
+        },
+        actor: guest ? { kind: 'guest', guestId: guest.guestId } : eventActor(actor),
+      });
       return this.detail(db, order!.id);
     }
   }
@@ -414,6 +441,55 @@ export class OrdersService {
     });
   }
 
+  /**
+   * The order's readable timeline from the event log: who did what, when. Staff names are
+   * resolved here; guests show as their display name. Same visibility as the order itself.
+   */
+  timeline(auth: AuthContext, id: string) {
+    return this.run(auth, async (db, access) => {
+      const order = await this.load(db, id);
+      this.require(
+        access,
+        order.branch_id,
+        ['order:read', 'pos:access', 'kds:access', 'waiter:access'],
+        'You cannot view this order.',
+      );
+      const rows = await db.query<{
+        id: string;
+        type: string;
+        payload: Record<string, unknown>;
+        actor_kind: 'staff' | 'guest' | 'system';
+        created_at: Date;
+        staff_name: string | null;
+        guest_name: string | null;
+      }>(
+        `SELECT e.id, e.type, e.payload, e.actor_kind, e.created_at,
+                u.full_name AS staff_name, g.display_name AS guest_name
+           FROM order_events e
+           LEFT JOIN users u ON u.id = e.actor_user_id
+           LEFT JOIN table_guests g ON g.id = e.actor_guest_id
+          WHERE e.order_id = $1
+          ORDER BY e.id`,
+        [id],
+      );
+      return rows.map((r) => ({
+        id: r.id,
+        type: r.type,
+        at: new Date(r.created_at).toISOString(),
+        actor: {
+          kind: r.actor_kind,
+          name:
+            r.actor_kind === 'staff'
+              ? (r.staff_name ?? 'Staff')
+              : r.actor_kind === 'guest'
+                ? (r.guest_name ?? 'Guest')
+                : 'System',
+        },
+        details: pickTimelineDetails(r.type, r.payload),
+      }));
+    });
+  }
+
   /** Voids one line and re-prices the rest (coupon and offers are re-checked). */
   voidItem(auth: AuthContext, orderId: string, itemId: string, reason: string, meta: RequestMeta) {
     return this.run(auth, async (db, access) => {
@@ -444,6 +520,14 @@ export class OrdersService {
       );
       await this.reprice(db, auth, order, remaining);
       await this.audit(db, actorOf(auth), meta, 'order.item_voided', orderId, { itemId, reason });
+      await this.events.record(db, {
+        tenantId: order.tenant_id,
+        branchId: order.branch_id,
+        orderId,
+        type: 'order.item_voided',
+        payload: { itemId, reason },
+        actor: eventActor(actorOf(auth)),
+      });
       return this.detail(db, orderId);
     });
   }
@@ -467,6 +551,14 @@ export class OrdersService {
       );
       await this.subscriptions.releaseOrderSlot(db, id);
       await this.audit(db, actorOf(auth), meta, 'order.cancelled', id, { reason });
+      await this.events.record(db, {
+        tenantId: order.tenant_id,
+        branchId: order.branch_id,
+        orderId: id,
+        type: 'order.cancelled',
+        payload: { reason },
+        actor: eventActor(actorOf(auth)),
+      });
       return this.detail(db, id);
     });
   }
@@ -532,6 +624,19 @@ export class OrdersService {
       method: input.method,
       amountMinor: input.amountMinor,
     });
+    await this.events.record(db, {
+      tenantId: actor.tenantId,
+      branchId: order.branch_id,
+      orderId: order.id,
+      type: 'payment.recorded',
+      payload: {
+        paymentId: payment!.id,
+        method: input.method,
+        amountMinor: input.amountMinor,
+        paidInFull,
+      },
+      actor: eventActor(actor),
+    });
   }
 
   refund(auth: AuthContext, paymentId: string, input: RefundInput, meta: RequestMeta) {
@@ -574,6 +679,14 @@ export class OrdersService {
         paymentId,
         amountMinor: input.amountMinor,
         reason: input.reason,
+      });
+      await this.events.record(db, {
+        tenantId: auth.tenantId!,
+        branchId: payment.branch_id,
+        orderId: payment.order_id,
+        type: 'payment.refunded',
+        payload: { paymentId, amountMinor: input.amountMinor, reason: input.reason },
+        actor: eventActor(actorOf(auth)),
       });
       return this.detail(db, payment.order_id);
     });
@@ -654,7 +767,11 @@ export class OrdersService {
         db,
         rows.map((o) => o.id),
       );
-      return rows.map((o) => this.readyEvent('order.ready', o, items));
+      return rows.map((o) => ({
+        orderId: o.id,
+        branchId: o.branch_id,
+        ...this.readyPayload(o, items),
+      }));
     });
   }
 
@@ -687,7 +804,7 @@ export class OrdersService {
     anyOf: string[],
     message: string,
   ) {
-    const { result, event, branchId } = await this.run(auth, async (db, access) => {
+    return this.run(auth, async (db, access) => {
       const order = await this.load(db, id, true);
       this.require(access, order.branch_id, anyOf, message);
       if (order.status === 'cancelled')
@@ -705,28 +822,24 @@ export class OrdersService {
         from: order.kitchen_status,
         to,
       });
-      let event: ReadyOrderEvent | null = null;
-      if (to === 'ready' || to === 'served') {
-        const fresh = await this.load(db, id);
-        event = this.readyEvent(
-          to === 'ready' ? 'order.ready' : 'order.served',
-          fresh,
-          await this.readyItems(db, [id]),
-        );
-      }
-      return { result: { id, status: to }, event, branchId: order.branch_id };
-    });
-    // run() has committed by now: waiters are never told about a change that rolled back.
-    if (event) await this.events.publish(event);
-    // Other kitchen screens of the branch refresh at once (accepted / preparing / ...).
-    else
-      await this.events.publish({
-        type: 'order.status',
-        tenantId: auth.tenantId!,
-        branchId,
+      // Outbox, same transaction: screens hear about the change only once it has committed.
+      // ready / served carry the waiter pickup card; other steps are a plain status change.
+      const pickup = to === 'ready' || to === 'served';
+      const fresh = pickup ? await this.load(db, id) : null;
+      await this.events.record(db, {
+        tenantId: order.tenant_id,
+        branchId: order.branch_id,
         orderId: id,
+        type: to === 'ready' ? 'order.ready' : to === 'served' ? 'order.served' : 'order.status',
+        payload: {
+          from: order.kitchen_status,
+          to,
+          ...(fresh ? this.readyPayload(fresh, await this.readyItems(db, [id])) : {}),
+        },
+        actor: eventActor(actorOf(auth)),
       });
-    return result;
+      return { id, status: to };
+    });
   }
 
   private readyItems(db: Db, orderIds: string[]) {
@@ -744,16 +857,11 @@ export class OrdersService {
     );
   }
 
-  private readyEvent(
-    type: ReadyOrderEvent['type'],
+  private readyPayload(
     o: OrderRow,
     items: Awaited<ReturnType<OrdersService['readyItems']>>,
-  ): ReadyOrderEvent {
+  ): ReadyPayload {
     return {
-      type,
-      tenantId: o.tenant_id,
-      branchId: o.branch_id,
-      orderId: o.id,
       orderNumber: String(o.order_number),
       tableLabel: o.table_label,
       billLabel: o.bill_label,

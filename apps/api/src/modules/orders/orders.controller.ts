@@ -99,6 +99,13 @@ export class OrdersController {
     return this.orders.get(auth, id);
   }
 
+  @Get('orders/:id/timeline')
+  @RequirePermission('menu:read')
+  @ApiOperation({ summary: "An order's event timeline (created, kitchen steps, payments…)" })
+  timeline(@CurrentAuth() auth: AuthContext, @Param('id', ParseUUIDPipe) id: string) {
+    return this.orders.timeline(auth, id);
+  }
+
   @Post('orders/:id/items/:itemId/void')
   @HttpCode(HttpStatus.OK)
   @RequirePermission('order:void')
@@ -224,6 +231,8 @@ export class OrdersController {
       'order.status',
       'order.ready',
       'order.served',
+      'order.cancelled',
+      'order.item_voided',
     ]);
   }
 
@@ -243,14 +252,33 @@ export class OrdersController {
     });
     res.flushHeaders();
     res.write('retry: 3000\n\n');
-    const send = (event: string, data: unknown) =>
-      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-    send('hello', { branchId });
+    const send = (e: OrderEvent) => {
+      const { tenantId: _t, ...payload } = e; // routing only; never sent to browsers
+      res.write(`id: ${e.id}\nevent: ${e.type}\ndata: ${JSON.stringify(payload)}\n\n`);
+    };
+    res.write(`event: hello\ndata: ${JSON.stringify({ branchId })}\n\n`);
+
+    // Live events are buffered while missed ones are replayed from the outbox (Last-Event-ID),
+    // then flushed in order; ids already sent are skipped, so each event arrives exactly once.
+    const sent = new Set<string>();
+    let buffer: OrderEvent[] | null = [];
+    const emit = (e: OrderEvent) => {
+      if (!types.includes(e.type) || sent.has(e.id)) return;
+      sent.add(e.id);
+      send(e);
+    };
     const unsubscribe = this.events.subscribe(tenantId, branchId, (e) => {
-      if (!types.includes(e.type)) return;
-      const { tenantId: _t, ...payload } = e;
-      send(e.type, payload);
+      if (buffer) buffer.push(e);
+      else emit(e);
     });
+    const lastId = String(req.headers['last-event-id'] ?? '');
+    void (async () => {
+      const missed = lastId
+        ? await this.events.replay(tenantId, branchId, lastId).catch(() => [])
+        : [];
+      for (const e of [...missed, ...(buffer ?? [])]) emit(e);
+      buffer = null;
+    })();
     const heartbeat = setInterval(() => res.write(': ping\n\n'), HEARTBEAT_MS);
     const ttl = setTimeout(() => res.end(), STREAM_TTL_MS);
     req.on('close', () => {

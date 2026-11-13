@@ -151,7 +151,7 @@ export class GuestSessionsService {
   }
 
   /** Places one more order for this guest at this sitting. */
-  async order(
+  order(
     token: string | undefined,
     input: z.infer<typeof guestOrderSchema>,
     key: string | null,
@@ -163,8 +163,8 @@ export class GuestSessionsService {
         message: 'Send an Idempotency-Key header.',
       });
     }
-    let created: { tenantId: string; branchId: string } | null = null;
-    const result = await this.asGuest(token, async (db, g, tenantId) => {
+    // order.created is recorded by createInTx inside this transaction (outbox).
+    return this.asGuest(token, async (db, g, tenantId) => {
       // Shares the row with closeSession (FOR UPDATE): a sitting cannot close mid-order.
       const s = await db.one<SessionRow>(`${SESSION_SQL} WHERE s.id = $1 FOR SHARE OF s`, [
         g.session_id,
@@ -188,13 +188,8 @@ export class GuestSessionsService {
         meta,
         { sessionId: s.id, guestId: g.id, billLabel: g.display_name },
       );
-      created = { tenantId, branchId: s.branch_id };
       return { order, ...(await this.view(db, s.id, g.id)) };
     });
-    // After commit, same event as staff orders: the branch's kitchens ring for QR orders too.
-    const c = created as { tenantId: string; branchId: string } | null;
-    if (c) await this.orders.publishCreated(c.tenantId, c.branchId, result.order.id);
-    return result;
   }
 
   private async view(db: Db, sessionId: string, guestId: string) {

@@ -7,6 +7,8 @@ import type { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/app.setup';
 import { PasswordHasher } from '../src/core/security/password-hasher';
+import { OrderEventsService } from '../src/modules/orders/order-events';
+import { DbContext } from '../src/core/db/db-context';
 import { connect } from './helpers';
 
 /**
@@ -22,7 +24,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 interface Sse {
   status: number;
-  events: { event: string; data: Record<string, unknown> }[];
+  events: { event: string; data: Record<string, unknown>; id?: string }[];
   close: () => void;
 }
 
@@ -52,6 +54,7 @@ describe('Ready-order events (integration)', () => {
     who: string | null,
     branchId: string,
     path = '/waiter/ready-orders/stream',
+    lastEventId?: string,
   ): Promise<Sse> {
     const ctrl = new AbortController();
     const res = await fetch(`${base}${API}${path}?branchId=${branchId}`, {
@@ -59,6 +62,7 @@ describe('Ready-order events (integration)', () => {
         Accept: 'text/event-stream',
         'X-Forwarded-For': freshIp(),
         ...(who ? { Authorization: `Bearer ${tokens[who]}` } : {}),
+        ...(lastEventId ? { 'Last-Event-ID': lastEventId } : {}),
       },
       signal: ctrl.signal,
     });
@@ -79,7 +83,8 @@ describe('Ready-order events (integration)', () => {
               buf = buf.slice(cut + 2);
               const event = /^event: (.*)$/m.exec(block)?.[1];
               const data = /^data: (.*)$/m.exec(block)?.[1];
-              if (event && data) sse.events.push({ event, data: JSON.parse(data) });
+              const id = /^id: (.*)$/m.exec(block)?.[1];
+              if (event && data) sse.events.push({ event, data: JSON.parse(data), id });
             }
           }
         } catch {
@@ -353,7 +358,13 @@ describe('Ready-order events (integration)', () => {
     const o = await waiterOrder('waiter1', 'T11');
     await until(() => created(k1).length === 1 && created(k2).length === 1);
     expect(Date.now() - t0).toBeLessThan(1000);
-    expect(created(k1)[0]!.data).toEqual({ type: 'order.created', branchId: main, orderId: o.id });
+    expect(created(k1)[0]!.data).toMatchObject({
+      type: 'order.created',
+      branchId: main,
+      orderId: o.id,
+      tableLabel: 'T11',
+    });
+    expect(created(k1)[0]!.data).not.toHaveProperty('tenantId');
 
     // The kitchen re-reads its tickets on the event: the order is there, status new.
     const tickets = (await call('cook', 'get', `/kitchen/tickets?branchId=${main}`).expect(200))
@@ -404,5 +415,137 @@ describe('Ready-order events (integration)', () => {
       .send({ to: 'accepted' })
       .expect(200);
     await until(() => k2.events.some((e) => e.event === 'order.status' && e.data.orderId === o.id));
+  });
+
+  // ---- Phase 1: transactional outbox, replay, sweeper, timeline ----
+
+  const eventsOf = async (orderId: string) =>
+    (await migrator.query(
+      `SELECT id, type, published_at FROM order_events WHERE order_id = $1 ORDER BY id`,
+      [orderId],
+    )) as { id: string; type: string; published_at: Date | null }[];
+
+  it('records each change in the same transaction and publishes it after commit', async () => {
+    const key = `w-${suffix()}${suffix()}`;
+    const body = {
+      branchId: main,
+      channel: 'dine_in',
+      tableLabel: 'T20',
+      lines: [{ menuItemId: chai, quantity: 1 }],
+    };
+    const first = (
+      await call('waiter1', 'post', '/orders').set('Idempotency-Key', key).send(body).expect(201)
+    ).body.data as { id: string };
+    // Idempotent retry: same order, no second event (the kitchen cannot ring twice).
+    const again = (
+      await call('waiter1', 'post', '/orders').set('Idempotency-Key', key).send(body).expect(201)
+    ).body.data as { id: string };
+    expect(again.id).toBe(first.id);
+
+    let rows = await eventsOf(first.id);
+    expect(rows.map((r) => r.type)).toEqual(['order.created']);
+
+    // A rejected change rolls back with its event: skipping straight to ready is refused.
+    await call('cook', 'post', `/kitchen/tickets/${first.id}/status`)
+      .send({ to: 'ready' })
+      .expect(409);
+    await call('cook', 'post', `/kitchen/tickets/${first.id}/status`)
+      .send({ to: 'accepted' })
+      .expect(200);
+    await sleep(200);
+    rows = await eventsOf(first.id);
+    expect(rows.map((r) => r.type)).toEqual(['order.created', 'order.status']);
+    expect(rows.every((r) => r.published_at !== null)).toBe(true);
+  });
+
+  it('replays events missed while disconnected, exactly once and in order', async () => {
+    const k = await kitchen('cook');
+    const a = await waiterOrder('waiter1', 'T21');
+    await until(() => created(k).some((e) => e.data.orderId === a.id));
+    const lastSeen = created(k).find((e) => e.data.orderId === a.id)!.id!;
+    k.close(); // screen goes offline…
+
+    const b = await waiterOrder('waiter2', 'T22');
+    await call('cook', 'post', `/kitchen/tickets/${b.id}/status`)
+      .send({ to: 'accepted' })
+      .expect(200);
+    const c = await waiterOrder('waiter1', 'T23');
+
+    // …and comes back with Last-Event-ID: it gets b, b's status change and c, nothing older.
+    const back = await listen('cook', main, '/kitchen/tickets/stream', lastSeen);
+    await until(() => back.events.filter((e) => e.event !== 'hello').length >= 3);
+    await sleep(300);
+    const got = back.events.filter((e) => e.event !== 'hello');
+    expect(got.map((e) => [e.event, e.data.orderId])).toEqual([
+      ['order.created', b.id],
+      ['order.status', b.id],
+      ['order.created', c.id],
+    ]);
+    expect(new Set(got.map((e) => e.id)).size).toBe(got.length);
+  });
+
+  it('re-publishes events a crashed process left unpublished (sweeper)', async () => {
+    const o = await waiterOrder('waiter1', 'T24');
+    await sleep(200);
+    const [row] = await eventsOf(o.id);
+    // Simulate "committed, then the process died before publishing".
+    await migrator.query(
+      `UPDATE order_events SET published_at = NULL, created_at = now() - interval '1 minute' WHERE id = $1`,
+      [row!.id],
+    );
+    const k = await kitchen('cook2');
+    // Any instance's sweeper may win (a dev API sharing this DB too); the outcome is what counts.
+    await app.get(OrderEventsService).sweep();
+    await until(() => k.events.some((e) => e.id === row!.id));
+    expect((await eventsOf(o.id))[0]!.published_at).not.toBeNull();
+  });
+
+  it('shows a readable, branch-scoped timeline', async () => {
+    const o = await waiterOrder('waiter1', 'T25');
+    for (const to of ['accepted', 'preparing', 'ready']) {
+      await call('cook', 'post', `/kitchen/tickets/${o.id}/status`).send({ to }).expect(200);
+    }
+    await call('waiter1', 'post', `/waiter/orders/${o.id}/served`).expect(200);
+    const detail = (await call('owner', 'get', `/orders/${o.id}`).expect(200)).body.data as {
+      totalMinor: number;
+    };
+    await call('owner', 'post', `/orders/${o.id}/payments`)
+      .set('Idempotency-Key', `p-${suffix()}${suffix()}`)
+      .send({ method: 'cash', amountMinor: detail.totalMinor })
+      .expect(201);
+
+    const timeline = (await call('owner', 'get', `/orders/${o.id}/timeline`).expect(200)).body
+      .data as {
+      type: string;
+      actor: { kind: string; name: string };
+      details: Record<string, unknown>;
+    }[];
+    expect(timeline.map((t) => t.type)).toEqual([
+      'order.created',
+      'order.status',
+      'order.status',
+      'order.ready',
+      'order.served',
+      'payment.recorded',
+    ]);
+    expect(timeline[0]!.actor).toEqual({ kind: 'staff', name: 'waiter1' });
+    expect(timeline[3]!.actor.name).toBe('cook');
+    expect(timeline[3]!.details).toEqual({ from: 'preparing', to: 'ready' });
+    expect(timeline[5]!.details).toMatchObject({ method: 'cash', paidInFull: true });
+    expect(timeline[3]!.details).not.toHaveProperty('items');
+
+    // Another branch's waiter and another tenant cannot read it.
+    await call('waiterSecond', 'get', `/orders/${o.id}/timeline`).expect(403);
+    const other = await call('bravoWaiter', 'get', `/orders/${o.id}/timeline`);
+    expect([403, 404]).toContain(other.status);
+  });
+
+  it('isolates the event table by tenant under RLS', async () => {
+    const leaked = await app
+      .get(DbContext)
+      .run({ tenantId: tenants[1]! }, (db) =>
+        db.query(`SELECT 1 FROM order_events WHERE tenant_id = $1 LIMIT 1`, [alphaId]),
+      );
+    expect(leaked).toHaveLength(0);
   });
 });

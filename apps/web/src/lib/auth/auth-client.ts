@@ -161,12 +161,14 @@ export class AuthClient {
    * Opens an authorized streaming GET (Server-Sent Events). EventSource cannot send the Bearer
    * header, so this uses fetch and hands back the raw Response; refreshes once on 401.
    */
-  async stream(path: string, signal: AbortSignal): Promise<Response> {
+  async stream(path: string, signal: AbortSignal, lastEventId?: string): Promise<Response> {
     if (!this.accessToken) await this.refresh();
     const open = () =>
       fetch(`${this.baseUrl}${path}`, {
         headers: {
           Accept: 'text/event-stream',
+          // Resume: the server replays events after this id (missed while disconnected).
+          ...(lastEventId ? { 'Last-Event-ID': lastEventId } : {}),
           ...(this.accessToken ? { Authorization: `Bearer ${this.accessToken}` } : {}),
         },
         cache: 'no-store',

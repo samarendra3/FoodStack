@@ -9,6 +9,7 @@ import { hasPermissionAnywhere } from '@/lib/auth/access';
 import { authErrorMessage } from '@/lib/auth/errors';
 import type { Order } from '@/lib/orders';
 import { CHANNEL_LABEL, STATUS_STYLE } from './order-labels';
+import { OrderTimeline } from './order-timeline';
 
 type Detail = Order & {
   refunds: {
@@ -190,6 +191,8 @@ export function OrderDetail({
               </div>
               {o.dueMinor > 0 ? <Row k="Due" v={fmt(o.dueMinor)} /> : null}
             </dl>
+
+            <OrderTimeline orderId={id} fmt={fmt} />
 
             <section>
               <h3 className="mb-2 text-sm font-semibold">Payments</h3>

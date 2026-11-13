@@ -6,7 +6,10 @@ import { useAuth } from '@/components/auth/auth-provider';
 export type LiveState = 'connecting' | 'live' | 'offline';
 
 /** Reads a fetch body as Server-Sent Events until it ends or is aborted. */
-async function readEvents(res: Response, onEvent: (event: string, data: string) => void) {
+async function readEvents(
+  res: Response,
+  onEvent: (event: string, data: string, id: string | null) => void,
+) {
   const reader = res.body!.pipeThrough(new TextDecoderStream()).getReader();
   let buf = '';
   for (;;) {
@@ -18,12 +21,14 @@ async function readEvents(res: Response, onEvent: (event: string, data: string) 
       const block = buf.slice(0, cut);
       buf = buf.slice(cut + 2);
       let event = 'message';
+      let id: string | null = null;
       const data: string[] = [];
       for (const line of block.split('\n')) {
         if (line.startsWith('event:')) event = line.slice(6).trim();
+        else if (line.startsWith('id:')) id = line.slice(3).trim();
         else if (line.startsWith('data:')) data.push(line.slice(5).trimStart());
       }
-      if (data.length) onEvent(event, data.join('\n'));
+      if (data.length) onEvent(event, data.join('\n'), id);
     }
   }
 }
@@ -50,13 +55,23 @@ export function useLiveEvents(
     if (!path) return;
     const abort = new AbortController();
     let attempt = 0;
+    // Resume point and recently seen ids: on reconnect the server replays what we missed, and
+    // its outbox sweeper may re-send an event, so each event id is handled exactly once.
+    let lastId: string | undefined;
+    const seen = new Set<string>();
     void (async () => {
       while (!abort.signal.aborted) {
         setState('connecting');
         try {
-          const res = await client.stream(path, abort.signal);
+          const res = await client.stream(path, abort.signal, lastId);
           if (!res.ok || !res.body) throw new Error(`stream ${res.status}`);
-          await readEvents(res, (event, raw) => {
+          await readEvents(res, (event, raw, id) => {
+            if (id) {
+              if (seen.has(id)) return;
+              seen.add(id);
+              if (seen.size > 1000) seen.delete(seen.values().next().value!);
+              lastId = id;
+            }
             if (event === 'hello') {
               attempt = 0;
               setState('live');

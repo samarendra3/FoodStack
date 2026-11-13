@@ -30,6 +30,7 @@ import { OrderBillLabel1798000027000 } from './migrations/1798000027000-OrderBil
 import { OperationsModules1798000028000 } from './migrations/1798000028000-OperationsModules';
 import { PlatformSettings1798000029000 } from './migrations/1798000029000-PlatformSettings';
 import { TableSessions1798000030000 } from './migrations/1798000030000-TableSessions';
+import { OrderEvents1798000031000 } from './migrations/1798000031000-OrderEvents';
 
 /**
  * All migrations in order, for code that cannot load them by file glob (the e2e test setup).
@@ -68,4 +69,5 @@ export const ALL_MIGRATIONS = [
   OperationsModules1798000028000,
   PlatformSettings1798000029000,
   TableSessions1798000030000,
+  OrderEvents1798000031000,
 ];
