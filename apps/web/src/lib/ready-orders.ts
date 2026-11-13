@@ -54,25 +54,53 @@ export function unlockAudio(): boolean {
 }
 export const audioReady = () => audioCtx?.state === 'running';
 
-/** A two-strike service bell, synthesised (no asset to load or block). */
+/**
+ * A classic "ring-ring … ring-ring" telephone ringtone, synthesised (no asset to load or block):
+ * two warbling tones (a fast on/off trill gives the bell-hammer "trrring"), played as two
+ * double-rings about 3 seconds in total.
+ */
 export function playBell() {
   if (!audioCtx || audioCtx.state !== 'running') return;
   const ctx = audioCtx;
-  [0, 0.35].forEach((offset) => {
-    [1568, 2093, 3136].forEach((freq, i) => {
+  const RING = 0.4; // one "ring"
+  const pattern = [0, 0.6, 1.6, 2.2]; // ring ring … ring ring
+  const start = ctx.currentTime + 0.02;
+
+  const out = ctx.createGain();
+  out.gain.value = 0.18;
+  out.connect(ctx.destination);
+
+  for (const offset of pattern) {
+    const t = start + offset;
+    const env = ctx.createGain();
+    env.gain.setValueAtTime(0.0001, t);
+    env.gain.exponentialRampToValueAtTime(1, t + 0.02);
+    env.gain.setValueAtTime(1, t + RING - 0.04);
+    env.gain.exponentialRampToValueAtTime(0.0001, t + RING);
+    env.connect(out);
+
+    // Trill: square-wave LFO at 20 Hz gates the tones on and off, like a ringer's hammer.
+    const trill = ctx.createGain();
+    trill.gain.value = 0.5;
+    const lfo = ctx.createOscillator();
+    lfo.type = 'square';
+    lfo.frequency.value = 20;
+    const depth = ctx.createGain();
+    depth.gain.value = 0.5;
+    lfo.connect(depth).connect(trill.gain);
+    trill.connect(env);
+
+    for (const freq of [1046, 1318]) {
       const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
+      osc.type = 'triangle';
       osc.frequency.value = freq;
-      const t = ctx.currentTime + offset;
-      gain.gain.setValueAtTime(0.0001, t);
-      gain.gain.exponentialRampToValueAtTime(0.22 / (i + 1), t + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t + 1.1);
-      osc.connect(gain).connect(ctx.destination);
+      osc.connect(trill);
       osc.start(t);
-      osc.stop(t + 1.2);
-    });
-  });
+      osc.stop(t + RING + 0.05);
+    }
+    lfo.start(t);
+    lfo.stop(t + RING + 0.05);
+  }
 }
 
 /** Reads a fetch body as Server-Sent Events until it ends or is aborted. */
