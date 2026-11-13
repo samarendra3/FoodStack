@@ -1,5 +1,6 @@
 'use client';
 
+import { type CheckoutStart, openCheckout } from '@/lib/razorpay-checkout';
 import { ItemOptionsDialog, type OptionsItem } from '@/components/item-options-dialog';
 import {
   type AddonGroup,
@@ -51,9 +52,12 @@ interface GuestView {
     outstandingMinor: number;
   };
   contact?: { phone: string | null; receiptConsent: boolean; marketingConsent: boolean };
+  /** The restaurant accepts online payment (its own Razorpay account is connected). */
+  onlinePayment?: boolean;
 }
-type PayChoice = 'counter_cash' | 'counter_card';
+type PayChoice = 'online' | 'counter_cash' | 'counter_card';
 const PAY_LABEL: Record<PayChoice, string> = {
+  online: 'Pay online now (UPI / card)',
   counter_cash: 'Cash at counter',
   counter_card: 'Card at counter',
 };
@@ -244,6 +248,41 @@ export default function GuestTablePage({
   const add = (id: string, d: number) =>
     setCart((c) => ({ ...c, [id]: Math.max(0, Math.min(99, (c[id] ?? 0) + d)) }));
 
+  /** Online payment for one of this guest's orders; the server verifies with the gateway. */
+  const [paying, setPaying] = useState<string | null>(null);
+  const payOnline = async (orderId: string) => {
+    if (!token || paying) return;
+    setPaying(orderId);
+    try {
+      const start = await api.request<CheckoutStart>(`/public/guest/orders/${orderId}/pay`, {
+        method: 'POST',
+        headers: { 'X-Guest-Token': token },
+      });
+      const r = await openCheckout(start, view?.contact?.phone);
+      if (r.kind === 'paid') {
+        const done = await api.request<{ status: string }>('/public/guest/payments/confirm', {
+          method: 'POST',
+          headers: { 'X-Guest-Token': token },
+          body: { intentId: start.intentId, paymentId: r.paymentId, signature: r.signature },
+        });
+        setNotice(
+          done.status === 'paid' || done.status === 'already_paid'
+            ? 'Payment received. Thank you!'
+            : done.status === 'pending'
+              ? 'Payment is processing. Your bill updates as soon as it is confirmed.'
+              : 'We could not match this payment to your bill. Please show it at the counter.',
+        );
+      } else if (r.kind === 'failed') {
+        setNotice(`Payment failed: ${r.reason}. You can try again or pay at the counter.`);
+      }
+    } catch (e) {
+      setNotice(messageOf(e));
+    } finally {
+      setPaying(null);
+      await qc.invalidateQueries({ queryKey: ['guest', tenantId, tableId, 'bill'] });
+    }
+  };
+
   const place = async () => {
     if (!token || lines.length === 0 || placing) return;
     setPlacing(true);
@@ -277,7 +316,7 @@ export default function GuestTablePage({
     // Same key for retries of this cart; a new key only after success.
     pendingKey.current ??= crypto.randomUUID();
     try {
-      await api.request('/public/guest/orders', {
+      const placed = await api.request<{ order: { id: string } }>('/public/guest/orders', {
         method: 'POST',
         headers: { 'X-Guest-Token': token },
         idempotencyKey: pendingKey.current,
@@ -297,6 +336,7 @@ export default function GuestTablePage({
       setCart({});
       setTab('bill');
       setNotice('Order sent to the kitchen.');
+      if (pay === 'online') void payOnline(placed.order.id);
       await qc.invalidateQueries({ queryKey: ['guest', tenantId, tableId, 'bill'] });
     } catch (e) {
       const c = codeOf(e);
@@ -570,6 +610,16 @@ export default function GuestTablePage({
                   </div>
                   <div className="text-right">
                     <p className="font-semibold tabular-nums">{money(o.totalMinor)}</p>
+                    {o.status === 'open' && o.dueMinor > 0 && view?.onlinePayment ? (
+                      <button
+                        type="button"
+                        disabled={paying !== null}
+                        onClick={() => void payOnline(o.id)}
+                        className="mb-1 block rounded-md bg-emerald-600 px-2 py-1 text-xs font-semibold text-white disabled:opacity-60"
+                      >
+                        {paying === o.id ? 'Opening…' : `Pay ${money(o.dueMinor)} online`}
+                      </button>
+                    ) : null}
                     {o.status === 'cancelled' ? (
                       <span className="text-xs text-red-600">Cancelled</span>
                     ) : o.status === 'completed' ? (
@@ -612,6 +662,7 @@ export default function GuestTablePage({
         <CheckoutSheet
           total={money(cartTotal)}
           count={cartCount}
+          onlineAvailable={Boolean(view?.onlinePayment)}
           lines={lines.map((l) => ({
             key: l.key,
             label: l.label,
@@ -668,6 +719,7 @@ export default function GuestTablePage({
 function CheckoutSheet(p: {
   total: string;
   count: number;
+  onlineAvailable: boolean;
   lines: { key: string; label: string; note: string; quantity: number; amount: string }[];
   onQty: (key: string, delta: number) => void;
   pay: PayChoice;
@@ -734,26 +786,30 @@ function CheckoutSheet(p: {
 
         <fieldset className="space-y-2">
           <legend className="mb-1 text-sm font-medium">How will you pay?</legend>
-          {(Object.keys(PAY_LABEL) as PayChoice[]).map((k) => (
-            <label
-              key={k}
-              className={cn(
-                'flex cursor-pointer items-center gap-3 rounded-xl border p-3 text-sm',
-                p.pay === k ? 'border-emerald-600 bg-emerald-50' : 'border-slate-200',
-              )}
-            >
-              <input
-                type="radio"
-                name="pay"
-                checked={p.pay === k}
-                onChange={() => p.setPay(k)}
-                className="accent-emerald-600"
-              />
-              {PAY_LABEL[k]}
-            </label>
-          ))}
+          {(Object.keys(PAY_LABEL) as PayChoice[])
+            .filter((k) => k !== 'online' || p.onlineAvailable)
+            .map((k) => (
+              <label
+                key={k}
+                className={cn(
+                  'flex cursor-pointer items-center gap-3 rounded-xl border p-3 text-sm',
+                  p.pay === k ? 'border-emerald-600 bg-emerald-50' : 'border-slate-200',
+                )}
+              >
+                <input
+                  type="radio"
+                  name="pay"
+                  checked={p.pay === k}
+                  onChange={() => p.setPay(k)}
+                  className="accent-emerald-600"
+                />
+                {PAY_LABEL[k]}
+              </label>
+            ))}
           <p className="text-xs text-slate-500">
-            Your order goes to the kitchen now; pay at the counter whenever you are ready.
+            {p.pay === 'online'
+              ? 'Your order goes to the kitchen now, then the secure payment window opens.'
+              : 'Your order goes to the kitchen now; pay at the counter whenever you are ready.'}
           </p>
         </fieldset>
 

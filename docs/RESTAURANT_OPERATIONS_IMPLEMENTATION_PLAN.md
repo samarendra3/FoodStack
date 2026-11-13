@@ -1,6 +1,6 @@
 # Restaurant Operations — Audit & Implementation Plan
 
-Status: **APPROVED. Phases 1–5 complete; phases 6–11 pending.**
+Status: **APPROVED. Phases 1–5 complete; phase 6 built and tested against a simulated gateway (awaiting a real Razorpay test-mode run); phases 7–11 pending.**
 Scope: QR ordering, payments, kitchen, automatic waiter assignment, billing, invoices and receipt
 sharing, as one order lifecycle on the existing FoodStack architecture.
 
@@ -215,7 +215,8 @@ Approved order of work: 1 outbox and timeline · 2 signed QR links and QR improv
 | 3 | Add-ons + per-item instructions | **Complete** (tests below) |
 | 4 | Item-level kitchen status + unified workflow | **Complete** (tests below) |
 | 5 | Automatic workload-based waiter assignment | **Complete** (tests below) |
-| 6–11 | — | Pending (6, 9, 10 need provider accounts) |
+| 6 | Restaurant-owned online payments (Razorpay) | **Built, feature-flagged OFF**; verified against a simulated gateway; real test-mode run pending |
+| 7–11 | — | Pending (9, 10 need provider accounts) |
 
 ### Phase 1 report — Durable transactional outbox and readable order timeline
 
@@ -395,3 +396,55 @@ Approved order of work: 1 outbox and timeline · 2 signed QR links and QR improv
 **Known limitations**
 - Orders already in the unassigned queue are not automatically handed to a waiter who clocks in later. The waiter (or a supervisor) picks them up from the queue, which is visible and rings.
 - There is no maximum load per waiter; the pick is "fewest open tasks".
+
+### Phase 6 report — Restaurant-owned online payments (Razorpay)
+
+**Model (verified with Razorpay docs; approved Option 2):** each restaurant connects its **own** Razorpay account by entering its key id, key secret and a webhook secret. Payments settle directly to the restaurant. The FoodStack subscription keys are never used. Razorpay Partner OAuth ("Connect with Razorpay") can be added later as a second connection method once FoodStack is approved as a Technology Partner; it reuses everything below.
+
+**Delivered**
+- Migration `1798000036000-RestaurantOnlinePayments` (reversible):
+  - `restaurant_payment_accounts`: secrets AES-256-GCM encrypted with a key derived (HKDF) from the server secret; random public `webhook_key`
+  - `payment_intents`: one live attempt per order
+  - `gateway_events`: unique (provider, event id)
+  - `payments` gains method `online`, `gateway`, `gateway_payment_id` (**unique**) and `payment_intent_id`
+- **Feature flag `ONLINE_PAYMENTS_ENABLED` (default false)** and `RAZORPAY_API_BASE` (tests only).
+- Restaurant settings (`restaurant:manage`, own restaurant only):
+  - `GET/PUT/DELETE /payments/gateway-account`. Keys are **verified with Razorpay before saving**.
+  - Secrets are never returned. The response gives the webhook URL and the events to subscribe to.
+- Guest:
+  - `POST /public/guest/orders/:id/pay` (own orders only; the amount is what is due, computed on the server)
+  - `POST /public/guest/payments/confirm`
+  - checkout option **Pay online now** (only when available) and **Pay ₹x online** on unpaid bills, using Razorpay Standard Checkout
+- **Payment truth comes from the gateway, never the browser:**
+  - the checkout signature is HMAC-verified (constant time)
+  - the payment is then **re-fetched from Razorpay with the restaurant's keys**; order id, amount and currency must match the intent
+  - authorised payments are captured
+  - only then is the payment recorded through the same code as counter payments, which completes the bill and emits `payment.recorded`
+  - a mismatch or a bill paid another way → intent `needs_review` plus a `payment.failed` event (money is never silently applied)
+- **Webhook** `POST /public/payments/razorpay/:webhookKey`:
+  - raw-body HMAC with the restaurant's webhook secret
+  - event id de-duplicated
+  - `payment.captured` / `order.paid` → settled (re-read from the gateway); `payment.failed` → intent failed, bill stays payable at the counter
+- **Refunds** of online payments go through the restaurant's Razorpay first; if Razorpay refuses, nothing is recorded (rolled back).
+
+**Tests (evidence)** — `integration/online-payments.int-spec.ts`, run against a local fake Razorpay that authenticates and signs like the real one (6 tests):
+- connect: bad key format and wrong secret refused; waiter 403; secrets not returned and not stored in plain text; another tenant gets 404
+- full guest payment: server amount, forged signature refused, confirmed payment recorded **once** despite a browser retry and a webhook for the same payment; bill completed
+- webhook-only payment: wrong signature refused, authorised payment captured, the same event id is a duplicate, a different event for the same payment → already paid; exactly 1 payment row
+- amount mismatch → needs review, nothing recorded; failed payment → bill still payable at the counter
+- refund: gateway refusal → 503 and nothing recorded; success → refund sent to the gateway and recorded
+- a guest cannot pay another guest's order
+- Full API integration **350/350**, API unit **177/177**, web unit **36/36**; `tsc` and ESLint clean.
+- Fix found by the tests: a tenant-wide `restaurant:manage` grant was accepted for another tenant's restaurant id (RLS still hid the data). It now returns 404.
+
+**Not production-ready until (per your rule):**
+1. A real **Razorpay test-mode** run:
+   - connect test keys in Restaurant Settings
+   - add the webhook URL in the Razorpay dashboard (events `payment.captured`, `payment.failed`, `order.paid`)
+   - pay a QR order with a test UPI or card
+   - refund it
+2. `ONLINE_PAYMENTS_ENABLED=true` set on the server.
+
+**Limitations**
+- Online payment is offered to QR guests. Staff POS still takes counter payments (cash / card / UPI reference).
+- Refunds go to the gateway inside the database transaction. If the gateway accepts but the database commit then fails (rare), the refund exists at Razorpay without a FoodStack record; reconciliation in Phase 7 will surface it.

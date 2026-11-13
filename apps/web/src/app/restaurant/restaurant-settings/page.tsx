@@ -14,6 +14,7 @@ import {
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ProfileTab } from '../profile/profile-tab';
+import { OnlinePaymentsSettings } from './online-payments';
 import { PageHeader } from '../_kit/report-kit';
 
 const LINKS = [
@@ -89,6 +90,7 @@ export default function RestaurantSettingsPage() {
           </li>
         ))}
       </ul>
+      <OnlinePaymentsSettings />
       <section>
         <h2 className="mb-3 flex items-center gap-2 text-base font-semibold">
           <Store className="size-[18px] text-slate-400" /> Business profile

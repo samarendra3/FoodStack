@@ -29,6 +29,7 @@ import { type Db, DbContext } from '../../core/db/db-context';
 import { ACTIVE_TENANT_STATUSES } from '../auth/access.service';
 import type { AuthContext, RequestMeta } from '../auth/auth.types';
 import { CurrentAuth, Public, RequirePermission } from '../auth/decorators';
+import { OnlinePaymentsService } from './online-payments';
 import { createOrderSchema, paymentSchema } from './orders.schemas';
 import {
   type Actor,
@@ -67,10 +68,19 @@ const joinSchema = z.strictObject({
     .optional(),
   name: z.string().trim().max(20).optional(),
 });
-const guestOrderSchema = createOrderSchema.pick({
-  lines: true,
-  note: true,
-  paymentPreference: true,
+const guestOrderSchema = createOrderSchema
+  .pick({ lines: true, note: true })
+  .extend({ paymentPreference: z.enum(['counter_cash', 'counter_card', 'online']).nullish() });
+const confirmSchema = z.strictObject({
+  intentId: z.uuid(),
+  paymentId: z
+    .string()
+    .trim()
+    .regex(/^pay_[A-Za-z0-9]{6,40}$/),
+  signature: z
+    .string()
+    .trim()
+    .regex(/^[0-9a-f]{64}$/i),
 });
 /** Indian 10-digit mobiles get +91; anything else must already be in +<country><number> form. */
 export const normalizePhone = (raw: string) => {
@@ -119,7 +129,38 @@ export class GuestSessionsService {
   constructor(
     private readonly db: DbContext,
     private readonly orders: OrdersService,
+    private readonly payments: OnlinePaymentsService,
   ) {}
+
+  /** Starts an online payment for one of THIS guest's open orders. */
+  payOnline(token: string | undefined, orderId: string) {
+    return this.asGuest(token, async (db, g) => {
+      const mine = await db.one<{ id: string }>(
+        'SELECT id FROM orders WHERE id = $1 AND guest_id = $2',
+        [orderId, g.id],
+      );
+      if (!mine) throw new NotFoundException({ code: 'NOT_FOUND', message: 'Order not found.' });
+      return this.payments.startForOrder(db, orderId, { guestId: g.id });
+    });
+  }
+
+  /** Checkout reported success: verified against the gateway before anything is recorded. */
+  confirmOnline(
+    token: string | undefined,
+    input: z.infer<typeof confirmSchema>,
+    meta: RequestMeta,
+  ) {
+    return this.asGuest(token, async (db, g) => {
+      const mine = await db.one<{ id: string }>(
+        `SELECT i.id FROM payment_intents i JOIN orders o ON o.id = i.order_id
+          WHERE i.id = $1 AND o.guest_id = $2`,
+        [input.intentId, g.id],
+      );
+      if (!mine) throw new NotFoundException({ code: 'NOT_FOUND', message: 'Payment not found.' });
+      const result = await this.payments.confirm(db, input, meta);
+      return { ...result, ...(await this.view(db, g.session_id, g.id)) };
+    });
+  }
 
   /** First scan, re-scan or recovery. Returns the device token and the guest's bill. */
   join(input: z.infer<typeof joinSchema>, token: string | undefined) {
@@ -233,6 +274,15 @@ export class GuestSessionsService {
         g.session_id,
       ]);
       if (!s || s.status !== 'open') throw sessionClosed();
+      if (
+        input.paymentPreference === 'online' &&
+        !(await this.payments.availableFor(db, s.branch_id))
+      ) {
+        throw new BadRequestException({
+          code: 'ONLINE_PAYMENTS_DISABLED',
+          message: 'Online payment is not available here. Please choose pay at counter.',
+        });
+      }
       const actor: Actor = { tenantId, userId: null, sessionId: null, audience: 'system' };
       const order = await this.orders.createInTx(
         db,
@@ -272,6 +322,7 @@ export class GuestSessionsService {
     ]);
     return {
       restaurant: { id: r!.restaurant_id, name: r!.name },
+      onlinePayment: await this.payments.availableFor(db, s!.branch_id),
       session: v.session,
       guest: v.guests[0] ?? null,
       contact: {
@@ -347,6 +398,29 @@ export class GuestSessionsController {
     @Body(new ZodValidationPipe(contactSchema)) body: z.infer<typeof contactSchema>,
   ) {
     return this.guests.contact(token, body);
+  }
+
+  @Post('orders/:id/pay')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @ApiOperation({ summary: 'Start an online payment for one of your orders' })
+  payOnline(
+    @Headers('x-guest-token') token: string | undefined,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.guests.payOnline(token, id);
+  }
+
+  @Post('payments/confirm')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @ApiOperation({ summary: 'Confirm a completed checkout (verified with the gateway)' })
+  confirmOnline(
+    @Headers('x-guest-token') token: string | undefined,
+    @Body(new ZodValidationPipe(confirmSchema)) body: z.infer<typeof confirmSchema>,
+    @Req() req: Request,
+  ) {
+    return this.guests.confirmOnline(token, body, requestMeta(req));
   }
 
   @Get()

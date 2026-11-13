@@ -20,7 +20,7 @@ const KITCHEN: Record<string, string> = {
   ready: 'Ready',
   served: 'Served',
 };
-const METHOD: Record<string, string> = { cash: 'Cash', card: 'Card', upi: 'UPI' };
+const METHOD: Record<string, string> = { cash: 'Cash', card: 'Card', upi: 'UPI', online: 'Online' };
 const time = new Intl.DateTimeFormat(undefined, { timeStyle: 'short' });
 const day = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
 
@@ -45,6 +45,8 @@ function describe(e: TimelineEntry, fmt: (m: number) => string): string {
       return `${METHOD[String(d.method)] ?? String(d.method)} payment ${fmt(Number(d.amountMinor ?? 0))}${
         d.paidInFull ? ' · bill settled' : ''
       }`;
+    case 'payment.failed':
+      return `Online payment not applied: ${String(d.reason ?? '')}${d.needsReview ? ' (needs review)' : ''}`;
     case 'payment.refunded':
       return `Refund ${fmt(Number(d.amountMinor ?? 0))}: ${String(d.reason ?? '')}`;
     default:

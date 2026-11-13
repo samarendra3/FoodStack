@@ -31,7 +31,7 @@ const conflict = (code: string, message: string) => new ConflictException({ code
 const notFound = (what: string) =>
   new NotFoundException({ code: 'ORDER_NOT_FOUND', message: `${what} not found.` });
 
-interface OrderRow {
+export interface OrderRow {
   id: string;
   tenant_id: string;
   branch_id: string;
@@ -90,6 +90,7 @@ const TIMELINE_FIELDS: Record<string, string[]> = {
   'order.item_voided': ['itemId', 'reason'],
   'payment.recorded': ['method', 'amountMinor', 'paidInFull'],
   'payment.refunded': ['amountMinor', 'reason'],
+  'payment.failed': ['reason', 'needsReview'],
 };
 function pickTimelineDetails(type: string, payload: Record<string, unknown>) {
   const out: Record<string, unknown> = {};
@@ -181,6 +182,19 @@ export class OrdersService {
     private readonly events: OrderEventsService,
     private readonly assignments: WaiterAssignmentsService,
   ) {}
+
+  /** Set by OnlinePaymentsService: refunds an online payment at the gateway (in-transaction). */
+  onlineRefund?: (
+    db: Db,
+    payment: {
+      id: string;
+      gateway: string | null;
+      gateway_payment_id: string | null;
+      payment_intent_id: string | null;
+    },
+    amountMinor: number,
+    reason: string,
+  ) => Promise<void>;
 
   create(
     auth: AuthContext,
@@ -622,6 +636,37 @@ export class OrdersService {
     });
   }
 
+  /** Locks an order for a payment write (online payments, in the caller's transaction). */
+  lockForPayment(db: Db, id: string) {
+    return this.load(db, id, true);
+  }
+
+  /**
+   * Records a payment confirmed by the gateway (never by the browser). The caller holds the
+   * order lock and has checked amount and currency against the gateway's own record.
+   */
+  recordGatewayPayment(
+    db: Db,
+    order: OrderRow,
+    p: { amountMinor: number; provider: string; paymentId: string; intentId: string },
+    meta: RequestMeta,
+  ) {
+    const actor: Actor = {
+      tenantId: order.tenant_id,
+      userId: null,
+      sessionId: null,
+      audience: 'system',
+    };
+    return this.applyPayment(
+      db,
+      actor,
+      order,
+      { method: 'online', amountMinor: p.amountMinor, reference: p.paymentId },
+      meta,
+      { provider: p.provider, paymentId: p.paymentId, intentId: p.intentId },
+    );
+  }
+
   /**
    * Records one payment against one locked, open order and completes it when nothing is due.
    * The single place a payment is written (POS, guest balance and whole-table settlement).
@@ -630,8 +675,9 @@ export class OrdersService {
     db: Db,
     actor: Actor,
     order: OrderRow,
-    input: PaymentInput,
+    input: Omit<PaymentInput, 'method'> & { method: PaymentInput['method'] | 'online' },
     meta: RequestMeta,
+    gateway?: { provider: string; paymentId: string; intentId: string },
   ) {
     if (order.status !== 'open') throw conflict('ORDER_CLOSED', 'This order is already closed.');
     const due = Number(order.total_minor) - Number(order.paid_minor);
@@ -642,8 +688,9 @@ export class OrdersService {
       });
     }
     const payment = await db.one<{ id: string }>(
-      `INSERT INTO payments (tenant_id, order_id, branch_id, method, amount_minor, reference, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+      `INSERT INTO payments (tenant_id, order_id, branch_id, method, amount_minor, reference, created_by,
+                             gateway, gateway_payment_id, payment_intent_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
       [
         actor.tenantId,
         order.id,
@@ -652,6 +699,9 @@ export class OrdersService {
         input.amountMinor,
         input.reference || null,
         actor.userId,
+        gateway?.provider ?? null,
+        gateway?.paymentId ?? null,
+        gateway?.intentId ?? null,
       ],
     );
     const paidInFull = input.amountMinor === due;
@@ -691,8 +741,13 @@ export class OrdersService {
         branch_id: string;
         amount_minor: string;
         refunded_minor: string;
+        method: string;
+        gateway: string | null;
+        gateway_payment_id: string | null;
+        payment_intent_id: string | null;
       }>(
-        'SELECT id, order_id, branch_id, amount_minor, refunded_minor FROM payments WHERE id = $1 FOR UPDATE',
+        `SELECT id, order_id, branch_id, amount_minor, refunded_minor, method, gateway,
+                gateway_payment_id, payment_intent_id FROM payments WHERE id = $1 FOR UPDATE`,
         [paymentId],
       );
       if (!payment) throw notFound('Payment');
@@ -704,6 +759,14 @@ export class OrdersService {
           code: 'REFUND_TOO_LARGE',
           message: `At most ${refundable / 100} can be refunded from this payment.`,
         });
+      }
+      // Online payments are refunded through the restaurant's gateway first; if the gateway
+      // refuses, nothing is recorded (the transaction rolls back).
+      if (payment.method === 'online') {
+        if (!this.onlineRefund) {
+          throw conflict('ONLINE_REFUND_UNAVAILABLE', 'Online refunds are not available.');
+        }
+        await this.onlineRefund(db, payment, input.amountMinor, input.reason);
       }
       await db.query('UPDATE payments SET refunded_minor = refunded_minor + $2 WHERE id = $1', [
         paymentId,

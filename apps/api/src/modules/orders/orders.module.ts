@@ -5,6 +5,7 @@ import { PromotionsModule } from '../promotions/promotions.module';
 import { OrdersController } from './orders.controller';
 import { OrderEventsService } from './order-events';
 import { WaiterAssignmentsService } from './waiter-assignments';
+import { OnlinePaymentsController, OnlinePaymentsService } from './online-payments.controller';
 import { OrdersService } from './orders.service';
 import {
   GuestSessionsController,
@@ -14,7 +15,18 @@ import {
 
 @Module({
   imports: [AuthModule, BillingModule, PromotionsModule],
-  controllers: [OrdersController, TableSessionsController, GuestSessionsController],
-  providers: [OrdersService, OrderEventsService, WaiterAssignmentsService, GuestSessionsService],
+  controllers: [
+    OrdersController,
+    TableSessionsController,
+    GuestSessionsController,
+    OnlinePaymentsController,
+  ],
+  providers: [
+    OrdersService,
+    OrderEventsService,
+    WaiterAssignmentsService,
+    OnlinePaymentsService,
+    GuestSessionsService,
+  ],
 })
 export class OrdersModule {}

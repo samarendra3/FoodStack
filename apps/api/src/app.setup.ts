@@ -18,7 +18,9 @@ export function configureApp(app: NestExpressApplication): void {
   // Keeps the exact bytes for payment webhooks, whose HMAC signature covers the raw body.
   // Nest narrows the option type, but passes it through to express.json, which supports verify.
   const keepWebhookBody = (req: { url?: string; rawBody?: Buffer }, _res: unknown, buf: Buffer) => {
-    if (req.url?.includes('/billing/webhooks/')) req.rawBody = buf;
+    if (req.url?.includes('/billing/webhooks/') || req.url?.includes('/public/payments/')) {
+      req.rawBody = buf;
+    }
   };
   app.useBodyParser('json', { limit: '1mb', verify: keepWebhookBody } as { limit: string });
   // Reads the refresh cookie on /auth endpoints; the token itself is the secret (no signing).

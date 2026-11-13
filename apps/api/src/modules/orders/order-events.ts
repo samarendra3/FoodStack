@@ -18,7 +18,8 @@ export type OrderEventType =
   | 'order.cancelled'
   | 'order.item_voided'
   | 'payment.recorded'
-  | 'payment.refunded';
+  | 'payment.refunded'
+  | 'payment.failed';
 
 export interface EventActor {
   kind: 'staff' | 'guest' | 'system';

@@ -180,6 +180,13 @@ export const envSchema = z
     RAZORPAY_KEY_SECRET: optionalString,
     /** Secret configured on the Razorpay webhook; required to accept webhook callbacks. */
     RAZORPAY_WEBHOOK_SECRET: optionalString,
+    /**
+     * Customer online payments into each restaurant's OWN Razorpay account (keys entered by the
+     * restaurant, never the subscription keys above). Off until enabled per deployment.
+     */
+    ONLINE_PAYMENTS_ENABLED: booleanString,
+    /** Razorpay REST base URL; overridden only by tests (a local fake gateway). */
+    RAZORPAY_API_BASE: z.url().default('https://api.razorpay.com'),
     /** How often the background job moves ended trials/periods to expired. 0 disables it. */
     SUBSCRIPTION_SWEEP_INTERVAL_SECONDS: z.coerce.number().int().min(0).max(86_400).default(300),
 
