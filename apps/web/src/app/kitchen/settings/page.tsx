@@ -5,6 +5,7 @@ import type { ReactNode } from 'react';
 import { useProfile } from '@/components/auth/auth-provider';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { CARD, KitchenFrame } from '../kitchen-frame';
+import { unlockAudio } from '@/lib/sound';
 import { chime } from '../kitchen-feed';
 import { CONNECTION } from '../status';
 
@@ -39,7 +40,10 @@ function Settings(p: {
         <Row title="New-order sound" hint="Plays a chime when a new order arrives.">
           <button
             type="button"
-            onClick={() => chime()}
+            onClick={() => {
+              unlockAudio();
+              setTimeout(chime, 80);
+            }}
             className="h-8 rounded-md px-3 text-sm font-medium text-slate-600 ring-1 ring-slate-200 ring-inset hover:bg-slate-50 dark:text-slate-300 dark:ring-white/10 dark:hover:bg-white/5"
           >
             Test

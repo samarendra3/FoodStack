@@ -17,13 +17,8 @@ import {
 import { AnimatePresence, motion } from 'motion/react';
 import { useCallback, useEffect, useState } from 'react';
 import { authErrorMessage } from '@/lib/auth/errors';
-import {
-  audioReady,
-  playBell,
-  type ReadyOrder,
-  unlockAudio,
-  useReadyOrders,
-} from '@/lib/ready-orders';
+import { playBell, type ReadyOrder, useReadyOrders } from '@/lib/ready-orders';
+import { audioReady, unlockAudio } from '@/lib/sound';
 
 const MUTE_KEY = 'foodstack.waiter.bell-muted';
 /** The ringtone lasts ~2.6 s; repeat with a short pause, like an incoming call. */

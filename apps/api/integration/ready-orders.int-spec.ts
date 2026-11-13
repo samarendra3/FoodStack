@@ -38,6 +38,8 @@ describe('Ready-order events (integration)', () => {
   let second: string;
   let bravoMain: string;
   let chai: string;
+  let table: string;
+  let alphaId: string;
 
   const call = (who: string, method: 'get' | 'post', url: string) =>
     request(app.getHttpServer())
@@ -46,9 +48,13 @@ describe('Ready-order events (integration)', () => {
       .set('Authorization', `Bearer ${tokens[who]}`);
 
   /** Opens the SSE stream like the web app does (fetch + Bearer) and collects its events. */
-  async function listen(who: string | null, branchId: string): Promise<Sse> {
+  async function listen(
+    who: string | null,
+    branchId: string,
+    path = '/waiter/ready-orders/stream',
+  ): Promise<Sse> {
     const ctrl = new AbortController();
-    const res = await fetch(`${base}${API}/waiter/ready-orders/stream?branchId=${branchId}`, {
+    const res = await fetch(`${base}${API}${path}?branchId=${branchId}`, {
       headers: {
         Accept: 'text/event-stream',
         'X-Forwarded-For': freshIp(),
@@ -156,6 +162,10 @@ describe('Ready-order events (integration)', () => {
     await member('waiterSecond', alpha.id, 'waiter', hash, alpha.second);
     await member('cashier', alpha.id, 'cashier', hash, alpha.main);
     await member('bravoWaiter', bravo.id, 'waiter', hash, bravo.main);
+    await member('cook2', alpha.id, 'kitchen_staff', hash, alpha.main);
+    await member('cookSecond', alpha.id, 'kitchen_staff', hash, alpha.second);
+    await member('bravoCook', bravo.id, 'kitchen_staff', hash, bravo.main);
+    alphaId = alpha.id;
 
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     app = moduleRef.createNestApplication<NestExpressApplication>({ logger: false });
@@ -174,6 +184,9 @@ describe('Ready-order events (integration)', () => {
       .send({ rows: [{ category: 'Drinks', name: 'Chai', priceMinor: 5000, diet: 'veg' }] })
       .expect(201);
     chai = (await call('owner', 'get', '/menu').expect(200)).body.data.items[0].id;
+    table = (
+      await call('owner', 'post', '/tables').send({ branchId: main, label: 'Q1' }).expect(201)
+    ).body.data.id;
   });
 
   afterAll(async () => {
@@ -181,9 +194,14 @@ describe('Ready-order events (integration)', () => {
     await app?.close();
     if (migrator?.isInitialized) {
       for (const table of [
+        'refunds',
+        'payments',
         'order_discounts',
         'order_items',
         'orders',
+        'table_guests',
+        'table_sessions',
+        'dining_tables',
         'branch_order_counters',
         'menu_item_variants',
         'menu_items',
@@ -296,5 +314,95 @@ describe('Ready-order events (integration)', () => {
   it('cannot serve an order that is not ready yet', async () => {
     const o = await placeAndCookToPreparing('T3');
     await call('waiter1', 'post', `/waiter/orders/${o.id}/served`).expect(409);
+  });
+
+  // ---- kitchen: new-order events (waiter, POS and QR share one path) ----
+
+  const kitchen = (who: string, branchId = main) =>
+    listen(who, branchId, '/kitchen/tickets/stream');
+  const created = (s: Sse) => s.events.filter((e) => e.event === 'order.created');
+
+  async function waiterOrder(who: string, tableLabel: string) {
+    return (
+      await call(who, 'post', '/orders')
+        .set('Idempotency-Key', `w-${suffix()}${suffix()}`)
+        .send({
+          branchId: main,
+          channel: 'dine_in',
+          tableLabel,
+          lines: [{ menuItemId: chai, quantity: 1 }],
+        })
+        .expect(201)
+    ).body.data as { id: string };
+  }
+
+  it('authorizes the kitchen stream per branch and tenant', async () => {
+    expect((await kitchen('waiter1')).status).toBe(403); // no kds:access
+    expect((await kitchen('cookSecond')).status).toBe(403); // other branch
+    expect((await kitchen('bravoCook')).status).toBe(403); // other tenant
+  });
+
+  it('rings every kitchen screen of the branch when a waiter sends an order', async () => {
+    streams.forEach((s) => s.close());
+    const k1 = await kitchen('cook');
+    const k2 = await kitchen('cook2');
+    const other = await kitchen('cookSecond', second);
+    const otherTenant = await kitchen('bravoCook', bravoMain);
+
+    const t0 = Date.now();
+    const o = await waiterOrder('waiter1', 'T11');
+    await until(() => created(k1).length === 1 && created(k2).length === 1);
+    expect(Date.now() - t0).toBeLessThan(1000);
+    expect(created(k1)[0]!.data).toEqual({ type: 'order.created', branchId: main, orderId: o.id });
+
+    // The kitchen re-reads its tickets on the event: the order is there, status new.
+    const tickets = (await call('cook', 'get', `/kitchen/tickets?branchId=${main}`).expect(200))
+      .body.data as { id: string; status: string; tableLabel: string }[];
+    expect(tickets.find((t) => t.id === o.id)).toMatchObject({ status: 'new', tableLabel: 'T11' });
+
+    await sleep(400);
+    expect(created(other)).toHaveLength(0);
+    expect(created(otherTenant)).toHaveLength(0);
+  });
+
+  it('delivers both orders when two waiters send at the same time', async () => {
+    const k = await kitchen('cook');
+    const [a, b] = await Promise.all([
+      waiterOrder('waiter1', 'T12'),
+      waiterOrder('waiter2', 'T13'),
+    ]);
+    await until(() => created(k).length === 2);
+    expect(
+      created(k)
+        .map((e) => e.data.orderId)
+        .sort(),
+    ).toEqual([a.id, b.id].sort());
+  });
+
+  it('rings the kitchen for QR guest orders through the same event', async () => {
+    const k = await kitchen('cook');
+    const join = await request(app.getHttpServer())
+      .post(`${API}/public/guest/join`)
+      .set('X-Forwarded-For', freshIp())
+      .send({ tenantId: alphaId, tableId: table })
+      .expect(200);
+    const res = await request(app.getHttpServer())
+      .post(`${API}/public/guest/orders`)
+      .set('X-Forwarded-For', freshIp())
+      .set('X-Guest-Token', join.body.data.token)
+      .set('Idempotency-Key', `g-${suffix()}${suffix()}`)
+      .send({ lines: [{ menuItemId: chai, quantity: 1 }] })
+      .expect(201);
+    await until(() => created(k).length === 1);
+    expect(created(k)[0]!.data.orderId).toBe(res.body.data.order.id);
+  });
+
+  it('tells other kitchen screens when a ticket moves', async () => {
+    const o = await waiterOrder('waiter1', 'T14');
+    const k2 = await kitchen('cook2');
+    await call('cook', 'post', `/kitchen/tickets/${o.id}/status`)
+      .send({ to: 'accepted' })
+      .expect(200);
+    await until(() => k2.events.some((e) => e.event === 'order.status' && e.data.orderId === o.id));
   });
 });

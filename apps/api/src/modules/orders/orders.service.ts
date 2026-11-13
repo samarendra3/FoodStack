@@ -148,13 +148,13 @@ export class OrdersService {
     private readonly events: OrderEventsService,
   ) {}
 
-  create(
+  async create(
     auth: AuthContext,
     input: CreateOrderInput,
     clientRequestId: string | null,
     meta: RequestMeta,
   ) {
-    return this.run(auth, async (db, access) => {
+    const order = await this.run(auth, async (db, access) => {
       this.require(
         access,
         input.branchId,
@@ -163,6 +163,16 @@ export class OrdersService {
       );
       return this.createInTx(db, actorOf(auth), input, clientRequestId, meta, null);
     });
+    // After commit: ring the branch's kitchens (POS and waiter orders; QR orders publish the
+    // same event from the guest flow). Kitchens de-duplicate by order id, so an idempotent
+    // retry that returns the same order cannot ring twice.
+    await this.publishCreated(auth.tenantId!, input.branchId, order.id);
+    return order;
+  }
+
+  /** Tells the branch's kitchen screens a new order exists. Call only after commit. */
+  publishCreated(tenantId: string, branchId: string, orderId: string) {
+    return this.events.publish({ type: 'order.created', tenantId, branchId, orderId });
   }
 
   /**
@@ -648,10 +658,10 @@ export class OrdersService {
     });
   }
 
-  /** Checks the caller may watch this branch's pickup feed (no DB connection is kept afterwards). */
-  authorizeWaiterFeed(auth: AuthContext, branchId: string) {
+  /** Checks the caller may watch this branch's live feed (no DB connection is kept afterwards). */
+  authorizeFeed(auth: AuthContext, branchId: string, permission: 'waiter:access' | 'kds:access') {
     return this.run(auth, async (_db, access) => {
-      this.require(access, branchId, ['waiter:access'], 'You cannot view this branch.');
+      this.require(access, branchId, [permission], 'You cannot view this branch.');
       if (!auth.tenantId) throw forbidden('You cannot view this branch.');
       return auth.tenantId;
     });
@@ -677,7 +687,7 @@ export class OrdersService {
     anyOf: string[],
     message: string,
   ) {
-    const { result, event } = await this.run(auth, async (db, access) => {
+    const { result, event, branchId } = await this.run(auth, async (db, access) => {
       const order = await this.load(db, id, true);
       this.require(access, order.branch_id, anyOf, message);
       if (order.status === 'cancelled')
@@ -704,10 +714,18 @@ export class OrdersService {
           await this.readyItems(db, [id]),
         );
       }
-      return { result: { id, status: to }, event };
+      return { result: { id, status: to }, event, branchId: order.branch_id };
     });
     // run() has committed by now: waiters are never told about a change that rolled back.
     if (event) await this.events.publish(event);
+    // Other kitchen screens of the branch refresh at once (accepted / preparing / ...).
+    else
+      await this.events.publish({
+        type: 'order.status',
+        tenantId: auth.tenantId!,
+        branchId,
+        orderId: id,
+      });
     return result;
   }
 

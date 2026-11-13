@@ -17,13 +17,27 @@ export interface ReadyOrderEvent {
   items: { id: string; name: string; qty: number; note: string | null }[];
 }
 
-type Listener = (e: ReadyOrderEvent) => void;
+/**
+ * A kitchen-relevant change (new order from POS / waiter / QR, or a ticket moved by another
+ * kitchen screen). Deliberately thin: kitchens re-read their tickets from the database, which
+ * stays the single source of truth for what is on the board and what has already rung.
+ */
+export interface KitchenChangeEvent {
+  type: 'order.created' | 'order.status';
+  tenantId: string;
+  branchId: string;
+  orderId: string;
+}
+
+export type OrderEvent = ReadyOrderEvent | KitchenChangeEvent;
+
+type Listener = (e: OrderEvent) => void;
 
 const CHANNEL = 'foodstack:orders:kitchen-events';
 const roomOf = (tenantId: string, branchId: string) => `${tenantId}:${branchId}`;
 
 /**
- * Kitchen → waiter fan-out. Events are published only after the status change has committed;
+ * Order events fan-out (waiter pickup + kitchen board). Published only after the change commits;
  * Redis pub/sub carries them to every API instance, and each instance delivers them to its
  * connected waiters of that exact tenant + branch. Pub/sub is fire-and-forget by design: the
  * database (kitchen_status = 'ready') is the source of truth, and clients re-fetch it on every
@@ -50,7 +64,7 @@ export class OrderEventsService implements OnModuleInit, OnModuleDestroy {
     this.subscriber.on('error', (e: Error) => this.logger.warn(`subscriber: ${e.message}`));
     this.subscriber.on('message', (_ch: string, raw: string) => {
       try {
-        this.deliver(JSON.parse(raw) as ReadyOrderEvent);
+        this.deliver(JSON.parse(raw) as OrderEvent);
       } catch (e) {
         this.logger.warn(`bad order event: ${(e as Error).message}`);
       }
@@ -67,7 +81,7 @@ export class OrderEventsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Call after commit. Falls back to this instance's listeners if Redis is unavailable. */
-  async publish(e: ReadyOrderEvent) {
+  async publish(e: OrderEvent) {
     try {
       await this.redis.publish(CHANNEL, JSON.stringify(e));
     } catch (err) {
@@ -88,7 +102,7 @@ export class OrderEventsService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  private deliver(e: ReadyOrderEvent) {
+  private deliver(e: OrderEvent) {
     for (const fn of this.rooms.get(roomOf(e.tenantId, e.branchId)) ?? []) {
       try {
         fn(e);

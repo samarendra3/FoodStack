@@ -4,12 +4,15 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth, useProfile } from '@/components/auth/auth-provider';
 import { authErrorMessage } from '@/lib/auth/errors';
+import { useLiveEvents } from '@/lib/live-events';
+import { audio } from '@/lib/sound';
 
 /*
  * Kitchen ticket feed from GET /kitchen/tickets (open orders plus those served in the last
- * 12 hours), refreshed every 5 seconds. The server list is authoritative on each refresh;
- * `mergeTickets` only guards against duplicates. A Socket.IO push can replace polling later
- * without changing the screens.
+ * 12 hours). The server pushes `order.created` (POS, waiter and QR orders alike) and ticket
+ * changes over the live event stream; each event — and each (re)connect, which recovers
+ * anything missed while offline — re-reads the list at once. A slow poll is only a backstop.
+ * The server list is authoritative on each refresh; `mergeTickets` only guards duplicates.
  */
 
 export type TicketStatus = 'new' | 'accepted' | 'preparing' | 'ready' | 'completed';
@@ -55,6 +58,8 @@ export interface KitchenFeed {
   tickets: KitchenTicket[];
   connection: Connection;
   isLoading: boolean;
+  /** True once the first ticket list has loaded (used to seed the new-order bell). */
+  loaded: boolean;
   error: string | null;
   /** Undefined until the status-transition API exists. */
   advance?: (ticketId: string, to: TicketStatus) => Promise<void>;
@@ -117,9 +122,15 @@ export function useKitchenFeed(branchId: string): KitchenFeed {
       );
     },
     enabled: Boolean(branchId),
-    refetchInterval: 5_000,
+    refetchInterval: BACKSTOP_POLL_MS,
     refetchIntervalInBackground: true,
   });
+
+  // Any kitchen event for this branch (or a (re)connect) → re-read the tickets now.
+  const live = useLiveEvents(
+    branchId ? `/kitchen/tickets/stream?branchId=${encodeURIComponent(branchId)}` : null,
+    () => void qc.invalidateQueries({ queryKey: key }),
+  );
 
   return {
     tickets: query.data ?? [],
@@ -131,8 +142,11 @@ export function useKitchenFeed(branchId: string): KitchenFeed {
           ? query.data
             ? 'reconnecting'
             : 'offline'
-          : 'online',
+          : live === 'live'
+            ? 'online'
+            : 'reconnecting',
     isLoading: query.isPending && Boolean(branchId),
+    loaded: query.isSuccess,
     error: query.isError && !query.data ? authErrorMessage(query.error) : null,
     advance: async (ticketId, to) => {
       await client.request(`/kitchen/tickets/${ticketId}/status`, {
@@ -145,9 +159,19 @@ export function useKitchenFeed(branchId: string): KitchenFeed {
 }
 
 const MUTE_KEY = 'foodstack.kds.muted';
+/** Pushed events make updates instant; this poll only covers a stream that is down. */
+const BACKSTOP_POLL_MS = 15_000;
 
-/** Plays a short chime when a ticket id appears that was not seen before. Mute is remembered. */
-export function useNewTicketChime(tickets: KitchenTicket[]) {
+/**
+ * Rings once per new ticket (by order id, so duplicate events or refreshes never ring twice)
+ * and reports the new tickets so the screen can show a NEW ORDER alert. Seeded from the first
+ * *loaded* list, so tickets already waiting when the screen opens don't ring. Mute is remembered.
+ */
+export function useNewTicketChime(
+  tickets: KitchenTicket[],
+  loaded: boolean,
+  onNew?: (fresh: KitchenTicket[]) => void,
+) {
   const [muted, setMutedState] = useState(() => {
     try {
       return typeof window !== 'undefined' && localStorage.getItem(MUTE_KEY) === '1';
@@ -156,6 +180,10 @@ export function useNewTicketChime(tickets: KitchenTicket[]) {
     }
   });
   const seen = useRef<Set<string> | null>(null);
+  const onNewRef = useRef(onNew);
+  useEffect(() => {
+    onNewRef.current = onNew;
+  });
 
   const setMuted = useCallback((m: boolean) => {
     setMutedState(m);
@@ -167,39 +195,37 @@ export function useNewTicketChime(tickets: KitchenTicket[]) {
   }, []);
 
   useEffect(() => {
+    if (!loaded) return; // the empty list shown while loading must not seed the set
     // QR orders arrive already in Preparing, so an unseen Preparing ticket is a new order too.
-    const ids = tickets
-      .filter((t) => t.status === 'new' || t.status === 'preparing')
-      .map((t) => t.id);
+    const waiting = tickets.filter((t) => t.status === 'new' || t.status === 'preparing');
     if (seen.current === null) {
-      seen.current = new Set(ids); // first load: don't chime for tickets already waiting
+      seen.current = new Set(tickets.map((t) => t.id)); // first load: don't ring for old tickets
       return;
     }
-    const fresh = ids.filter((id) => !seen.current!.has(id));
-    fresh.forEach((id) => seen.current!.add(id));
-    if (fresh.length > 0 && !muted) chime();
-  }, [tickets, muted]);
+    const fresh = waiting.filter((t) => !seen.current!.has(t.id));
+    tickets.forEach((t) => seen.current!.add(t.id));
+    if (fresh.length === 0) return;
+    if (!muted) chime();
+    onNewRef.current?.(fresh);
+  }, [tickets, loaded, muted]);
 
   return { muted, setMuted };
 }
 
+/** Kitchen "ding-dong" through the shared, user-unlocked audio context (see lib/sound). */
 export function chime() {
-  try {
-    const ctx = new AudioContext();
-    [880, 1320].forEach((freq, i) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.frequency.value = freq;
-      const t = ctx.currentTime + i * 0.18;
-      gain.gain.setValueAtTime(0.0001, t);
-      gain.gain.exponentialRampToValueAtTime(0.25, t + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
-      osc.connect(gain).connect(ctx.destination);
-      osc.start(t);
-      osc.stop(t + 0.32);
-    });
-    setTimeout(() => void ctx.close(), 800);
-  } catch {
-    /* audio blocked until the user interacts with the page */
-  }
+  const ctx = audio();
+  if (!ctx) return; // browser still blocks audio: the screen shows "tap to enable sound"
+  [880, 1320, 880, 1320].forEach((freq, i) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.frequency.value = freq;
+    const t = ctx.currentTime + i * 0.18 + (i >= 2 ? 0.35 : 0);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.3, t + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(t);
+    osc.stop(t + 0.32);
+  });
 }

@@ -1,9 +1,18 @@
 'use client';
 
-import { type ReactNode, useState } from 'react';
+import { useToast } from '@foodstack/ui/components/toast';
+import { Volume2 } from 'lucide-react';
+import { type ReactNode, useCallback, useState } from 'react';
 import { useProfile } from '@/components/auth/auth-provider';
 import { RequireAuth } from '@/components/auth/require-auth';
-import { type KitchenFeed, useKitchenFeed, useNewTicketChime } from './kitchen-feed';
+import { useAudioUnlock } from '@/lib/sound';
+import {
+  chime,
+  type KitchenFeed,
+  type KitchenTicket,
+  useKitchenFeed,
+  useNewTicketChime,
+} from './kitchen-feed';
 import { KitchenShell } from './kitchen-shell';
 
 const BRANCH_KEY = 'foodstack.kds.branch';
@@ -56,7 +65,25 @@ function Frame({
     }
   };
   const feed = useKitchenFeed(branchId);
-  const { muted, setMuted } = useNewTicketChime(feed.tickets);
+  const toast = useToast();
+  const sound = useAudioUnlock();
+  // NEW ORDER alert: table, order number and items, for every order that rings.
+  const onNew = useCallback(
+    (fresh: KitchenTicket[]) => {
+      for (const t of fresh.slice(0, 3)) {
+        toast.info(
+          `NEW ORDER · ${t.tableLabel ? `Table ${t.tableLabel}` : (t.customerName ?? t.orderType)}`,
+          {
+            description: `#${t.orderNumber} · ${t.items.map((i) => `${i.qty}× ${i.name}`).join(', ')}`,
+            duration: 12_000,
+          },
+        );
+      }
+      if (fresh.length > 3) toast.info(`${fresh.length - 3} more new orders`);
+    },
+    [toast],
+  );
+  const { muted, setMuted } = useNewTicketChime(feed.tickets, feed.loaded, onNew);
 
   return (
     <KitchenShell
@@ -74,6 +101,18 @@ function Frame({
         </h2>
       ) : null}
       {children({ feed, branchId, setBranchId, muted, setMuted })}
+      {!sound.ready && !muted ? (
+        <button
+          type="button"
+          onClick={() => {
+            sound.enable();
+            setTimeout(chime, 80);
+          }}
+          className="fixed bottom-4 left-1/2 z-40 inline-flex -translate-x-1/2 items-center gap-2 rounded-full bg-slate-900 px-4 py-2.5 text-sm font-medium text-white shadow-xl dark:bg-white dark:text-slate-900"
+        >
+          <Volume2 className="size-4" /> Tap to enable the new-order bell
+        </button>
+      ) : null}
     </KitchenShell>
   );
 }

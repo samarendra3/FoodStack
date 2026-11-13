@@ -3,6 +3,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth, useProfile } from '@/components/auth/auth-provider';
+import { type LiveState, useLiveEvents } from '@/lib/live-events';
+import { audio } from '@/lib/sound';
 
 /** An order the kitchen has marked ready, waiting for a waiter to take it to the table. */
 export interface ReadyOrder {
@@ -16,7 +18,7 @@ export interface ReadyOrder {
 }
 
 type ServerEvent = ReadyOrder & { type: 'order.ready' | 'order.served' };
-export type FeedState = 'connecting' | 'live' | 'offline';
+export type FeedState = LiveState;
 
 /** One notification per order *per time it became ready*, so a re-ready rings again. */
 const keyOf = (o: ReadyOrder) => `${o.orderId}:${o.readyAt}`;
@@ -38,30 +40,14 @@ function saveKeys(storageKey: string, keys: Set<string>) {
   }
 }
 
-// ---- sound (autoplay-safe) ----
-
-let audioCtx: AudioContext | null = null;
-
-/** Must run inside a user gesture the first time; browsers block audio until then. */
-export function unlockAudio(): boolean {
-  try {
-    audioCtx ??= new AudioContext();
-    if (audioCtx.state === 'suspended') void audioCtx.resume();
-    return true;
-  } catch {
-    return false;
-  }
-}
-export const audioReady = () => audioCtx?.state === 'running';
-
 /**
  * A classic "ring-ring … ring-ring" telephone ringtone, synthesised (no asset to load or block):
  * two warbling tones (a fast on/off trill gives the bell-hammer "trrring"), played as two
  * double-rings about 3 seconds in total.
  */
 export function playBell() {
-  if (!audioCtx || audioCtx.state !== 'running') return;
-  const ctx = audioCtx;
+  const ctx = audio();
+  if (!ctx) return;
   const RING = 0.4; // one "ring"
   const pattern = [0, 0.6, 1.6, 2.2]; // ring ring … ring ring
   const start = ctx.currentTime + 0.02;
@@ -103,29 +89,6 @@ export function playBell() {
   }
 }
 
-/** Reads a fetch body as Server-Sent Events until it ends or is aborted. */
-async function readEvents(res: Response, onEvent: (event: string, data: string) => void) {
-  const reader = res.body!.pipeThrough(new TextDecoderStream()).getReader();
-  let buf = '';
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) return;
-    buf += value;
-    let cut: number;
-    while ((cut = buf.indexOf('\n\n')) >= 0) {
-      const block = buf.slice(0, cut);
-      buf = buf.slice(cut + 2);
-      let event = 'message';
-      const data: string[] = [];
-      for (const line of block.split('\n')) {
-        if (line.startsWith('event:')) event = line.slice(6).trim();
-        else if (line.startsWith('data:')) data.push(line.slice(5).trimStart());
-      }
-      if (data.length) onEvent(event, data.join('\n'));
-    }
-  }
-}
-
 /**
  * Live "order ready" feed for the waiter app. The server pushes events over SSE; the list
  * itself always comes from GET /waiter/ready-orders (the database), re-fetched on every
@@ -143,7 +106,6 @@ export function useReadyOrders(branchId: string, onNew: (orders: ReadyOrder[]) =
   const notifiedKey = `foodstack.ready.notified.${userId}.${branchId}`;
   const ackKey = `foodstack.ready.acked.${userId}.${branchId}`;
 
-  const [state, setState] = useState<FeedState>('connecting');
   // Callers key this hook's component by branch, so the keys are fixed for its lifetime.
   const [acked, setAcked] = useState<Set<string>>(() => loadKeys(ackKey));
   const notified = useRef<Set<string> | null>(null);
@@ -172,12 +134,19 @@ export function useReadyOrders(branchId: string, onNew: (orders: ReadyOrder[]) =
     onNewRef.current(fresh);
   }, [list.data, notifiedKey]);
 
-  // The live stream, with capped exponential back-off on failure.
-  useEffect(() => {
-    if (!tenantId || !branchId) return;
-    const abort = new AbortController();
-    let attempt = 0;
-    const upsert = (e: ServerEvent) =>
+  // Live events; every (re)connect re-reads the backlog so nothing missed offline is lost.
+  const state = useLiveEvents(
+    tenantId && branchId
+      ? `/waiter/ready-orders/stream?${new URLSearchParams({ branchId })}`
+      : null,
+    (event, data) => {
+      if (event === 'hello') {
+        void qc.invalidateQueries({ queryKey });
+        return;
+      }
+      if (event !== 'order.ready' && event !== 'order.served') return;
+      const e = data as ServerEvent;
+      if (e.branchId !== branchId) return;
       qc.setQueryData<ReadyOrder[]>(queryKey, (prev = []) => {
         const rest = prev.filter((o) => o.orderId !== e.orderId);
         if (e.type === 'order.served') return rest;
@@ -190,43 +159,10 @@ export function useReadyOrders(branchId: string, onNew: (orders: ReadyOrder[]) =
           readyAt: e.readyAt,
           items: e.items,
         };
-        return [...rest, order].sort((a, b) => a.readyAt.localeCompare(b.readyAt));
+        return [...rest, order].sort((x, y) => x.readyAt.localeCompare(y.readyAt));
       });
-
-    void (async () => {
-      while (!abort.signal.aborted) {
-        setState('connecting');
-        try {
-          const res = await client.stream(
-            `/waiter/ready-orders/stream?${new URLSearchParams({ branchId })}`,
-            abort.signal,
-          );
-          if (!res.ok || !res.body) throw new Error(`stream ${res.status}`);
-          await readEvents(res, (event, data) => {
-            if (event === 'hello') {
-              attempt = 0;
-              setState('live');
-              // Connected (or re-connected): pull whatever became ready while we were away.
-              void qc.invalidateQueries({ queryKey });
-            } else if (event === 'order.ready' || event === 'order.served') {
-              const e = JSON.parse(data) as ServerEvent;
-              if (e.branchId === branchId) upsert(e);
-            }
-          });
-          // Server closed the stream on schedule: reconnect straight away.
-        } catch {
-          if (abort.signal.aborted) return;
-          setState('offline');
-          attempt += 1;
-        }
-        if (abort.signal.aborted) return;
-        const delay = attempt === 0 ? 250 : Math.min(30_000, 1_000 * 2 ** (attempt - 1));
-        await new Promise((r) => setTimeout(r, delay * (0.75 + Math.random() * 0.5)));
-      }
-    })();
-    return () => abort.abort();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- queryKey is derived from these
-  }, [client, qc, tenantId, branchId]);
+    },
+  );
 
   // A browser coming back online should not wait out the back-off.
   useEffect(() => {

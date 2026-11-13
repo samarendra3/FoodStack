@@ -36,7 +36,7 @@ import {
   reasonSchema,
   refundSchema,
 } from './orders.schemas';
-import { OrderEventsService } from './order-events';
+import { type OrderEvent, OrderEventsService } from './order-events';
 import { OrdersService } from './orders.service';
 
 const HEARTBEAT_MS = 15_000;
@@ -200,7 +200,41 @@ export class OrdersController {
     @Req() req: Request,
     @Res() res: Response,
   ) {
-    const tenantId = await this.orders.authorizeWaiterFeed(auth, query.branchId);
+    const tenantId = await this.orders.authorizeFeed(auth, query.branchId, 'waiter:access');
+    this.pipeEvents(req, res, tenantId, query.branchId, ['order.ready', 'order.served']);
+  }
+
+  /**
+   * Live kitchen events for a branch (text/event-stream): `order.created` for every new order
+   * (POS, waiter and QR alike) and `order.status` / `order.ready` / `order.served` when another
+   * screen moves a ticket. Kitchens re-read /kitchen/tickets on each event and on (re)connect.
+   */
+  @Get('kitchen/tickets/stream')
+  @RequirePermission('kds:access')
+  @ApiOperation({ summary: 'Live kitchen events for a branch (text/event-stream)' })
+  async kitchenStream(
+    @CurrentAuth() auth: AuthContext,
+    @Query(new ZodValidationPipe(kitchenQuerySchema)) query: KitchenQuery,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    const tenantId = await this.orders.authorizeFeed(auth, query.branchId, 'kds:access');
+    this.pipeEvents(req, res, tenantId, query.branchId, [
+      'order.created',
+      'order.status',
+      'order.ready',
+      'order.served',
+    ]);
+  }
+
+  /** Streams one tenant branch's order events of the given types as Server-Sent Events. */
+  private pipeEvents(
+    req: Request,
+    res: Response,
+    tenantId: string,
+    branchId: string,
+    types: OrderEvent['type'][],
+  ) {
     res.status(200).set({
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache, no-transform',
@@ -211,8 +245,9 @@ export class OrdersController {
     res.write('retry: 3000\n\n');
     const send = (event: string, data: unknown) =>
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-    send('hello', { branchId: query.branchId });
-    const unsubscribe = this.events.subscribe(tenantId, query.branchId, (e) => {
+    send('hello', { branchId });
+    const unsubscribe = this.events.subscribe(tenantId, branchId, (e) => {
+      if (!types.includes(e.type)) return;
       const { tenantId: _t, ...payload } = e;
       send(e.type, payload);
     });
