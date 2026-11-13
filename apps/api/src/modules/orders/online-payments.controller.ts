@@ -12,10 +12,11 @@ import {
   Post,
   Query,
   Req,
+  Res,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import { z } from 'zod';
 import { requestMeta } from '../../common/http/request-meta';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
@@ -27,9 +28,17 @@ import {
   reconciliationSchema,
   resolveSchema,
 } from './billing-desk';
+import { renderInvoicePdf } from './invoice-pdf';
+import { InvoicesService } from './invoices';
 import { OnlinePaymentsService } from './online-payments';
 
-export { BillingDeskService, OnlinePaymentsService };
+export { BillingDeskService, InvoicesService, OnlinePaymentsService };
+
+const invoiceListSchema = z.strictObject({
+  branchId: z.uuid(),
+  from: z.iso.date().optional(),
+  to: z.iso.date().optional(),
+});
 
 const restaurantQuery = z.strictObject({ restaurantId: z.uuid() });
 const connectSchema = z.strictObject({
@@ -49,7 +58,63 @@ export class OnlinePaymentsController {
   constructor(
     private readonly payments: OnlinePaymentsService,
     private readonly desk: BillingDeskService,
+    private readonly invoices: InvoicesService,
   ) {}
+
+  // ---- invoices ----
+
+  @Post('orders/:id/invoice')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('menu:read')
+  @ApiOperation({ summary: "Issue (or return) a settled order's GST invoice — idempotent" })
+  issueInvoice(@CurrentAuth() auth: AuthContext, @Param('id', ParseUUIDPipe) id: string) {
+    return this.invoices.issue(auth, id);
+  }
+
+  @Get('orders/:id/invoice')
+  @RequirePermission('menu:read')
+  @ApiOperation({ summary: "An order's invoice, or null if none was issued" })
+  orderInvoice(@CurrentAuth() auth: AuthContext, @Param('id', ParseUUIDPipe) id: string) {
+    return this.invoices.byOrder(auth, id);
+  }
+
+  @Get('invoices')
+  @RequirePermission('menu:read')
+  @ApiOperation({ summary: 'Invoices of a branch (newest first)' })
+  listInvoices(
+    @CurrentAuth() auth: AuthContext,
+    @Query(new ZodValidationPipe(invoiceListSchema)) q: z.infer<typeof invoiceListSchema>,
+  ) {
+    return this.invoices.list(auth, q.branchId, q.from, q.to);
+  }
+
+  @Get('invoices/:id')
+  @RequirePermission('menu:read')
+  @ApiOperation({ summary: 'One invoice with its frozen snapshot' })
+  invoice(@CurrentAuth() auth: AuthContext, @Param('id', ParseUUIDPipe) id: string) {
+    return this.invoices.get(auth, id);
+  }
+
+  @Get('invoices/:id/pdf')
+  @RequirePermission('menu:read')
+  @ApiOperation({ summary: 'Invoice as PDF (rendered from the frozen snapshot)' })
+  async invoicePdf(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Res() res: Response,
+  ) {
+    const snapshot = await this.invoices.snapshot(auth, id);
+    const pdf = await renderInvoicePdf(snapshot);
+    const file = `invoice-${snapshot.invoiceNumber.replace(/[^A-Za-z0-9-]/g, '_')}.pdf`;
+    res
+      .status(200)
+      .set({
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `inline; filename="${file}"`,
+        'Cache-Control': 'private, no-store',
+      })
+      .send(pdf);
+  }
 
   // ---- billing desk ----
 

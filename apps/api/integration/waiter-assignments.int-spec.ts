@@ -126,6 +126,8 @@ describe('Waiter assignment (integration)', () => {
         'attendance_entries',
         'order_discounts',
         'order_items',
+        'invoices',
+        'invoice_series',
         'orders',
         'table_sessions',
         'branch_order_counters',

@@ -157,6 +157,8 @@ describe('Orders (integration)', () => {
         'payments',
         'order_discounts',
         'order_items',
+        'invoices',
+        'invoice_series',
         'orders',
         'branch_order_counters',
         'customers',

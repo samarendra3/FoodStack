@@ -1,6 +1,6 @@
 # Restaurant Operations — Audit & Implementation Plan
 
-Status: **APPROVED. Phases 1–5 complete; phase 6 built and tested against a simulated gateway (awaiting a real Razorpay test-mode run); phase 7 complete; phases 8–11 pending.**
+Status: **APPROVED. Phases 1–5 complete; phase 6 built and tested against a simulated gateway (awaiting a real Razorpay test-mode run); phases 7–8 complete; phases 9–11 pending.**
 Scope: QR ordering, payments, kitchen, automatic waiter assignment, billing, invoices and receipt
 sharing, as one order lifecycle on the existing FoodStack architecture.
 
@@ -217,7 +217,8 @@ Approved order of work: 1 outbox and timeline · 2 signed QR links and QR improv
 | 5 | Automatic workload-based waiter assignment | **Complete** (tests below) |
 | 6 | Restaurant-owned online payments (Razorpay) | **Built, feature-flagged OFF**; verified against a simulated gateway; real test-mode run pending |
 | 7 | Billing desk + payment reconciliation | **Complete** (tests below) |
-| 8–11 | — | Pending (9, 10 need provider accounts) |
+| 8 | GST invoice numbering + server PDF invoices | **Complete** (tests below) |
+| 9–11 | — | Pending (9, 10 need provider accounts) |
 
 ### Phase 1 report — Durable transactional outbox and readable order timeline
 
@@ -489,3 +490,56 @@ Approved order of work: 1 outbox and timeline · 2 signed QR links and QR improv
 - reconciliation: online refund reflected in net; totals add up; integrity all zero; review resolved (waiter 403, second resolve 409)
 - payment status transitions pending → paid → partially_refunded → refunded
 - Full API integration **354/354**, API unit **177/177**, web unit **36/36**; `tsc` and ESLint clean.
+
+### Phase 8 report — GST invoice numbering and server-generated PDF invoices
+
+**Delivered**
+- Migration `1798000038000-Invoices` (reversible):
+  - `invoice_series`: one consecutive counter per branch per Indian financial year (Apr–Mar)
+  - `invoices`: one per order (unique, so issuing is idempotent); number unique per restaurant and financial year; immutable JSON **snapshot**; `pdf_key` reserved for Phase 9; tenant RLS
+- **Numbering (GST rule 46):**
+  - format `BRANCH/YY-YY/NNNNN`, e.g. `MAIN/26-27/00042` (≤ 16 characters; letters, digits, `/`, `-`)
+  - allocated in the **same transaction** that settles the bill, so a rollback never consumes a number and the series is gap-free
+  - concurrent settlements get distinct, contiguous numbers
+- **Automatic issue** when a bill becomes fully paid (counter, table / guest settlement and online payments all go through the one payment path). `POST /orders/:id/invoice` issues on demand for bills settled before this phase; unpaid bills → 409.
+- **Snapshot contents:**
+  - seller name, legal name, GSTIN, address, phone and email; branch; place of supply; SAC 996331
+  - order, table and bill; customer name and phone
+  - items with portion, add-ons and notes
+  - discounts, taxable value, and the **CGST / SGST split** (halves; India), tax, total
+  - payments with references (gateway payment id for online)
+  - payment status
+
+  Title is **TAX INVOICE** when the restaurant has a GSTIN and charges tax, otherwise **BILL OF SUPPLY**.
+- **PDF:**
+  - `GET /invoices/:id/pdf`, rendered with `pdfkit` (pinned 0.20.2) from the frozen snapshot
+  - A4 layout: seller block, invoice box, items table, totals with tax split, payment, footer
+  - `Cache-Control: private, no-store`
+- APIs (branch-checked; `order:read` or `pos:access`):
+  - `GET /orders/:id/invoice`
+  - `GET /invoices?branchId&from&to`
+  - `GET /invoices/:id`
+- Event `invoice.generated` (timeline: "Invoice … issued"); audit `invoice.generated`.
+- Web:
+  - **Invoice** section on order detail: number, title, date, **PDF** download, **Print**, and **Issue invoice** for older settled bills
+  - authorised file download in the auth client
+
+**Tests (evidence)**
+- Unit `invoices.spec.ts`: financial-year boundaries (31 Mar / 1 Apr, century wrap); number format, length and characters.
+- Integration (`online-payments.int-spec.ts → GST invoices`, 5 tests):
+  - auto-issued tax invoice with GSTIN, SAC, place of supply; CGST + SGST = tax; taxable + tax = total
+  - **5 bills settled concurrently → series 1..N with no gaps**
+  - idempotent re-issue; unpaid → 409; snapshot unchanged after the restaurant is renamed
+  - PDF served as `application/pdf` (`%PDF-` header)
+  - waiter can view; other tenant refused; listed in the branch
+  - online payment invoiced with the gateway payment id
+- A sample PDF was rendered and visually checked (seller, GST box, items with add-ons and notes, discount, tax split, total, payment).
+- Full API integration **359/359**, API unit **179/179**, web unit **36/36**; `tsc` and ESLint clean.
+- Test housekeeping: every integration suite's cleanup now removes invoices before orders.
+
+**Limitations and notes**
+- Built-in PDF fonts have no ₹ glyph, so amounts print as "Rs. 1,234.00". Embedding a font with ₹ is a small follow-up.
+- Dates on the PDF use Indian time.
+- Refunds after an invoice is issued are recorded and shown (payment status), but a separate GST **credit note** document is not generated yet.
+- The PDF is rendered on request from the snapshot; storing it in S3 with signed links is Phase 9.
+- New dependency: `pdfkit@0.20.2` (+ `@types/pdfkit@0.17.7`). Installing it restarted the local dev API; it was restarted and is healthy.

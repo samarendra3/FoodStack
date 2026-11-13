@@ -203,6 +203,8 @@ describe('Ready-order events (integration)', () => {
         'payments',
         'order_discounts',
         'order_items',
+        'invoices',
+        'invoice_series',
         'orders',
         'table_guests',
         'table_sessions',
@@ -538,6 +540,7 @@ describe('Ready-order events (integration)', () => {
       'waiter.unassigned', // nobody clocked in: the order waits in the queue
       'order.served',
       'payment.recorded',
+      'invoice.generated', // settled: GST invoice issued in the same transaction
     ]);
     expect(timeline[0]!.actor).toEqual({ kind: 'staff', name: 'waiter1' });
     expect(timeline[2]!.actor.name).toBe('cook');

@@ -19,7 +19,8 @@ export type OrderEventType =
   | 'order.item_voided'
   | 'payment.recorded'
   | 'payment.refunded'
-  | 'payment.failed';
+  | 'payment.failed'
+  | 'invoice.generated';
 
 export interface EventActor {
   kind: 'staff' | 'guest' | 'system';

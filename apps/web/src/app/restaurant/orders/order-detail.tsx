@@ -9,6 +9,7 @@ import { hasPermissionAnywhere } from '@/lib/auth/access';
 import { authErrorMessage } from '@/lib/auth/errors';
 import type { Order } from '@/lib/orders';
 import { CHANNEL_LABEL, STATUS_STYLE } from './order-labels';
+import { OrderInvoice } from './order-invoice';
 import { OrderTimeline } from './order-timeline';
 
 type Detail = Order & {
@@ -208,6 +209,8 @@ export function OrderDetail({
                 />
               ) : null}
             </dl>
+
+            <OrderInvoice orderId={id} settled={o.status === 'completed'} />
 
             <OrderTimeline orderId={id} fmt={fmt} />
 

@@ -37,6 +37,7 @@ import { ItemKitchenStatus1798000034000 } from './migrations/1798000034000-ItemK
 import { WaiterAssignments1798000035000 } from './migrations/1798000035000-WaiterAssignments';
 import { RestaurantOnlinePayments1798000036000 } from './migrations/1798000036000-RestaurantOnlinePayments';
 import { BillingPaymentStatus1798000037000 } from './migrations/1798000037000-BillingPaymentStatus';
+import { Invoices1798000038000 } from './migrations/1798000038000-Invoices';
 
 /**
  * All migrations in order, for code that cannot load them by file glob (the e2e test setup).
@@ -82,4 +83,5 @@ export const ALL_MIGRATIONS = [
   WaiterAssignments1798000035000,
   RestaurantOnlinePayments1798000036000,
   BillingPaymentStatus1798000037000,
+  Invoices1798000038000,
 ];

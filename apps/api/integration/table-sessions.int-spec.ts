@@ -153,6 +153,8 @@ describe('QR guests and table sessions (integration)', () => {
         'payments',
         'order_discounts',
         'order_items',
+        'invoices',
+        'invoice_series',
         'orders',
         'table_guests',
         'table_sessions',

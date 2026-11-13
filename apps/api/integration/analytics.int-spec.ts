@@ -406,6 +406,8 @@ describe('Analytics (integration)', () => {
         'refunds',
         'payments',
         'order_items',
+        'invoices',
+        'invoice_series',
         'orders',
         'customers',
         'menu_items',

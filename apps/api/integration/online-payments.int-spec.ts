@@ -213,6 +213,8 @@ describe('Online payments into the restaurant account (integration)', () => {
     else process.env.RAZORPAY_API_BASE = saved.base;
     if (migrator?.isInitialized) {
       for (const t of [
+        'invoices',
+        'invoice_series',
         'refunds',
         'payments',
         'payment_intents',
@@ -581,6 +583,153 @@ describe('Online payments into the restaurant account (integration)', () => {
         .send({ amountMinor: o.totalMinor - 500, reason: 'Late' })
         .expect(201);
       expect(await status()).toBe('refunded');
+    });
+  });
+
+  // ---- Phase 8: GST invoices ----
+
+  describe('GST invoices', () => {
+    let branchId: string;
+    beforeAll(async () => {
+      branchId = (
+        await migrator.query(`SELECT id FROM branches WHERE tenant_id = $1`, [alphaId])
+      )[0].id;
+      await migrator.query(
+        `UPDATE restaurants SET gstin = '29ABCDE1234F1Z5', state = 'Karnataka', address_line = '1 MG Road', city = 'Bengaluru'
+          WHERE id = $1`,
+        [restaurantId],
+      );
+    });
+    const settled = async () => {
+      const o = (
+        await call('owner', 'post', '/orders')
+          .set('Idempotency-Key', `o-${suffix()}${suffix()}`)
+          .send({
+            branchId,
+            channel: 'dine_in',
+            tableLabel: 'G1',
+            lines: [{ menuItemId: chai, quantity: 3 }],
+          })
+          .expect(201)
+      ).body.data as { id: string; totalMinor: number };
+      await call('owner', 'post', `/orders/${o.id}/payments`)
+        .set('Idempotency-Key', `p-${suffix()}${suffix()}`)
+        .send({ method: 'upi', amountMinor: o.totalMinor, reference: 'UPI123' })
+        .expect(201);
+      return o;
+    };
+    const invoiceOf = async (orderId: string) =>
+      (await call('owner', 'get', `/orders/${orderId}/invoice`).expect(200)).body.data;
+
+    it('issues a GST tax invoice automatically when the bill is settled', async () => {
+      const o = await settled();
+      const inv = await invoiceOf(o.id);
+      expect(inv.invoiceNumber).toMatch(/^MAIN\/\d{2}-\d{2}\/\d{5}$/);
+      const s = inv.snapshot;
+      expect(s).toMatchObject({
+        title: 'TAX INVOICE',
+        sac: '996331',
+        placeOfSupply: 'Karnataka',
+        seller: { gstin: '29ABCDE1234F1Z5' },
+        totalMinor: o.totalMinor,
+        paymentStatus: 'paid',
+      });
+      expect(s.taxSplit.map((t: { label: string }) => t.label)).toEqual(['CGST', 'SGST']);
+      expect(
+        s.taxSplit.reduce((a: number, t: { amountMinor: number }) => a + t.amountMinor, 0),
+      ).toBe(s.taxMinor);
+      expect(s.taxableMinor + s.taxMinor).toBe(s.totalMinor);
+      expect(s.payments[0]).toMatchObject({ method: 'upi', reference: 'UPI123' });
+    });
+
+    it('numbers invoices consecutively without gaps, even when bills settle at the same time', async () => {
+      const orders = await Promise.all(
+        [1, 2, 3, 4, 5].map(() =>
+          call('owner', 'post', '/orders')
+            .set('Idempotency-Key', `o-${suffix()}${suffix()}`)
+            .send({
+              branchId,
+              channel: 'dine_in',
+              tableLabel: 'G2',
+              lines: [{ menuItemId: chai, quantity: 1 }],
+            })
+            .expect(201)
+            .then((r) => r.body.data as { id: string; totalMinor: number }),
+        ),
+      );
+      await Promise.all(
+        orders.map((o) =>
+          call('owner', 'post', `/orders/${o.id}/payments`)
+            .set('Idempotency-Key', `p-${suffix()}${suffix()}`)
+            .send({ method: 'cash', amountMinor: o.totalMinor })
+            .expect(201),
+        ),
+      );
+      const all = (await migrator.query(
+        `SELECT series_number FROM invoices WHERE branch_id = $1 ORDER BY series_number`,
+        [branchId],
+      )) as { series_number: number }[];
+      const n = all.map((r) => r.series_number);
+      expect(n).toEqual(Array.from({ length: n.length }, (_, i) => i + 1)); // 1..N, no gaps
+    });
+
+    it('is idempotent, refuses unpaid bills, and keeps the snapshot frozen', async () => {
+      const o = await settled();
+      const first = await invoiceOf(o.id);
+      const again = (await call('owner', 'post', `/orders/${o.id}/invoice`).expect(200)).body.data;
+      expect(again.id).toBe(first.id);
+      const unpaid = (
+        await call('owner', 'post', '/orders')
+          .set('Idempotency-Key', `o-${suffix()}${suffix()}`)
+          .send({ branchId, channel: 'dine_in', lines: [{ menuItemId: chai, quantity: 1 }] })
+          .expect(201)
+      ).body.data;
+      await call('owner', 'post', `/orders/${unpaid.id}/invoice`).expect(409);
+      expect(
+        (await call('owner', 'get', `/orders/${unpaid.id}/invoice`).expect(200)).body.data,
+      ).toBeNull();
+
+      await migrator.query(`UPDATE restaurants SET name = 'Renamed Cafe' WHERE id = $1`, [
+        restaurantId,
+      ]);
+      expect((await invoiceOf(o.id)).snapshot.seller.name).not.toBe('Renamed Cafe');
+    });
+
+    it('renders the PDF and keeps invoices to their restaurant', async () => {
+      const o = await settled();
+      const inv = await invoiceOf(o.id);
+      const pdf = await call('owner', 'get', `/invoices/${inv.id}/pdf`)
+        .buffer(true)
+        .parse((res, cb) => {
+          const parts: Buffer[] = [];
+          res.on('data', (c: Buffer) => parts.push(c));
+          res.on('end', () => cb(null, Buffer.concat(parts)));
+        })
+        .expect(200);
+      expect(pdf.headers['content-type']).toBe('application/pdf');
+      expect((pdf.body as Buffer).subarray(0, 5).toString()).toBe('%PDF-');
+      expect((pdf.body as Buffer).length).toBeGreaterThan(1500);
+      // Waiters can read bills; another restaurant cannot.
+      await call('waiter', 'get', `/invoices/${inv.id}`).expect(200);
+      const foreign = await call('bravoOwner', 'get', `/invoices/${inv.id}/pdf`);
+      expect([403, 404]).toContain(foreign.status);
+      const list = (await call('owner', 'get', `/invoices?branchId=${branchId}`).expect(200)).body
+        .data;
+      expect(list.some((x: { id: string }) => x.id === inv.id)).toBe(true);
+    });
+
+    it('invoices online payments with the gateway reference', async () => {
+      const { token, order } = await guestWithOrder();
+      const intent = (await guest('post', `/orders/${order.id}/pay`, token).expect(200)).body.data;
+      const paid = customerPays(intent.gatewayOrderId, order.totalMinor);
+      await guest('post', '/payments/confirm', token)
+        .send({ intentId: intent.intentId, paymentId: paid.paymentId, signature: paid.signature })
+        .expect(200);
+      const inv = await invoiceOf(order.id);
+      expect(inv.snapshot.payments[0]).toMatchObject({
+        method: 'online',
+        reference: paid.paymentId,
+      });
     });
   });
 });

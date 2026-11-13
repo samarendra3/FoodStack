@@ -7,6 +7,7 @@ import { OrderEventsService } from './order-events';
 import { WaiterAssignmentsService } from './waiter-assignments';
 import {
   BillingDeskService,
+  InvoicesService,
   OnlinePaymentsController,
   OnlinePaymentsService,
 } from './online-payments.controller';
@@ -31,6 +32,7 @@ import {
     WaiterAssignmentsService,
     OnlinePaymentsService,
     BillingDeskService,
+    InvoicesService,
     GuestSessionsService,
   ],
 })

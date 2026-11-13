@@ -94,6 +94,7 @@ const TIMELINE_FIELDS: Record<string, string[]> = {
   'payment.recorded': ['method', 'amountMinor', 'paidInFull'],
   'payment.refunded': ['amountMinor', 'reason'],
   'payment.failed': ['reason', 'needsReview'],
+  'invoice.generated': ['invoiceNumber'],
 };
 function pickTimelineDetails(type: string, payload: Record<string, unknown>) {
   const out: Record<string, unknown> = {};
@@ -185,6 +186,9 @@ export class OrdersService {
     private readonly events: OrderEventsService,
     private readonly assignments: WaiterAssignmentsService,
   ) {}
+
+  /** Set by InvoicesService: issues the GST invoice when a bill is settled (same transaction). */
+  onSettled?: (db: Db, orderId: string, userId: string | null) => Promise<unknown>;
 
   /** Set by OnlinePaymentsService: refunds an online payment at the gateway (in-transaction). */
   onlineRefund?: (
@@ -768,6 +772,8 @@ export class OrdersService {
       },
       actor: eventActor(actor),
     });
+    // Settled: the invoice number is allocated in this same transaction (gap-free series).
+    if (paidInFull && this.onSettled) await this.onSettled(db, order.id, actor.userId);
   }
 
   refund(auth: AuthContext, paymentId: string, input: RefundInput, meta: RequestMeta) {

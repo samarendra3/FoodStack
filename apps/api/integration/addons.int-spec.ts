@@ -181,6 +181,8 @@ describe('Subscription add-ons (integration)', () => {
         'subscription_invoices',
         'payments',
         'order_items',
+        'invoices',
+        'invoice_series',
         'orders',
         'branch_order_counters',
         'menu_item_variants',

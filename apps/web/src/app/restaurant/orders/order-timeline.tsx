@@ -47,6 +47,8 @@ function describe(e: TimelineEntry, fmt: (m: number) => string): string {
       }`;
     case 'payment.failed':
       return `Online payment not applied: ${String(d.reason ?? '')}${d.needsReview ? ' (needs review)' : ''}`;
+    case 'invoice.generated':
+      return `Invoice ${String(d.invoiceNumber ?? '')} issued`;
     case 'payment.refunded':
       return `Refund ${fmt(Number(d.amountMinor ?? 0))}: ${String(d.reason ?? '')}`;
     default:

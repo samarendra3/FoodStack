@@ -218,6 +218,8 @@ describe('Cursor pagination (integration)', () => {
     if (migrator?.isInitialized) {
       for (const table of [
         'payments',
+        'invoices',
+        'invoice_series',
         'orders',
         'inventory_movements',
         'inventory_items',

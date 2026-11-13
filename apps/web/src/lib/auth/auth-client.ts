@@ -179,6 +179,20 @@ export class AuthClient {
     return res;
   }
 
+  /** Authorized file download (e.g. an invoice PDF); refreshes once on 401. */
+  async download(path: string): Promise<Blob> {
+    if (!this.accessToken) await this.refresh();
+    const get = () =>
+      fetch(`${this.baseUrl}${path}`, {
+        headers: this.accessToken ? { Authorization: `Bearer ${this.accessToken}` } : {},
+        cache: 'no-store',
+      });
+    let res = await get();
+    if (res.status === 401 && (await this.refresh())) res = await get();
+    if (!res.ok) throw new Error(`Download failed (${res.status})`);
+    return res.blob();
+  }
+
   private accept<T extends AuthSession>(session: T): T {
     this.accessToken = session.accessToken;
     clearTimeout(this.refreshTimer);
