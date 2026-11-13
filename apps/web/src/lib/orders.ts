@@ -37,6 +37,8 @@ export interface Order {
     id: string;
     name: string;
     variantName: string | null;
+    /** Add-ons as ordered (snapshot names and prices). */
+    addons?: { groupName: string; name: string; priceMinor: number }[];
     unitPriceMinor: number;
     quantity: number;
     lineTotalMinor: number;

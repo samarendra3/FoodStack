@@ -1,5 +1,7 @@
 'use client';
 
+import { ItemOptionsDialog } from '@/components/item-options-dialog';
+import { decodeLine, encodeLine, pickedAddons } from '@/lib/cart-line';
 import { cn } from '@foodstack/ui/lib/utils';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -291,7 +293,7 @@ function useTableOrders(branchId: string, label: string) {
   });
 }
 
-type Cart = Record<string, number>; // "itemId" or "itemId:variantId" → quantity
+type Cart = Record<string, number>; // line key (lib/cart-line) → quantity
 type PanelTab = 'new' | 'table';
 
 interface Line {
@@ -299,6 +301,9 @@ interface Line {
   item: MenuItem;
   variantName: string | null;
   variantId: string | null;
+  addonIds: string[];
+  addonNames: string[];
+  note: string;
   qty: number;
   price: number;
 }
@@ -353,22 +358,29 @@ function TableOrder({
   );
 
   const lines: Line[] = Object.entries(cart).flatMap(([key, qty]) => {
-    const [itemId, variantId] = key.split(':');
+    const { itemId, variantId, addonIds, note } = decodeLine(key);
     const item = menu.data?.items.find((i) => i.id === itemId);
     if (!item) return [];
     const variant = variantId ? item.variants.find((v) => v.id === variantId) : undefined;
     if (variantId && !variant) return [];
+    const addons = pickedAddons(item.addonGroups, addonIds);
+    if (addons.length !== addonIds.length) return [];
     return [
       {
         key,
         item,
         variantId: variant?.id ?? null,
         variantName: variant?.name ?? null,
+        addonIds,
+        addonNames: addons.map((a) => a.name),
+        note,
         qty,
-        price: variant?.priceMinor ?? item.priceMinor,
+        price:
+          (variant?.priceMinor ?? item.priceMinor) + addons.reduce((t, a) => t + a.priceMinor, 0),
       },
     ];
   });
+  const [options, setOptions] = useState<MenuItem | null>(null);
   const count = lines.reduce((n, l) => n + l.qty, 0);
   const cartTotal = lines.reduce((s, l) => s + l.price * l.qty, 0);
   const open = orders.data ?? [];
@@ -409,6 +421,8 @@ function TableOrder({
           menuItemId: l.item.id,
           variantId: l.variantId,
           quantity: l.qty,
+          ...(l.addonIds.length ? { addonOptionIds: l.addonIds } : {}),
+          ...(l.note ? { note: l.note } : {}),
         })),
       });
       setCart({});
@@ -456,6 +470,17 @@ function TableOrder({
 
   return (
     <div className="mx-auto w-full max-w-7xl">
+      {options ? (
+        <ItemOptionsDialog
+          item={options}
+          money={money}
+          onClose={() => setOptions(null)}
+          onAdd={(choice, qty) => {
+            add(encodeLine(choice), qty);
+            setOptions(null);
+          }}
+        />
+      ) : null}
       {/* Table bar: title, search, categories */}
       <div className="sticky top-14 z-20 border-b border-slate-200 bg-white dark:border-white/10 dark:bg-slate-900">
         <div className="flex items-center gap-3 px-4 pt-3 sm:px-6">
@@ -546,7 +571,13 @@ function TableOrder({
           ) : (
             <ul className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
               {items.map((item) => (
-                <MenuCard key={item.id} item={item} cart={cart} onAdd={add} />
+                <MenuCard
+                  key={item.id}
+                  item={item}
+                  cart={cart}
+                  onAdd={add}
+                  onCustomise={() => setOptions(item)}
+                />
               ))}
             </ul>
           )}
@@ -788,6 +819,8 @@ function OrderPanel(p: {
                       <p className="truncate text-sm font-medium">{l.item.name}</p>
                       <p className={cn('text-xs', muted)}>
                         {l.variantName ? `${l.variantName} · ` : ''}
+                        {l.addonNames.length ? `${l.addonNames.join(', ')} · ` : ''}
+                        {l.note ? `“${l.note}” · ` : ''}
                         {money(l.price)}
                       </p>
                     </div>
@@ -944,16 +977,29 @@ function MenuCard({
   item,
   cart,
   onAdd,
+  onCustomise,
 }: {
   item: MenuItem;
   cart: Cart;
   onAdd: (key: string, d: number) => void;
+  /** Opens the options dialog (add-ons, portion, instructions). */
+  onCustomise: () => void;
 }) {
   const [imgFailed, setImgFailed] = useState(false);
-  const options = item.variants.length
-    ? item.variants.map((v) => ({ key: `${item.id}:${v.id}`, name: v.name, price: v.priceMinor }))
-    : [{ key: item.id, name: null as string | null, price: item.priceMinor }];
-  const inCart = options.some((o) => cart[o.key]);
+  const hasAddons = Boolean(item.addonGroups?.length);
+  const options = hasAddons
+    ? []
+    : item.variants.length
+      ? item.variants.map((v) => ({
+          key: encodeLine({ itemId: item.id, variantId: v.id, addonIds: [], note: '' }),
+          name: v.name,
+          price: v.priceMinor,
+        }))
+      : [{ key: item.id, name: null as string | null, price: item.priceMinor }];
+  const inCartCount = Object.entries(cart)
+    .filter(([k]) => decodeLine(k).itemId === item.id)
+    .reduce((n, [, q]) => n + q, 0);
+  const inCart = inCartCount > 0;
 
   return (
     <li
@@ -1024,6 +1070,34 @@ function MenuCard({
               );
             })
           )}
+          {item.isAvailable ? (
+            hasAddons ? (
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-medium tabular-nums">
+                  {money(Math.min(item.priceMinor, ...item.variants.map((v) => v.priceMinor)))}
+                  {inCart ? (
+                    <span className={cn('ml-1.5 text-xs', muted)}>{inCartCount} added</span>
+                  ) : null}
+                </span>
+                <button
+                  type="button"
+                  onClick={onCustomise}
+                  aria-label={`Choose options for ${item.name}`}
+                  className={cn(outlineBtn, 'h-8 px-3 text-sm')}
+                >
+                  <Plus className="size-3.5" aria-hidden /> Choose
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={onCustomise}
+                className={cn('self-start text-xs underline-offset-2 hover:underline', muted)}
+              >
+                Add with instructions
+              </button>
+            )
+          ) : null}
         </div>
       </div>
     </li>

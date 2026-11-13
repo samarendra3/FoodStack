@@ -282,8 +282,9 @@ export class OrdersService {
       );
       // All lines in one statement. WITH ORDINALITY keeps the cart order: ids are uuidv7
       // (monotonic within the session), which is what order details sort by.
-      await db.query(
-        `INSERT INTO order_items (tenant_id, order_id, menu_item_id, variant_id, category_id, name,
+      const inserted = (
+        await db.query<{ id: string }>(
+          `INSERT INTO order_items (tenant_id, order_id, menu_item_id, variant_id, category_id, name,
                                   variant_name, unit_price_minor, quantity, line_total_minor,
                                   discount_minor, note)
          SELECT $1, $2, l.menu_item_id, l.variant_id, l.category_id, l.name, l.variant_name,
@@ -293,22 +294,48 @@ export class OrdersService {
                 WITH ORDINALITY AS l(menu_item_id, variant_id, category_id, name, variant_name,
                                      unit_price_minor, quantity, line_total_minor, discount_minor,
                                      note, n)
-          ORDER BY l.n`,
-        [
-          actor.tenantId,
-          order!.id,
-          q.lines.map((l) => l.menuItemId),
-          q.lines.map((l) => l.variantId ?? null),
-          q.lines.map((l) => l.categoryId),
-          q.lines.map((l) => l.name),
-          q.lines.map((l) => l.variantName),
-          q.lines.map((l) => l.unitPriceMinor),
-          q.lines.map((l) => l.quantity),
-          q.lines.map((l) => l.lineTotalMinor),
-          q.lines.map((l) => l.discountMinor),
-          q.lines.map((_, i) => input.lines[i]!.note || null),
-        ],
+          ORDER BY l.n
+          RETURNING id`,
+          [
+            actor.tenantId,
+            order!.id,
+            q.lines.map((l) => l.menuItemId),
+            q.lines.map((l) => l.variantId ?? null),
+            q.lines.map((l) => l.categoryId),
+            q.lines.map((l) => l.name),
+            q.lines.map((l) => l.variantName),
+            q.lines.map((l) => l.unitPriceMinor),
+            q.lines.map((l) => l.quantity),
+            q.lines.map((l) => l.lineTotalMinor),
+            q.lines.map((l) => l.discountMinor),
+            q.lines.map((_, i) => input.lines[i]!.note || null),
+          ],
+        )
+      )
+        // uuidv7 ids are monotonic within the statement: id order = cart order.
+        .sort((x, y) => x.id.localeCompare(y.id));
+      // Add-on snapshot per line (names and prices as ordered).
+      const addonRows = q.lines.flatMap((l, i) =>
+        l.addons.map((a) => ({ itemId: inserted[i]!.id, ...a })),
       );
+      if (addonRows.length) {
+        await db.query(
+          `INSERT INTO order_item_addons
+             (tenant_id, order_id, order_item_id, option_id, group_name, name, price_minor)
+           SELECT $1, $2, a.item_id, a.option_id, a.group_name, a.name, a.price_minor
+             FROM unnest($3::uuid[], $4::uuid[], $5::text[], $6::text[], $7::bigint[])
+                  AS a(item_id, option_id, group_name, name, price_minor)`,
+          [
+            actor.tenantId,
+            order!.id,
+            addonRows.map((a) => a.itemId),
+            addonRows.map((a) => a.optionId),
+            addonRows.map((a) => a.groupName),
+            addonRows.map((a) => a.name),
+            addonRows.map((a) => a.priceMinor),
+          ],
+        );
+      }
       await this.saveDiscounts(db, actor.tenantId!, order!.id, q.applied);
       await this.audit(db, actor, meta, 'order.created', order!.id, {
         number: number!.last_number,
@@ -707,17 +734,9 @@ export class OrdersService {
           ORDER BY o.created_at`,
         [branchId],
       );
-      const items = await db.query<{
-        id: string;
-        order_id: string;
-        name: string;
-        variant_name: string | null;
-        quantity: number;
-        note: string | null;
-      }>(
-        `SELECT id, order_id, name, variant_name, quantity, note FROM order_items
-          WHERE order_id = ANY($1::uuid[]) AND status = 'active' ORDER BY created_at, id`,
-        [orders.map((o) => o.id)],
+      const items = await this.readyItems(
+        db,
+        orders.map((o) => o.id),
       );
       return orders.map((o) => ({
         id: o.id,
@@ -737,6 +756,7 @@ export class OrdersService {
             name: i.variant_name ? `${i.name} (${i.variant_name})` : i.name,
             qty: i.quantity,
             note: i.note,
+            addons: i.addons,
           })),
       }));
     });
@@ -844,8 +864,26 @@ export class OrdersService {
     });
   }
 
-  private readyItems(db: Db, orderIds: string[]) {
-    return db.query<{
+  /** Add-on snapshot rows of the given orders, grouped by order line. */
+  private async addonsFor(db: Db, orderIds: string[]) {
+    const rows = await db.query<{
+      order_item_id: string;
+      group_name: string;
+      name: string;
+      price_minor: string;
+    }>(
+      `SELECT order_item_id, group_name, name, price_minor FROM order_item_addons
+        WHERE order_id = ANY($1::uuid[]) ORDER BY id`,
+      [orderIds],
+    );
+    const byItem = new Map<string, typeof rows>();
+    for (const r of rows) byItem.set(r.order_item_id, [...(byItem.get(r.order_item_id) ?? []), r]);
+    return byItem;
+  }
+
+  /** Active lines of the given orders with their add-on names (tickets and pickup cards). */
+  private async readyItems(db: Db, orderIds: string[]) {
+    const rows = await db.query<{
       id: string;
       order_id: string;
       name: string;
@@ -857,6 +895,8 @@ export class OrdersService {
         WHERE order_id = ANY($1::uuid[]) AND status = 'active' ORDER BY created_at, id`,
       [orderIds],
     );
+    const addons = await this.addonsFor(db, orderIds);
+    return rows.map((r) => ({ ...r, addons: (addons.get(r.id) ?? []).map((a) => a.name) }));
   }
 
   private readyPayload(
@@ -875,6 +915,7 @@ export class OrdersService {
           name: i.variant_name ? `${i.name} (${i.variant_name})` : i.name,
           qty: i.quantity,
           note: i.note,
+          addons: i.addons,
         })),
     };
   }
@@ -1355,6 +1396,7 @@ export class OrdersService {
           )
         : Promise.resolve(undefined),
     ]);
+    const addonsByItem = await this.addonsFor(db, [id]);
     return {
       ...summary(o),
       customer: customer ?? null,
@@ -1364,6 +1406,11 @@ export class OrdersService {
         variantId: i.variant_id,
         name: i.name,
         variantName: i.variant_name,
+        addons: (addonsByItem.get(i.id) ?? []).map((a) => ({
+          groupName: a.group_name,
+          name: a.name,
+          priceMinor: Number(a.price_minor),
+        })),
         unitPriceMinor: Number(i.unit_price_minor),
         quantity: i.quantity,
         lineTotalMinor: Number(i.line_total_minor),

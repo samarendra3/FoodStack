@@ -1,3 +1,4 @@
+import { loadAddonGroups } from './addon-groups';
 import {
   BadRequestException,
   ConflictException,
@@ -249,6 +250,10 @@ export class MenuService {
           ORDER BY v.sort_order, v.created_at`,
       [restaurant.id],
     );
+    const addonGroups = await loadAddonGroups(
+      db,
+      items.map((i) => i.id as string),
+    );
     const byItem = new Map<string, MenuVariant[]>();
     for (const v of variantRows) {
       const list = byItem.get(v.menu_item_id) ?? [];
@@ -268,7 +273,11 @@ export class MenuService {
         isActive: c.is_active,
         itemCount: Number(c.item_count),
       })),
-      items: items.map((i) => ({ ...toItem(i), variants: byItem.get(i.id) ?? [] })),
+      items: items.map((i) => ({
+        ...toItem(i),
+        variants: byItem.get(i.id) ?? [],
+        addonGroups: addonGroups.get(i.id) ?? [],
+      })),
     };
   }
 

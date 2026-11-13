@@ -289,6 +289,7 @@ export function ReadyAlerts({
                           {o.items.map((i) => (
                             <li key={i.id}>
                               <span className="font-semibold tabular-nums">{i.qty}×</span> {i.name}
+                              {i.addons?.length ? ` + ${i.addons.join(', ')}` : ''}
                               {i.note ? (
                                 <span className="text-xs text-slate-500"> · {i.note}</span>
                               ) : null}

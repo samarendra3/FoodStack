@@ -1,6 +1,6 @@
 # Restaurant Operations — Audit & Implementation Plan
 
-Status: **APPROVED. Phases 1–2 complete; phases 3–11 pending.**
+Status: **APPROVED. Phases 1–3 complete; phases 4–11 pending.**
 Scope: QR ordering, payments, kitchen, automatic waiter assignment, billing, invoices and receipt
 sharing, as one order lifecycle on the existing FoodStack architecture.
 
@@ -212,7 +212,8 @@ Approved order of work: 1 outbox and timeline · 2 signed QR links and QR improv
 |---|---|---|
 | 1 | Durable outbox + order timeline | **Complete** (tests below) |
 | 2 | Signed QR links + QR ordering improvements | **Complete** (tests below) |
-| 3–11 | — | Pending |
+| 3 | Add-ons + per-item instructions | **Complete** (tests below) |
+| 4–11 | — | Pending |
 
 ### Phase 1 report — Durable transactional outbox and readable order timeline
 
@@ -279,3 +280,40 @@ Approved order of work: 1 outbox and timeline · 2 signed QR links and QR improv
 
 **Deployment notes**
 - After deploying, reprint QR codes from **QR Menu**, place them, then click **Turn off old codes** for each restaurant.
+
+### Phase 3 report — Add-ons and per-item instructions
+
+**Delivered**
+- Migration `1798000033000-OrderItemAddons` (reversible): `order_item_addons`, an immutable snapshot per order line (group name, option name, price as ordered). Tenant RLS; cascades with the order and line. `order_items` gains `(tenant_id, id)` uniqueness for the FK.
+- Server pricing (`promotions.priceLines`, used by POS, waiter and QR alike): `addonOptionIds` per line are validated against the dish's active groups. The rules:
+  - options must belong to the dish's groups
+  - options must be available
+  - required groups (min) and maximums are enforced
+  - no duplicate picks
+
+  Add-ons are priced from the menu and **included in the unit price**, so discounts, tax and every existing money constraint apply unchanged. Clients never send prices.
+- Shared `menu/addon-groups.ts`. The staff menu returns `addonGroups` per item; the public (QR) menu returns only available options.
+- Order detail items include `addons`. Kitchen tickets and waiter pickup cards include add-on names. Per-item `note` (already accepted by the API) is now used by every client.
+- **Fix found on the way:** editing add-on groups did not refresh the cached menu, so POS, waiter and QR showed stale add-ons until the cache expired. Group create, update and delete now invalidate the menu cache after commit.
+- Web:
+  - shared `ItemOptionsDialog` (portion, add-ons with required / min / max rules, instructions, quantity)
+  - shared `lib/cart-line.ts` line keys (old cart keys still decode)
+  - **QR guest page:** "Choose" for dishes with add-ons; "Add with instructions" on any dish; checkout lists each line with its add-ons, note and quantity controls
+  - **Waiter app** and **POS:** the same dialog; add-ons included in the quote and the order
+  - **Kitchen board, orders, KOT print:** add-ons shown with the dish, plus notes
+  - **Waiter ready alerts, order detail and printed receipt** show add-ons
+
+**Tests (evidence)**
+- New integration cases (`ready-orders.int-spec.ts → add-ons and per-item instructions`):
+  - groups on the staff menu; public menu hides sold-out options
+  - server rejects: required group missing, over maximum, duplicate, sold-out option, option not offered for the dish
+  - pricing (50 + 30 + 20 = 100 per cup × 2), snapshot and note on the kitchen ticket
+  - price change after ordering does not alter the order
+  - QR guest order with add-on and note
+- New web unit tests `lib/cart-line.test.ts`: key compatibility, round-trip, add-on rules.
+- Full API integration **332/333**. The one failure was the migration "fully revert and re-apply" check, caused by role-assignment rows left in the **test** database by two of this phase's interrupted test runs, not by a migration. After removing those test rows it passes (9/9), and the cleanup now includes the add-on tables.
+- API unit **177/177**; web unit **36/36**; `tsc` and ESLint clean on both apps.
+
+**Known limitations and notes**
+- Existing behaviour, unchanged: `PATCH /addon-groups/:id` without `menuItemIds` unlinks every dish (the field defaults to an empty list). The admin screen always sends the full list, so it is not hit in the app; worth tightening later.
+- Discounts that target categories or items apply to the whole unit price including add-ons. This is consistent everywhere, but is a pricing-policy choice.

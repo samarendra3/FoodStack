@@ -1,5 +1,13 @@
 'use client';
 
+import { ItemOptionsDialog, type OptionsItem } from '@/components/item-options-dialog';
+import {
+  type AddonGroup,
+  addonProblem,
+  decodeLine,
+  encodeLine,
+  pickedAddons,
+} from '@/lib/cart-line';
 import { ApiError } from '@foodstack/api-client';
 import { cn } from '@foodstack/ui/lib/utils';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -68,13 +76,15 @@ interface PublicMenu {
       isAvailable: boolean;
       /** Portions such as Full / Half. When present, the guest must pick one. */
       variants?: { id: string; name: string; priceMinor: number }[];
+      /** Add-on groups (only available options are sent to guests). */
+      addonGroups?: AddonGroup[];
     }[];
   }[];
 }
 
-/** Cart keys are "itemId" for single-price items and "itemId:variantId" for a portion. */
+/** Cart keys: see lib/cart-line (portion, add-ons and instruction make a distinct line). */
 const keyOf = (itemId: string, variantId?: string | null) =>
-  variantId ? `${itemId}:${variantId}` : itemId;
+  encodeLine({ itemId, variantId: variantId ?? null, addonIds: [], note: '' });
 
 const KITCHEN: Record<GuestOrder['kitchenStatus'], { label: string; cls: string }> = {
   new: { label: 'Sent to kitchen', cls: 'bg-sky-50 text-sky-700' },
@@ -202,21 +212,33 @@ export default function GuestTablePage({
   // Resolve each cart entry to an item (and portion). Entries whose item or portion no longer
   // exists, or an item that now has portions but was saved without one, are dropped.
   const lines = Object.entries(cart).flatMap(([key, quantity]) => {
-    const [itemId, variantId] = key.split(':');
-    const item = items.get(itemId!);
+    const { itemId, variantId, addonIds, note } = decodeLine(key);
+    const item = items.get(itemId);
     if (!item?.isAvailable || quantity <= 0) return [];
     const variants = item.variants ?? [];
     const variant = variantId ? variants.find((v) => v.id === variantId) : undefined;
     if (variants.length ? !variant : variantId) return [];
+    // Add-ons that were removed or sold out since the guest picked them drop the line, and so
+    // does a line that no longer satisfies a required group; the guest picks again.
+    const addons = pickedAddons(item.addonGroups, addonIds);
+    if (addons.length !== addonIds.length || addonProblem(item.addonGroups, addonIds)) return [];
     return [
       {
+        key,
         menuItemId: item.id,
         variantId: variant?.id ?? null,
+        addonOptionIds: addonIds,
+        note,
         quantity,
-        priceMinor: variant?.priceMinor ?? item.priceMinor,
+        label: [item.name, variant?.name, ...addons.map((a) => a.name)].filter(Boolean).join(' · '),
+        priceMinor:
+          (variant?.priceMinor ?? item.priceMinor) + addons.reduce((t, a) => t + a.priceMinor, 0),
       },
     ];
   });
+  const [options, setOptions] = useState<OptionsItem | null>(null);
+  const countOf = (itemId: string) =>
+    lines.filter((l) => l.menuItemId === itemId).reduce((t, l) => t + l.quantity, 0);
   const cartTotal = lines.reduce((t, l) => t + l.priceMinor * l.quantity, 0);
   const cartCount = lines.reduce((t, l) => t + l.quantity, 0);
   const add = (id: string, d: number) =>
@@ -261,9 +283,13 @@ export default function GuestTablePage({
         idempotencyKey: pendingKey.current,
         body: {
           paymentPreference: pay,
-          lines: lines.map(({ menuItemId, variantId, quantity }) =>
-            variantId ? { menuItemId, variantId, quantity } : { menuItemId, quantity },
-          ),
+          lines: lines.map(({ menuItemId, variantId, quantity, addonOptionIds, note }) => ({
+            menuItemId,
+            quantity,
+            ...(variantId ? { variantId } : {}),
+            ...(addonOptionIds.length ? { addonOptionIds } : {}),
+            ...(note ? { note } : {}),
+          })),
         },
       });
       pendingKey.current = null;
@@ -397,59 +423,97 @@ export default function GuestTablePage({
                         <p className="mt-1 text-xs text-slate-500">Sold out</p>
                       ) : (
                         <div className="mt-2 space-y-2">
-                          {(i.variants?.length
-                            ? i.variants.map((v) => ({
-                                key: keyOf(i.id, v.id),
-                                label: v.name as string | null,
-                                price: v.priceMinor,
-                              }))
-                            : [{ key: keyOf(i.id), label: null, price: i.priceMinor }]
-                          ).map((o) => {
-                            const qty = cart[o.key] ?? 0;
-                            const what = o.label ? `${i.name} (${o.label})` : i.name;
-                            return (
-                              <div key={o.key} className="flex items-center justify-between gap-3">
-                                <span className="text-sm text-slate-600">
-                                  {o.label ? (
-                                    <span className="font-medium text-slate-800">{o.label} · </span>
-                                  ) : null}
-                                  <span className="tabular-nums">{money(o.price)}</span>
-                                </span>
-                                {qty ? (
-                                  <div className="flex items-center gap-2 rounded-lg border border-emerald-600 px-1">
-                                    <button
-                                      type="button"
-                                      aria-label={`Remove one ${what}`}
-                                      onClick={() => add(o.key, -1)}
-                                      className="p-1.5 text-emerald-700"
-                                    >
-                                      <Minus className="size-4" />
-                                    </button>
-                                    <span className="w-4 text-center text-sm font-semibold tabular-nums">
-                                      {qty}
-                                    </span>
-                                    <button
-                                      type="button"
-                                      aria-label={`Add one ${what}`}
-                                      onClick={() => add(o.key, 1)}
-                                      className="p-1.5 text-emerald-700"
-                                    >
-                                      <Plus className="size-4" />
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    aria-label={`Add ${what}`}
-                                    onClick={() => add(o.key, 1)}
-                                    className="rounded-lg border border-emerald-600 px-4 py-1.5 text-sm font-semibold text-emerald-700"
-                                  >
-                                    Add
-                                  </button>
+                          {i.addonGroups?.length ? (
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="text-sm text-slate-600 tabular-nums">
+                                {money(
+                                  Math.min(
+                                    i.priceMinor,
+                                    ...(i.variants ?? []).map((v) => v.priceMinor),
+                                  ),
                                 )}
-                              </div>
-                            );
-                          })}
+                                {countOf(i.id) ? (
+                                  <span className="ml-2 font-semibold text-emerald-700">
+                                    {countOf(i.id)} in cart
+                                  </span>
+                                ) : null}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setOptions(i)}
+                                className="rounded-lg border border-emerald-600 px-4 py-1.5 text-sm font-semibold text-emerald-700"
+                              >
+                                {countOf(i.id) ? 'Add more' : 'Choose'}
+                              </button>
+                            </div>
+                          ) : null}
+                          {i.addonGroups?.length
+                            ? null
+                            : (i.variants?.length
+                                ? i.variants.map((v) => ({
+                                    key: keyOf(i.id, v.id),
+                                    label: v.name as string | null,
+                                    price: v.priceMinor,
+                                  }))
+                                : [{ key: keyOf(i.id), label: null, price: i.priceMinor }]
+                              ).map((o) => {
+                                const qty = cart[o.key] ?? 0;
+                                const what = o.label ? `${i.name} (${o.label})` : i.name;
+                                return (
+                                  <div
+                                    key={o.key}
+                                    className="flex items-center justify-between gap-3"
+                                  >
+                                    <span className="text-sm text-slate-600">
+                                      {o.label ? (
+                                        <span className="font-medium text-slate-800">
+                                          {o.label} ·{' '}
+                                        </span>
+                                      ) : null}
+                                      <span className="tabular-nums">{money(o.price)}</span>
+                                    </span>
+                                    {qty ? (
+                                      <div className="flex items-center gap-2 rounded-lg border border-emerald-600 px-1">
+                                        <button
+                                          type="button"
+                                          aria-label={`Remove one ${what}`}
+                                          onClick={() => add(o.key, -1)}
+                                          className="p-1.5 text-emerald-700"
+                                        >
+                                          <Minus className="size-4" />
+                                        </button>
+                                        <span className="w-4 text-center text-sm font-semibold tabular-nums">
+                                          {qty}
+                                        </span>
+                                        <button
+                                          type="button"
+                                          aria-label={`Add one ${what}`}
+                                          onClick={() => add(o.key, 1)}
+                                          className="p-1.5 text-emerald-700"
+                                        >
+                                          <Plus className="size-4" />
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        aria-label={`Add ${what}`}
+                                        onClick={() => add(o.key, 1)}
+                                        className="rounded-lg border border-emerald-600 px-4 py-1.5 text-sm font-semibold text-emerald-700"
+                                      >
+                                        Add
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                          <button
+                            type="button"
+                            onClick={() => setOptions(i)}
+                            className="text-xs text-slate-500 underline-offset-2 hover:underline"
+                          >
+                            Add with instructions
+                          </button>
                         </div>
                       )}
                     </div>
@@ -531,10 +595,31 @@ export default function GuestTablePage({
         </div>
       )}
 
+      {options ? (
+        <ItemOptionsDialog
+          item={options}
+          money={money}
+          onClose={() => setOptions(null)}
+          onAdd={(choice, qty) => {
+            const key = encodeLine(choice);
+            setCart((c) => ({ ...c, [key]: Math.min(99, (c[key] ?? 0) + qty) }));
+            setOptions(null);
+          }}
+        />
+      ) : null}
+
       {checkout && cartCount > 0 ? (
         <CheckoutSheet
           total={money(cartTotal)}
           count={cartCount}
+          lines={lines.map((l) => ({
+            key: l.key,
+            label: l.label,
+            note: l.note,
+            quantity: l.quantity,
+            amount: money(l.priceMinor * l.quantity),
+          }))}
+          onQty={add}
           pay={pay}
           setPay={setPay}
           phone={phone ?? view?.contact?.phone ?? ''}
@@ -583,6 +668,8 @@ export default function GuestTablePage({
 function CheckoutSheet(p: {
   total: string;
   count: number;
+  lines: { key: string; label: string; note: string; quantity: number; amount: string }[];
+  onQty: (key: string, delta: number) => void;
   pay: PayChoice;
   setPay: (v: PayChoice) => void;
   phone: string;
@@ -613,6 +700,37 @@ function CheckoutSheet(p: {
             Back to menu
           </button>
         </div>
+
+        <ul className="max-h-48 divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-200">
+          {p.lines.map((l) => (
+            <li key={l.key} className="flex items-center gap-3 p-2.5 text-sm">
+              <div className="min-w-0 flex-1">
+                <p className="font-medium">{l.label}</p>
+                {l.note ? <p className="text-xs text-slate-500">“{l.note}”</p> : null}
+              </div>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  aria-label={`Remove one ${l.label}`}
+                  onClick={() => p.onQty(l.key, -1)}
+                  className="p-1 text-emerald-700"
+                >
+                  <Minus className="size-4" />
+                </button>
+                <span className="w-5 text-center tabular-nums">{l.quantity}</span>
+                <button
+                  type="button"
+                  aria-label={`Add one ${l.label}`}
+                  onClick={() => p.onQty(l.key, 1)}
+                  className="p-1 text-emerald-700"
+                >
+                  <Plus className="size-4" />
+                </button>
+              </div>
+              <span className="w-16 text-right tabular-nums">{l.amount}</span>
+            </li>
+          ))}
+        </ul>
 
         <fieldset className="space-y-2">
           <legend className="mb-1 text-sm font-medium">How will you pay?</legend>

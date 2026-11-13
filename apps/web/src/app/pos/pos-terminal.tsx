@@ -1,10 +1,12 @@
 'use client';
 
+import { ItemOptionsDialog } from '@/components/item-options-dialog';
+import { decodeLine, encodeLine, pickedAddons } from '@/lib/cart-line';
 import { AlertBanner } from '@foodstack/ui/components/alert-banner';
 import { ShoppingBag, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useState } from 'react';
-import { type Diet, usePosCatalog } from './catalog';
+import { type Diet, type PosItem, usePosCatalog } from './catalog';
 import { TableBillsButton } from './table-bills';
 import { useWorkspaceBranch } from '@/components/workspace/workspace-page';
 import { authErrorMessage } from '@/lib/auth/errors';
@@ -43,13 +45,23 @@ export function PosTerminal() {
   const [requestId, setRequestId] = useState(newRequestId);
 
   const lines: OrderLine[] = Object.entries(cart).flatMap(([key, qty]) => {
-    const [itemId, variantId] = key.split(':');
+    const { itemId, variantId, addonIds, note } = decodeLine(key);
     const item = catalog.items.find((i) => i.id === itemId);
     if (!item) return [];
     const variant = variantId ? (item.variants.find((v) => v.id === variantId) ?? null) : null;
     if (variantId && !variant) return [];
-    return [{ key, item, variant, qty }];
+    const picked = pickedAddons(item.addonGroups, addonIds);
+    if (picked.length !== addonIds.length) return [];
+    const addons = picked.map((a) => ({ id: a.id, name: a.name, price: a.priceMinor / 100 }));
+    return [{ key, item, variant, addons, note, qty }];
   });
+  const [options, setOptions] = useState<PosItem | null>(null);
+  /** Adding a dish with add-ons opens the options dialog; others go straight in. */
+  const addItem = (id: string, variantId: string | null) => {
+    const item = catalog.items.find((i) => i.id === id);
+    if (item?.addonGroups.length) setOptions(item);
+    else change(lineKey(id, variantId), 1);
+  };
   const qtyByItem: Record<string, number> = {};
   for (const l of lines) qtyByItem[l.item.id] = (qtyByItem[l.item.id] ?? 0) + l.qty;
   const count = lines.reduce((n, l) => n + l.qty, 0);
@@ -61,6 +73,7 @@ export function PosTerminal() {
       menuItemId: l.item.id,
       variantId: l.variant?.id ?? null,
       quantity: l.qty,
+      ...(l.addons.length ? { addonOptionIds: l.addons.map((a) => a.id) } : {}),
     })),
   });
   const currentQuote = lines.length > 0 ? (quote.data ?? null) : null;
@@ -102,6 +115,8 @@ export function PosTerminal() {
           menuItemId: l.item.id,
           variantId: l.variant?.id ?? null,
           quantity: l.qty,
+          ...(l.addons.length ? { addonOptionIds: l.addons.map((a) => a.id) } : {}),
+          ...(l.note ? { note: l.note } : {}),
         })),
       });
       setPlaced(order);
@@ -148,6 +163,27 @@ export function PosTerminal() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      {options ? (
+        <ItemOptionsDialog
+          item={{
+            id: options.id,
+            name: options.name,
+            priceMinor: Math.round(options.price * 100),
+            variants: options.variants.map((v) => ({
+              id: v.id,
+              name: v.name,
+              priceMinor: Math.round(v.price * 100),
+            })),
+            addonGroups: options.addonGroups,
+          }}
+          money={(m) => inr.format(m / 100)}
+          onClose={() => setOptions(null)}
+          onAdd={(choice, qty) => {
+            change(encodeLine(choice), qty);
+            setOptions(null);
+          }}
+        />
+      ) : null}
       {catalog.tablesAreSample ? (
         <AlertBanner layout="bar" variant="info" className="py-1.5 text-xs">
           Live menu and orders. Table numbers are placeholders until floors &amp; tables are set up.
@@ -177,7 +213,7 @@ export function PosTerminal() {
           diet={diet}
           onDiet={setDiet}
           cart={qtyByItem}
-          onAdd={(id, variantId) => change(lineKey(id, variantId), 1)}
+          onAdd={addItem}
         />
 
         <aside className="hidden w-[24rem] shrink-0 border-l border-slate-200 lg:flex dark:border-white/10">

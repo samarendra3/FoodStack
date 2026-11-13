@@ -11,6 +11,7 @@ import { hasPermission } from '../auth/access';
 import { AccessService } from '../auth/access.service';
 import type { AuthContext, RequestMeta, TenantAccess } from '../auth/auth.types';
 import { writeAudit } from '../auth/user-tokens';
+import { type ChosenAddon, chooseAddons, loadAddonGroups } from '../menu/addon-groups';
 import { type CartLine, type Channel, type EnginePromotion, quote } from './discount-engine';
 import {
   type CreatePromotionInput,
@@ -439,7 +440,12 @@ async function priceLines(
   db: Db,
   restaurantId: string,
   branchId: string,
-  input: { menuItemId: string; variantId?: string | null; quantity: number }[],
+  input: {
+    menuItemId: string;
+    variantId?: string | null;
+    quantity: number;
+    addonOptionIds?: string[];
+  }[],
 ) {
   const ids = [...new Set(input.map((l) => l.menuItemId))];
   const items = await db.query<{
@@ -476,8 +482,9 @@ async function priceLines(
       WHERE menu_item_id = ANY($1::uuid[]) AND deleted_at IS NULL`,
     [ids],
   );
+  const addonGroups = await loadAddonGroups(db, ids);
   const lines: CartLine[] = [];
-  const details: { name: string; variantName: string | null }[] = [];
+  const details: { name: string; variantName: string | null; addons: ChosenAddon[] }[] = [];
   for (const l of input) {
     const item = byId.get(l.menuItemId)!;
     const options = variants.filter((v) => v.menu_item_id === item.id);
@@ -491,6 +498,11 @@ async function priceLines(
     } else if (l.variantId) {
       throw invalid(`${item.name} has no portions.`);
     }
+    // Add-ons: validated against the item's groups (min / max, availability) and priced from
+    // the menu; their prices are part of the unit price, so discounts and tax see them.
+    const chosen = chooseAddons(item.name, addonGroups.get(item.id) ?? [], l.addonOptionIds ?? []);
+    if ('error' in chosen) throw invalid(chosen.error);
+    price += chosen.addons.reduce((s, a) => s + a.priceMinor, 0);
     lines.push({
       menuItemId: item.id,
       variantId: options.length ? l.variantId! : null,
@@ -498,7 +510,7 @@ async function priceLines(
       unitPriceMinor: price,
       quantity: l.quantity,
     });
-    details.push({ name: item.name, variantName });
+    details.push({ name: item.name, variantName, addons: chosen.addons });
   }
   return { lines, details };
 }

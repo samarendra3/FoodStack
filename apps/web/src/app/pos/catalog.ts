@@ -1,5 +1,6 @@
 'use client';
 
+import type { AddonGroup } from '@/lib/cart-line';
 import { authErrorMessage } from '@/lib/auth/errors';
 import { useWorkspaceBranch } from '@/components/workspace/workspace-page';
 import { useMenu } from '@/lib/menu';
@@ -25,6 +26,8 @@ export interface PosItem {
   badge?: 'Popular' | 'New';
   /** Portions (e.g. Full / Half) in major units; empty for single-price items. */
   variants: { id: string; name: string; price: number }[];
+  /** Add-on groups, prices in minor units as served by the menu API. */
+  addonGroups: AddonGroup[];
 }
 
 export interface PosTable {
@@ -70,6 +73,7 @@ export function usePosCatalog(): PosCatalog {
       imageUrl: i.imageUrl ?? undefined,
       available: i.isAvailable,
       variants: i.variants.map((v) => ({ id: v.id, name: v.name, price: v.priceMinor / 100 })),
+      addonGroups: i.addonGroups ?? [],
     }));
 
   return {

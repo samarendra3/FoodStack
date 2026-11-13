@@ -76,7 +76,7 @@ interface ServerTicket {
   updatedAt: string;
   status: 'new' | 'accepted' | 'preparing' | 'ready' | 'served';
   note: string | null;
-  items: { id: string; name: string; qty: number; note: string | null }[];
+  items: { id: string; name: string; qty: number; note: string | null; addons?: string[] }[];
 }
 
 const TYPE: Record<ServerTicket['orderType'], TicketOrderType> = {
@@ -114,7 +114,8 @@ export function useKitchenFeed(branchId: string): KitchenFeed {
           note: t.note ?? undefined,
           items: t.items.map((i) => ({
             id: i.id,
-            name: i.name,
+            // Add-ons read as part of the dish on every kitchen view and the printed KOT.
+            name: i.addons?.length ? `${i.name} + ${i.addons.join(', ')}` : i.name,
             qty: i.qty,
             note: i.note ?? undefined,
           })),

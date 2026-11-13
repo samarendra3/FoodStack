@@ -1,5 +1,6 @@
 'use client';
 
+import type { AddonGroup } from '@/lib/cart-line';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth, useProfile } from '@/components/auth/auth-provider';
 
@@ -29,6 +30,8 @@ export interface MenuItem {
   updatedAt: string;
   /** Portions such as Full / Half; empty when the item has a single price. */
   variants: MenuVariant[];
+  /** Add-on groups offered with this dish (options may be sold out). */
+  addonGroups?: AddonGroup[];
   /** Branches that sell it; empty = every branch. */
   branchIds?: string[];
 }

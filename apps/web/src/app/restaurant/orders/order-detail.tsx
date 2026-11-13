@@ -172,6 +172,11 @@ export function OrderDetail({
                     {i.variantName ? (
                       <span className="text-muted-foreground"> ({i.variantName})</span>
                     ) : null}
+                    {i.addons?.length ? (
+                      <span className="block text-xs text-muted-foreground">
+                        + {i.addons.map((a) => a.name).join(', ')}
+                      </span>
+                    ) : null}
                     {i.note ? <span className="block text-xs text-amber-700">{i.note}</span> : null}
                   </span>
                   <span className="tabular-nums">{fmt(i.lineTotalMinor)}</span>

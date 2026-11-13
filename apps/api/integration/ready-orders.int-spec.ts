@@ -43,7 +43,7 @@ describe('Ready-order events (integration)', () => {
   let table: string;
   let alphaId: string;
 
-  const call = (who: string, method: 'get' | 'post', url: string) =>
+  const call = (who: string, method: 'get' | 'post' | 'patch', url: string) =>
     request(app.getHttpServer())
       [method](`${API}${url}`)
       .set('X-Forwarded-For', freshIp())
@@ -208,6 +208,9 @@ describe('Ready-order events (integration)', () => {
         'table_sessions',
         'dining_tables',
         'branch_order_counters',
+        'menu_item_addon_groups',
+        'addon_options',
+        'addon_groups',
         'menu_item_variants',
         'menu_items',
         'menu_categories',
@@ -555,5 +558,173 @@ describe('Ready-order events (integration)', () => {
         db.query(`SELECT 1 FROM order_events WHERE tenant_id = $1 LIMIT 1`, [alphaId]),
       );
     expect(leaked).toHaveLength(0);
+  });
+
+  // ---- Phase 3: add-ons and per-item instructions ----
+
+  describe('add-ons and per-item instructions', () => {
+    let milk: { id: string; options: { id: string; name: string }[] };
+    let extras: { id: string; options: { id: string; name: string }[] };
+    const opt = (g: typeof milk, name: string) => g.options.find((o) => o.name === name)!.id;
+    const line = (addonOptionIds: string[], extra: object = {}) => ({
+      branchId: main,
+      channel: 'dine_in',
+      tableLabel: 'T30',
+      lines: [{ menuItemId: chai, quantity: 2, addonOptionIds, ...extra }],
+    });
+    const place = (body: object) =>
+      call('waiter1', 'post', '/orders')
+        .set('Idempotency-Key', `a-${suffix()}${suffix()}`)
+        .send(body);
+
+    beforeAll(async () => {
+      const group = async (body: object) =>
+        (await call('owner', 'post', '/addon-groups').send(body).expect(201)).body.data as {
+          id: string;
+        };
+      await group({
+        name: 'Milk',
+        minSelect: 1,
+        maxSelect: 1,
+        options: [
+          { name: 'Regular', priceMinor: 0 },
+          { name: 'Oat', priceMinor: 3000 },
+        ],
+        menuItemIds: [chai],
+      });
+      await group({
+        name: 'Extras',
+        minSelect: 0,
+        maxSelect: 2,
+        options: [
+          { name: 'Cheese', priceMinor: 2000 },
+          { name: 'Honey', priceMinor: 1000 },
+          { name: 'Saffron', priceMinor: 9000, isAvailable: false },
+        ],
+        menuItemIds: [chai],
+      });
+      const item = (await call('owner', 'get', '/menu').expect(200)).body.data.items.find(
+        (i: { id: string }) => i.id === chai,
+      );
+      milk = item.addonGroups.find((g: { name: string }) => g.name === 'Milk');
+      extras = item.addonGroups.find((g: { name: string }) => g.name === 'Extras');
+    });
+
+    it('offers add-on groups on the staff menu and only available options to guests', async () => {
+      expect(milk).toMatchObject({ minSelect: 1, maxSelect: 1 });
+      expect(extras.options.map((o) => o.name)).toEqual(['Cheese', 'Honey', 'Saffron']);
+      const rid = (
+        (await migrator.query('SELECT restaurant_id FROM branches WHERE id = $1', [main])) as {
+          restaurant_id: string;
+        }[]
+      )[0]!.restaurant_id;
+      const pub = (
+        await request(app.getHttpServer())
+          .get(`${API}/public/menu/${alphaId}/${rid}?branchId=${main}`)
+          .set('X-Forwarded-For', freshIp())
+          .expect(200)
+      ).body.data;
+      {
+        const items = pub.categories.flatMap((c: { items: unknown[] }) => c.items) as {
+          id: string;
+          addonGroups: { name: string; options: { name: string }[] }[];
+        }[];
+        const g = items.find((i) => i.id === chai)!.addonGroups.find((x) => x.name === 'Extras')!;
+        expect(g.options.map((o) => o.name)).toEqual(['Cheese', 'Honey']);
+      }
+    });
+
+    it('enforces required, maximum, availability and ownership rules on the server', async () => {
+      const bad = async (ids: string[], msg: RegExp) => {
+        const r = await place(line(ids)).expect(400);
+        expect(JSON.stringify(r.body)).toMatch(msg);
+      };
+      await bad([], /Choose Milk/);
+      await bad([opt(milk, 'Regular'), opt(milk, 'Oat')], /at most 1 for Milk/);
+      await bad(
+        [opt(milk, 'Oat'), opt(extras, 'Cheese'), opt(extras, 'Honey'), opt(extras, 'Cheese')],
+        /picked twice/,
+      );
+      await bad([opt(milk, 'Oat'), opt(extras, 'Saffron')], /Saffron is sold out/);
+      await bad([opt(milk, 'Oat'), '00000000-0000-4000-8000-000000000000'], /not offered/);
+    });
+
+    let ordered: { id: string };
+    it('prices add-ons into the line, snapshots them and shows them to the kitchen', async () => {
+      const res = await place(
+        line([opt(milk, 'Oat'), opt(extras, 'Cheese')], { note: 'less sugar, extra hot' }),
+      ).expect(201);
+      ordered = res.body.data;
+      const it0 = res.body.data.items[0];
+      // 50 + 30 (oat) + 20 (cheese) = 100 per cup, × 2.
+      expect(it0.unitPriceMinor).toBe(10000);
+      expect(it0.lineTotalMinor).toBe(20000);
+      expect(it0.note).toBe('less sugar, extra hot');
+      expect(it0.addons).toEqual([
+        { groupName: 'Milk', name: 'Oat', priceMinor: 3000 },
+        { groupName: 'Extras', name: 'Cheese', priceMinor: 2000 },
+      ]);
+      const ticket = (
+        (await call('cook', 'get', `/kitchen/tickets?branchId=${main}`).expect(200)).body.data as {
+          id: string;
+          items: { addons: string[]; note: string }[];
+        }[]
+      ).find((t) => t.id === ordered.id)!;
+      expect(ticket.items[0]).toMatchObject({
+        addons: ['Oat', 'Cheese'],
+        note: 'less sugar, extra hot',
+      });
+    });
+
+    it('keeps the placed order unchanged when the menu add-on price changes later', async () => {
+      await call('owner', 'patch', `/addon-groups/${milk.id}`)
+        .send({
+          options: [
+            { id: opt(milk, 'Regular'), name: 'Regular', priceMinor: 0 },
+            { id: opt(milk, 'Oat'), name: 'Oat', priceMinor: 9900 },
+          ],
+          menuItemIds: [chai],
+        })
+        .expect(204);
+      const d = (await call('owner', 'get', `/orders/${ordered.id}`).expect(200)).body.data;
+      expect(d.items[0].unitPriceMinor).toBe(10000);
+      expect(d.items[0].addons[0]).toEqual({ groupName: 'Milk', name: 'Oat', priceMinor: 3000 });
+    });
+
+    it('lets a QR guest order with add-ons and a per-item note', async () => {
+      const key = (
+        (await migrator.query('SELECT qr_key FROM dining_tables WHERE id = $1', [table])) as {
+          qr_key: string;
+        }[]
+      )[0]!.qr_key;
+      const join = await request(app.getHttpServer())
+        .post(`${API}/public/guest/join`)
+        .set('X-Forwarded-For', freshIp())
+        .send({ tenantId: alphaId, tableId: table, key })
+        .expect(200);
+      const milkNow = (await call('owner', 'get', '/menu').expect(200)).body.data.items
+        .find((i: { id: string }) => i.id === chai)
+        .addonGroups.find((g: { name: string }) => g.name === 'Milk');
+      const res = await request(app.getHttpServer())
+        .post(`${API}/public/guest/orders`)
+        .set('X-Forwarded-For', freshIp())
+        .set('X-Guest-Token', join.body.data.token)
+        .set('Idempotency-Key', `g-${suffix()}${suffix()}`)
+        .send({
+          lines: [
+            {
+              menuItemId: chai,
+              quantity: 1,
+              addonOptionIds: [opt(milkNow, 'Regular')],
+              note: 'no sugar',
+            },
+          ],
+        })
+        .expect(201);
+      const d = (await call('owner', 'get', `/orders/${res.body.data.order.id}`).expect(200)).body
+        .data;
+      expect(d.items[0]).toMatchObject({ note: 'no sugar', unitPriceMinor: 5000 });
+      expect(d.items[0].addons).toEqual([{ groupName: 'Milk', name: 'Regular', priceMinor: 0 }]);
+    });
   });
 });

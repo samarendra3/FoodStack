@@ -34,6 +34,9 @@ export const createOrderSchema = z.strictObject({
         menuItemId: z.uuid(),
         variantId: z.uuid().nullish(),
         quantity: z.number().int().min(1).max(999),
+        /** Chosen add-on option ids (validated and priced on the server). */
+        addonOptionIds: z.array(z.uuid()).max(20).optional(),
+        /** Per-item instruction for the kitchen ("no onion"). */
         note: z.string().trim().max(120).nullish(),
       }),
     )

@@ -13,7 +13,7 @@ export interface ReadyOrder {
   billLabel: string | null;
   branchId: string;
   readyAt: string;
-  items: { id: string; name: string; qty: number; note: string | null }[];
+  items: { id: string; name: string; qty: number; note: string | null; addons?: string[] }[];
 }
 
 type ServerEvent = ReadyOrder & { type: 'order.ready' | 'order.served' };

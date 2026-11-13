@@ -1,3 +1,5 @@
+import { CacheNs } from '../../shared/cache/cache.keys';
+import { CacheService } from '../../shared/cache/cache.service';
 import {
   Body,
   Controller,
@@ -74,7 +76,15 @@ const comboUpdateSchema = comboBase.omit({ restaurantId: true }).partial();
 
 @Injectable()
 export class MenuExtrasService {
-  constructor(private readonly ops: OpsBase) {}
+  constructor(
+    private readonly ops: OpsBase,
+    private readonly cache: CacheService,
+  ) {}
+
+  /** Add-ons are part of the cached menu (POS / waiter / QR): refresh it after commit. */
+  private menuChanged(s: Scope, restaurantId: string) {
+    this.cache.invalidateAfterCommit(s.db, CacheNs.menu(s.auth.tenantId!, restaurantId));
+  }
 
   // ---------------------------------------------------------------- add-ons
 
@@ -135,6 +145,7 @@ export class MenuExtrasService {
       );
       await this.writeOptions(s, g!.id, body.options);
       await this.writeLinks(s, rid, g!.id, body.menuItemIds);
+      this.menuChanged(s, rid);
       await this.ops.audit(s, meta, 'addon_group.created', 'addon_group', g!.id, {
         name: body.name,
       });
@@ -175,6 +186,7 @@ export class MenuExtrasService {
         await s.db.query('DELETE FROM menu_item_addon_groups WHERE group_id = $1', [id]);
         await this.writeLinks(s, g.restaurant_id, id, body.menuItemIds);
       }
+      this.menuChanged(s, g.restaurant_id);
       await this.ops.audit(s, meta, 'addon_group.updated', 'addon_group', id);
     });
   }
@@ -189,6 +201,7 @@ export class MenuExtrasService {
       this.ops.restaurant(s.access, 'menu:manage', g.restaurant_id);
       await s.db.query('DELETE FROM menu_item_addon_groups WHERE group_id = $1', [id]);
       await s.db.query('UPDATE addon_groups SET deleted_at = now() WHERE id = $1', [id]);
+      this.menuChanged(s, g.restaurant_id);
       await this.ops.audit(s, meta, 'addon_group.deleted', 'addon_group', id);
     });
   }

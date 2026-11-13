@@ -212,7 +212,10 @@ export function OrderPanel(p: OrderPanelProps) {
             <AnimatePresence initial={false}>
               {p.lines.map((line) => {
                 const { key, item, variant, qty } = line;
-                const label = variant ? `${item.name} (${variant.name})` : item.name;
+                const label = [
+                  variant ? `${item.name} (${variant.name})` : item.name,
+                  ...line.addons.map((a) => a.name),
+                ].join(' + ');
                 return (
                   <motion.li
                     key={key}

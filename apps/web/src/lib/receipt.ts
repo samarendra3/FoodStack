@@ -57,7 +57,8 @@ export function receiptHtml(r: ReceiptInput): string {
   for (const o of r.orders) {
     for (const i of o.items) {
       if (i.status !== 'active') continue;
-      const name = i.variantName ? `${i.name} (${i.variantName})` : i.name;
+      const base = i.variantName ? `${i.name} (${i.variantName})` : i.name;
+      const name = i.addons?.length ? `${base} + ${i.addons.map((a) => a.name).join(', ')}` : base;
       const key = `${name}|${i.unitPriceMinor}`;
       const l = lines.get(key) ?? { name, qty: 0, rate: i.unitPriceMinor, amount: 0 };
       l.qty += i.quantity;

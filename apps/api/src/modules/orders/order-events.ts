@@ -54,7 +54,7 @@ export interface ReadyPayload {
   tableLabel: string | null;
   billLabel: string | null;
   readyAt: string;
-  items: { id: string; name: string; qty: number; note: string | null }[];
+  items: { id: string; name: string; qty: number; note: string | null; addons: string[] }[];
 }
 
 interface EventRow {

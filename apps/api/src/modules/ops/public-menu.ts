@@ -17,6 +17,7 @@ import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { DbContext } from '../../core/db/db-context';
 import { Public, RequirePermission } from '../auth/decorators';
 import { notFound } from './ops-base';
+import { loadAddonGroups } from '../menu/addon-groups';
 
 const querySchema = z.strictObject({ branchId: z.uuid().optional() });
 
@@ -73,6 +74,10 @@ export class PublicMenuController {
           ORDER BY m.sort_order, lower(m.name)`,
         [restaurantId, q.branchId ?? null],
       );
+      const addonGroups = await loadAddonGroups(
+        db,
+        items.map((i) => i.id as string),
+      );
       return {
         restaurant: {
           name: r.name,
@@ -95,6 +100,11 @@ export class PublicMenuController {
                 diet: i.diet,
                 imageUrl: i.image_url,
                 isAvailable: i.is_available,
+                // Only what a guest can pick: available options of active groups.
+                addonGroups: (addonGroups.get(i.id as string) ?? []).map((g) => ({
+                  ...g,
+                  options: g.options.filter((o) => o.isAvailable),
+                })),
                 variants: (i.variants as { id: string; name: string; priceMinor: string }[]).map(
                   (v) => ({
                     ...v,
