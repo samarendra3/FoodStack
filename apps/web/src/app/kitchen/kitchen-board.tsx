@@ -19,6 +19,8 @@ import {
   NEXT_STATUS,
   type TicketOrderType,
   type TicketStatus,
+  type ItemStatus,
+  NEXT_ITEM,
 } from './kitchen-feed';
 
 /*
@@ -41,6 +43,20 @@ const TYPE_META: Record<TicketOrderType, { label: string; icon: typeof Bike }> =
   'dine-in': { label: 'Dine-in', icon: UtensilsCrossed },
   takeaway: { label: 'Takeaway', icon: ShoppingBag },
   delivery: { label: 'Delivery', icon: Bike },
+};
+
+const ITEM_LABEL: Record<ItemStatus, string> = {
+  pending: 'Start',
+  preparing: 'Cooking · tap when ready',
+  ready: 'Ready',
+};
+const ITEM_META: Record<ItemStatus, string> = {
+  pending:
+    'bg-white text-slate-600 ring-slate-300 hover:bg-slate-50 dark:bg-transparent dark:text-slate-300 dark:ring-white/20',
+  preparing:
+    'bg-amber-50 text-amber-800 ring-amber-300 hover:bg-amber-100 dark:bg-amber-500/15 dark:text-amber-200 dark:ring-amber-500/30',
+  ready:
+    'bg-emerald-50 text-emerald-800 ring-emerald-300 dark:bg-emerald-500/15 dark:text-emerald-200 dark:ring-emerald-500/30',
 };
 
 const STATUS_META: Record<TicketStatus, { label: string; dot: string }> = {
@@ -154,7 +170,13 @@ export function TicketBoard({ feed }: { feed: KitchenFeed }) {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           <AnimatePresence initial={false}>
             {visible.map((t) => (
-              <TicketCard key={t.id} ticket={t} now={now} onAdvance={feed.advance} />
+              <TicketCard
+                key={t.id}
+                ticket={t}
+                now={now}
+                onAdvance={feed.advance}
+                onAdvanceItem={feed.advanceItem}
+              />
             ))}
           </AnimatePresence>
         </div>
@@ -167,11 +189,25 @@ function TicketCard({
   ticket: t,
   now,
   onAdvance,
+  onAdvanceItem,
 }: {
   ticket: KitchenTicket;
   now: number;
   onAdvance?: KitchenFeed['advance'];
+  onAdvanceItem?: KitchenFeed['advanceItem'];
 }) {
+  const [itemBusy, setItemBusy] = useState<string | null>(null);
+  const tapItem = async (itemId: string, to: 'preparing' | 'ready' | null) => {
+    if (!onAdvanceItem || !to) return;
+    setItemBusy(itemId);
+    try {
+      await onAdvanceItem(t.id, itemId, to);
+    } catch (e) {
+      notify.error(e, 'Dish not updated');
+    } finally {
+      setItemBusy(null);
+    }
+  };
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const notify = useNotify();
@@ -271,7 +307,7 @@ function TicketCard({
       <ul className="flex-1 space-y-2 px-4 py-3">
         {t.items.map((i) => (
           <li key={i.id} className="text-sm">
-            <div className="flex gap-2">
+            <div className="flex items-start gap-2">
               <span className="w-7 shrink-0 font-semibold text-slate-900 tabular-nums dark:text-white">
                 {i.qty}×
               </span>
@@ -283,6 +319,25 @@ function TicketCard({
               >
                 {i.name}
               </span>
+              {!done && t.status !== 'ready' && onAdvanceItem ? (
+                <button
+                  type="button"
+                  disabled={!NEXT_ITEM[i.kitchenStatus] || itemBusy === i.id}
+                  onClick={() => void tapItem(i.id, NEXT_ITEM[i.kitchenStatus])}
+                  title={
+                    NEXT_ITEM[i.kitchenStatus]
+                      ? `Mark ${i.name} ${NEXT_ITEM[i.kitchenStatus]}`
+                      : 'Ready'
+                  }
+                  className={cn(
+                    'ml-auto shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset disabled:cursor-default',
+                    ITEM_META[i.kitchenStatus],
+                    itemBusy === i.id && 'opacity-50',
+                  )}
+                >
+                  {ITEM_LABEL[i.kitchenStatus]}
+                </button>
+              ) : null}
             </div>
             {i.note ? (
               <p className="mt-0.5 ml-9 text-xs text-amber-700 dark:text-amber-300">{i.note}</p>

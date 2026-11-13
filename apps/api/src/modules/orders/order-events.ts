@@ -9,6 +9,7 @@ import { buildQueueRedisOptions } from '../../shared/redis/redis.options';
 export type OrderEventType =
   | 'order.created'
   | 'order.status'
+  | 'order.item_status'
   | 'order.ready'
   | 'order.served'
   | 'order.cancelled'

@@ -18,7 +18,6 @@ import { CacheService } from '../../shared/cache/cache.service';
 import { type EventActor, OrderEventsService, type ReadyPayload } from './order-events';
 import {
   type CreateOrderInput,
-  KITCHEN_STATUSES,
   type KitchenStatus,
   type ListOrdersQuery,
   type ListPaymentsQuery,
@@ -68,10 +67,19 @@ export interface Actor {
   sessionId: string | null;
   audience: 'tenant' | 'system';
 }
+/** Allowed order-level kitchen moves. `accepted` is legacy (stored on old orders only). */
+const ORDER_MOVES: Partial<Record<KitchenStatus, KitchenStatus[]>> = {
+  new: ['preparing'],
+  accepted: ['preparing'],
+  preparing: ['ready'],
+  ready: ['served'],
+};
+
 /** Timeline shows only these facts per event type (the pickup card's item list is not repeated). */
 const TIMELINE_FIELDS: Record<string, string[]> = {
   'order.created': ['orderNumber', 'channel', 'tableLabel', 'itemCount', 'totalMinor'],
   'order.status': ['from', 'to'],
+  'order.item_status': ['name', 'from', 'to'],
   'order.ready': ['from', 'to'],
   'order.served': ['from', 'to'],
   'order.cancelled': ['reason'],
@@ -275,8 +283,8 @@ export class OrdersService {
           guest ? guest.billLabel : (input.tableLabel && input.billLabel) || null,
           sessionId,
           guest?.guestId ?? null,
-          // QR guest orders skip the kitchen's Accept step and start straight in Preparing.
-          input.channel === 'qr' ? 'preparing' : 'new',
+          // One workflow for every source: NEW → PREPARING → READY → SERVED.
+          'new',
           input.paymentPreference ?? null,
         ],
       );
@@ -548,6 +556,7 @@ export class OrdersService {
         [itemId, auth.userId, reason],
       );
       await this.reprice(db, auth, order, remaining);
+      await this.readyIfAllDone(db, auth, meta, order);
       await this.audit(db, actorOf(auth), meta, 'order.item_voided', orderId, { itemId, reason });
       await this.events.record(db, {
         tenantId: order.tenant_id,
@@ -757,6 +766,7 @@ export class OrdersService {
             qty: i.quantity,
             note: i.note,
             addons: i.addons,
+            kitchenStatus: i.kitchen_status,
           })),
       }));
     });
@@ -831,37 +841,147 @@ export class OrdersService {
       this.require(access, order.branch_id, anyOf, message);
       if (order.status === 'cancelled')
         throw conflict('ORDER_CANCELLED', 'This order was cancelled.');
-      const from = KITCHEN_STATUSES.indexOf(order.kitchen_status);
-      if (KITCHEN_STATUSES.indexOf(to) !== from + 1) {
+      if (!ORDER_MOVES[order.kitchen_status]?.includes(to)) {
         throw conflict('BAD_TRANSITION', `A ${order.kitchen_status} ticket cannot move to ${to}.`);
       }
+      await this.applyOrderStatus(db, auth, meta, order, to, true);
+      return { id, status: to };
+    });
+  }
+
+  /**
+   * Moves an order's kitchen status (caller has checked the move is allowed) and, with
+   * `cascade`, its lines: PREPARING starts every pending line, READY finishes every line.
+   * Records the audit entry and the outbox event in the caller's transaction.
+   */
+  private async applyOrderStatus(
+    db: Db,
+    auth: AuthContext,
+    meta: RequestMeta,
+    order: OrderRow,
+    to: KitchenStatus,
+    cascade: boolean,
+  ) {
+    const id = order.id;
+    await db.query(
+      `UPDATE orders SET kitchen_status = $2, kitchen_updated_at = now(), updated_by = $3,
+                         updated_at = now(), version = version + 1 WHERE id = $1`,
+      [id, to, auth.userId],
+    );
+    if (cascade && to === 'preparing') {
       await db.query(
-        `UPDATE orders SET kitchen_status = $2, kitchen_updated_at = now(), updated_by = $3,
-                           updated_at = now(), version = version + 1 WHERE id = $1`,
-        [id, to, auth.userId],
+        `UPDATE order_items SET kitchen_status = 'preparing'
+          WHERE order_id = $1 AND status = 'active' AND kitchen_status = 'pending'`,
+        [id],
       );
-      await this.audit(db, actorOf(auth), meta, 'order.kitchen_status', id, {
+    }
+    if (cascade && to === 'ready') {
+      await db.query(
+        `UPDATE order_items SET kitchen_status = 'ready', ready_at = now()
+          WHERE order_id = $1 AND status = 'active' AND kitchen_status <> 'ready'`,
+        [id],
+      );
+    }
+    await this.audit(db, actorOf(auth), meta, 'order.kitchen_status', id, {
+      from: order.kitchen_status,
+      to,
+    });
+    // Outbox, same transaction: screens hear about the change only once it has committed.
+    // ready / served carry the waiter pickup card; other steps are a plain status change.
+    const pickup = to === 'ready' || to === 'served';
+    const fresh = pickup ? await this.load(db, id) : null;
+    await this.events.record(db, {
+      tenantId: order.tenant_id,
+      branchId: order.branch_id,
+      orderId: id,
+      type: to === 'ready' ? 'order.ready' : to === 'served' ? 'order.served' : 'order.status',
+      payload: {
         from: order.kitchen_status,
         to,
-      });
-      // Outbox, same transaction: screens hear about the change only once it has committed.
-      // ready / served carry the waiter pickup card; other steps are a plain status change.
-      const pickup = to === 'ready' || to === 'served';
-      const fresh = pickup ? await this.load(db, id) : null;
+        ...(fresh ? this.readyPayload(fresh, await this.readyItems(db, [id])) : {}),
+      },
+      actor: eventActor(actorOf(auth)),
+    });
+  }
+
+  /**
+   * One dish on a ticket: pending → preparing → ready (pending → ready allowed for quick
+   * items). Starting any dish moves a NEW order to PREPARING; the order becomes READY (and the
+   * waiters are told) only when every active dish on it is ready.
+   */
+  setItemStatus(
+    auth: AuthContext,
+    orderId: string,
+    itemId: string,
+    to: 'preparing' | 'ready',
+    meta: RequestMeta,
+  ) {
+    return this.run(auth, async (db, access) => {
+      const order = await this.load(db, orderId, true);
+      this.require(access, order.branch_id, ['kds:access'], 'You cannot update kitchen tickets.');
+      if (order.status === 'cancelled')
+        throw conflict('ORDER_CANCELLED', 'This order was cancelled.');
+      if (order.kitchen_status === 'ready' || order.kitchen_status === 'served')
+        throw conflict('BAD_TRANSITION', 'This order is already ready.');
+      const item = await db.one<{
+        id: string;
+        name: string;
+        status: string;
+        kitchen_status: string;
+      }>(
+        `SELECT id, name, status, kitchen_status FROM order_items WHERE id = $1 AND order_id = $2`,
+        [itemId, orderId],
+      );
+      if (!item || item.status !== 'active') throw notFound('Item');
+      const allowed: Record<string, string[]> = {
+        pending: ['preparing', 'ready'],
+        preparing: ['ready'],
+      };
+      if (!allowed[item.kitchen_status]?.includes(to)) {
+        throw conflict('BAD_TRANSITION', `This dish is already ${item.kitchen_status}.`);
+      }
+      await db.query(
+        `UPDATE order_items SET kitchen_status = $2,
+                ready_at = CASE WHEN $2 = 'ready' THEN now() ELSE NULL END WHERE id = $1`,
+        [itemId, to],
+      );
       await this.events.record(db, {
         tenantId: order.tenant_id,
         branchId: order.branch_id,
-        orderId: id,
-        type: to === 'ready' ? 'order.ready' : to === 'served' ? 'order.served' : 'order.status',
-        payload: {
-          from: order.kitchen_status,
-          to,
-          ...(fresh ? this.readyPayload(fresh, await this.readyItems(db, [id])) : {}),
-        },
+        orderId,
+        type: 'order.item_status',
+        payload: { itemId, name: item.name, from: item.kitchen_status, to },
         actor: eventActor(actorOf(auth)),
       });
-      return { id, status: to };
+      let current = order;
+      if (order.kitchen_status === 'new' || order.kitchen_status === 'accepted') {
+        await this.applyOrderStatus(db, auth, meta, order, 'preparing', false);
+        current = await this.load(db, orderId);
+      }
+      await this.readyIfAllDone(db, auth, meta, current);
+      return this.ticketItems(db, orderId);
     });
+  }
+
+  /** PREPARING order whose active dishes are all ready → READY (waiters are notified). */
+  private async readyIfAllDone(db: Db, auth: AuthContext, meta: RequestMeta, order: OrderRow) {
+    if (order.kitchen_status !== 'preparing') return;
+    const left = await db.one<{ n: number }>(
+      `SELECT count(*)::int AS n FROM order_items
+        WHERE order_id = $1 AND status = 'active' AND kitchen_status <> 'ready'`,
+      [order.id],
+    );
+    if (left!.n === 0) await this.applyOrderStatus(db, auth, meta, order, 'ready', false);
+  }
+
+  private async ticketItems(db: Db, orderId: string) {
+    const o = await this.load(db, orderId);
+    const items = await this.readyItems(db, [orderId]);
+    return {
+      id: orderId,
+      status: o.kitchen_status,
+      items: items.map((i) => ({ id: i.id, kitchenStatus: i.kitchen_status })),
+    };
   }
 
   /** Add-on snapshot rows of the given orders, grouped by order line. */
@@ -890,8 +1010,9 @@ export class OrdersService {
       variant_name: string | null;
       quantity: number;
       note: string | null;
+      kitchen_status: 'pending' | 'preparing' | 'ready';
     }>(
-      `SELECT id, order_id, name, variant_name, quantity, note FROM order_items
+      `SELECT id, order_id, name, variant_name, quantity, note, kitchen_status FROM order_items
         WHERE order_id = ANY($1::uuid[]) AND status = 'active' ORDER BY created_at, id`,
       [orderIds],
     );

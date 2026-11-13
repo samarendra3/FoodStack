@@ -350,7 +350,11 @@ describe('Orders (integration)', () => {
     await call('cook', 'post', `/kitchen/tickets/${order.id}/status`)
       .send({ to: 'ready' })
       .expect(409);
-    for (const to of ['accepted', 'preparing', 'ready', 'served']) {
+    // The manual Accept step is retired: NEW → PREPARING → READY → SERVED.
+    await call('cook', 'post', `/kitchen/tickets/${order.id}/status`)
+      .send({ to: 'accepted' })
+      .expect(409);
+    for (const to of ['preparing', 'ready', 'served']) {
       await call('cook', 'post', `/kitchen/tickets/${order.id}/status`).send({ to }).expect(200);
     }
     expect(tickets.some((x: { status: string }) => x.status === 'cancelled')).toBe(false);
@@ -370,5 +374,107 @@ describe('Orders (integration)', () => {
     await call('bravoOwner', 'post', '/orders')
       .send({ branchId: bravoMain, channel: 'dine_in', lines: [{ menuItemId: chai, quantity: 1 }] })
       .expect(400);
+  });
+
+  // ---- Phase 4: item-level kitchen status, one workflow ----
+
+  describe('item-level kitchen status', () => {
+    const ticket = async (id: string) =>
+      (
+        (await call('cook', 'get', `/kitchen/tickets?branchId=${main}`).expect(200)).body.data as {
+          id: string;
+          status: string;
+          items: { id: string; name: string; kitchenStatus: string }[];
+        }[]
+      ).find((t) => t.id === id)!;
+    const itemTo = (orderId: string, itemId: string, to: string) =>
+      call('cook', 'post', `/kitchen/tickets/${orderId}/items/${itemId}/status`).send({ to });
+    const threeLines = async () =>
+      (
+        await place('cashier', {
+          tableLabel: 'K1',
+          lines: [
+            { menuItemId: tikka, variantId: half, quantity: 1 },
+            { menuItemId: chai, quantity: 1 },
+            { menuItemId: tikka, variantId: full, quantity: 1, note: 'extra spicy' },
+          ],
+        }).expect(201)
+      ).body.data as { id: string; items: { id: string; name: string }[] };
+
+    it('starts every order NEW with pending dishes; starting a dish starts the order', async () => {
+      const o = await threeLines();
+      let t = await ticket(o.id);
+      expect(t.status).toBe('new');
+      expect(t.items.map((i) => i.kitchenStatus)).toEqual(['pending', 'pending', 'pending']);
+
+      await itemTo(o.id, o.items[1]!.id, 'preparing').expect(200);
+      t = await ticket(o.id);
+      expect(t.status).toBe('preparing');
+      expect(t.items.map((i) => i.kitchenStatus)).toEqual(['pending', 'preparing', 'pending']);
+    });
+
+    it('marks the order READY only when every dish is ready', async () => {
+      const o = await threeLines();
+      const [a, b, c] = o.items;
+      await itemTo(o.id, a!.id, 'ready').expect(200); // pending → ready is allowed
+      await itemTo(o.id, b!.id, 'preparing').expect(200);
+      await itemTo(o.id, b!.id, 'ready').expect(200);
+      expect((await ticket(o.id)).status).toBe('preparing');
+      await itemTo(o.id, b!.id, 'ready').expect(409); // already ready
+      const last = (await itemTo(o.id, c!.id, 'ready').expect(200)).body.data;
+      expect(last.status).toBe('ready');
+      expect((await ticket(o.id)).items.every((i) => i.kitchenStatus === 'ready')).toBe(true);
+
+      const types = (
+        (await call('owner', 'get', `/orders/${o.id}/timeline`).expect(200)).body.data as {
+          type: string;
+        }[]
+      ).map((e) => e.type);
+      expect(types.filter((t) => t === 'order.item_status')).toHaveLength(4);
+      expect(types.filter((t) => t === 'order.ready')).toHaveLength(1);
+      // A ready order no longer takes dish updates.
+      await itemTo(o.id, a!.id, 'ready').expect(409);
+    });
+
+    it('order-level buttons still move every dish', async () => {
+      const o = await threeLines();
+      await call('cook', 'post', `/kitchen/tickets/${o.id}/status`)
+        .send({ to: 'preparing' })
+        .expect(200);
+      expect((await ticket(o.id)).items.map((i) => i.kitchenStatus)).toEqual([
+        'preparing',
+        'preparing',
+        'preparing',
+      ]);
+      await call('cook', 'post', `/kitchen/tickets/${o.id}/status`)
+        .send({ to: 'ready' })
+        .expect(200);
+      expect((await ticket(o.id)).items.every((i) => i.kitchenStatus === 'ready')).toBe(true);
+    });
+
+    it('voiding the last unfinished dish makes the order ready', async () => {
+      const o = await threeLines();
+      await itemTo(o.id, o.items[0]!.id, 'ready').expect(200);
+      await itemTo(o.id, o.items[1]!.id, 'ready').expect(200);
+      await call('manager', 'post', `/orders/${o.id}/items/${o.items[2]!.id}/void`)
+        .send({ reason: 'Out of stock' })
+        .expect(200);
+      expect((await ticket(o.id)).status).toBe('ready');
+    });
+
+    it('keeps dish updates to the branch kitchen', async () => {
+      const o = await threeLines();
+      await call('cashier', 'post', `/kitchen/tickets/${o.id}/items/${o.items[0]!.id}/status`)
+        .send({ to: 'ready' })
+        .expect(403);
+      const other = await call(
+        'bravoOwner',
+        'post',
+        `/kitchen/tickets/${o.id}/items/${o.items[0]!.id}/status`,
+      ).send({
+        to: 'ready',
+      });
+      expect([403, 404]).toContain(other.status);
+    });
   });
 });

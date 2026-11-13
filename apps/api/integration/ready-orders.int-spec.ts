@@ -233,7 +233,7 @@ describe('Ready-order events (integration)', () => {
         })
         .expect(201)
     ).body.data as { id: string; orderNumber: string | number };
-    for (const to of ['accepted', 'preparing']) {
+    for (const to of ['preparing']) {
       await call('cook', 'post', `/kitchen/tickets/${order.id}/status`).send({ to }).expect(200);
     }
     return order;
@@ -423,7 +423,7 @@ describe('Ready-order events (integration)', () => {
     const o = await waiterOrder('waiter1', 'T14');
     const k2 = await kitchen('cook2');
     await call('cook', 'post', `/kitchen/tickets/${o.id}/status`)
-      .send({ to: 'accepted' })
+      .send({ to: 'preparing' })
       .expect(200);
     await until(() => k2.events.some((e) => e.event === 'order.status' && e.data.orderId === o.id));
   });
@@ -461,7 +461,7 @@ describe('Ready-order events (integration)', () => {
       .send({ to: 'ready' })
       .expect(409);
     await call('cook', 'post', `/kitchen/tickets/${first.id}/status`)
-      .send({ to: 'accepted' })
+      .send({ to: 'preparing' })
       .expect(200);
     await sleep(200);
     rows = await eventsOf(first.id);
@@ -478,7 +478,7 @@ describe('Ready-order events (integration)', () => {
 
     const b = await waiterOrder('waiter2', 'T22');
     await call('cook', 'post', `/kitchen/tickets/${b.id}/status`)
-      .send({ to: 'accepted' })
+      .send({ to: 'preparing' })
       .expect(200);
     const c = await waiterOrder('waiter1', 'T23');
 
@@ -513,7 +513,7 @@ describe('Ready-order events (integration)', () => {
 
   it('shows a readable, branch-scoped timeline', async () => {
     const o = await waiterOrder('waiter1', 'T25');
-    for (const to of ['accepted', 'preparing', 'ready']) {
+    for (const to of ['preparing', 'ready']) {
       await call('cook', 'post', `/kitchen/tickets/${o.id}/status`).send({ to }).expect(200);
     }
     await call('waiter1', 'post', `/waiter/orders/${o.id}/served`).expect(200);
@@ -534,16 +534,15 @@ describe('Ready-order events (integration)', () => {
     expect(timeline.map((t) => t.type)).toEqual([
       'order.created',
       'order.status',
-      'order.status',
       'order.ready',
       'order.served',
       'payment.recorded',
     ]);
     expect(timeline[0]!.actor).toEqual({ kind: 'staff', name: 'waiter1' });
-    expect(timeline[3]!.actor.name).toBe('cook');
-    expect(timeline[3]!.details).toEqual({ from: 'preparing', to: 'ready' });
-    expect(timeline[5]!.details).toMatchObject({ method: 'cash', paidInFull: true });
-    expect(timeline[3]!.details).not.toHaveProperty('items');
+    expect(timeline[2]!.actor.name).toBe('cook');
+    expect(timeline[2]!.details).toEqual({ from: 'preparing', to: 'ready' });
+    expect(timeline[4]!.details).toMatchObject({ method: 'cash', paidInFull: true });
+    expect(timeline[2]!.details).not.toHaveProperty('items');
 
     // Another branch's waiter and another tenant cannot read it.
     await call('waiterSecond', 'get', `/orders/${o.id}/timeline`).expect(403);

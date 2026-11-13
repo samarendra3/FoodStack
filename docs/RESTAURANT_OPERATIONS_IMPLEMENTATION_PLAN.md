@@ -1,6 +1,6 @@
 # Restaurant Operations — Audit & Implementation Plan
 
-Status: **APPROVED. Phases 1–3 complete; phases 4–11 pending.**
+Status: **APPROVED. Phases 1–4 complete; phases 5–11 pending.**
 Scope: QR ordering, payments, kitchen, automatic waiter assignment, billing, invoices and receipt
 sharing, as one order lifecycle on the existing FoodStack architecture.
 
@@ -213,7 +213,8 @@ Approved order of work: 1 outbox and timeline · 2 signed QR links and QR improv
 | 1 | Durable outbox + order timeline | **Complete** (tests below) |
 | 2 | Signed QR links + QR ordering improvements | **Complete** (tests below) |
 | 3 | Add-ons + per-item instructions | **Complete** (tests below) |
-| 4–11 | — | Pending |
+| 4 | Item-level kitchen status + unified workflow | **Complete** (tests below) |
+| 5–11 | — | Pending |
 
 ### Phase 1 report — Durable transactional outbox and readable order timeline
 
@@ -317,3 +318,34 @@ Approved order of work: 1 outbox and timeline · 2 signed QR links and QR improv
 **Known limitations and notes**
 - Existing behaviour, unchanged: `PATCH /addon-groups/:id` without `menuItemIds` unlinks every dish (the field defaults to an empty list). The admin screen always sends the full list, so it is not hit in the app; worth tightening later.
 - Discounts that target categories or items apply to the whole unit price including add-ons. This is consistent everywhere, but is a pricing-policy choice.
+
+### Phase 4 report — Item-level kitchen management and one workflow
+
+**Delivered**
+- Migration `1798000034000-ItemKitchenStatus` (reversible):
+  - `order_items.kitchen_status` (`pending | preparing | ready`) and `ready_at`, with a check that ready ⇔ `ready_at`
+  - `order_items.station_id`, nullable, prepared for station routing in a later phase (no table or FK yet)
+  - Backfill from the order's status. Open `accepted` orders are moved to `preparing`.
+- **One workflow** for QR, waiter and POS: **NEW → PREPARING → READY → SERVED**. Every order now starts NEW (QR orders previously started in PREPARING). The Accept step is retired: `accepted` is refused as a target and kept only as a readable legacy value.
+- `POST /kitchen/tickets/:id/items/:itemId/status {to: preparing|ready}` (kds:access, branch-checked):
+  - pending → preparing → ready; pending → ready is allowed for quick items
+  - starting any dish moves a NEW order to PREPARING
+  - the order becomes **READY only when every active dish is ready**, which sends the waiter pickup event automatically
+  - finished orders refuse dish updates
+- Order-level buttons still work and cascade: PREPARING starts all pending dishes; READY finishes all dishes.
+- Voiding the last unfinished dish makes the order READY.
+- New event `order.item_status` (kitchen stream and timeline). Kitchen tickets return `kitchenStatus` per dish.
+- Web kitchen board: each dish has a status chip (**Start** → **Cooking · tap when ready** → **Ready**). The ticket's main button reads **Start preparing** instead of **Accept**. The timeline shows "Dish: started / ready".
+
+**Tests (evidence)**
+- New in `orders.int-spec.ts → item-level kitchen status`:
+  - new order is NEW with pending dishes; starting one dish starts the order
+  - order READY only after the last dish; four item events and one ready event in the timeline; duplicate and after-ready updates refused
+  - order-level buttons cascade
+  - voiding the last unfinished dish → READY
+  - cashier 403; other tenant 403/404
+- Existing tests updated for the retired Accept step (`accepted` now returns 409).
+- Full API integration **338/338**, API unit **177/177**, web unit **36/36**; `tsc` and ESLint clean on both apps.
+
+**Behaviour change to note**
+- QR orders now arrive as **NEW** like every other order. The kitchen bell still rings for them, and a cook starts them with one tap (or by starting any dish).

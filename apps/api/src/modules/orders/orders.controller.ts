@@ -25,6 +25,8 @@ import {
   kitchenQuerySchema,
   type KitchenStatusInput,
   kitchenStatusSchema,
+  type ItemStatusInput,
+  itemStatusSchema,
   type ListOrdersQuery,
   type ListPaymentsQuery,
   listOrdersSchema,
@@ -167,6 +169,20 @@ export class OrdersController {
     return this.orders.kitchenTickets(auth, query.branchId);
   }
 
+  @Post('kitchen/tickets/:id/items/:itemId/status')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('kds:access')
+  @ApiOperation({ summary: 'Move one dish on a ticket: pending → preparing → ready' })
+  itemStatus(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('itemId', ParseUUIDPipe) itemId: string,
+    @Body(new ZodValidationPipe(itemStatusSchema)) body: ItemStatusInput,
+    @Req() req: Request,
+  ) {
+    return this.orders.setItemStatus(auth, id, itemId, body.to, requestMeta(req));
+  }
+
   @Post('kitchen/tickets/:id/status')
   @HttpCode(HttpStatus.OK)
   @RequirePermission('kds:access')
@@ -229,6 +245,7 @@ export class OrdersController {
     this.pipeEvents(req, res, tenantId, query.branchId, [
       'order.created',
       'order.status',
+      'order.item_status',
       'order.ready',
       'order.served',
       'order.cancelled',

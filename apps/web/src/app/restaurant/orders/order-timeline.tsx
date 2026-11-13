@@ -35,6 +35,8 @@ function describe(e: TimelineEntry, fmt: (m: number) => string): string {
     case 'order.ready':
     case 'order.served':
       return `Kitchen: ${KITCHEN[String(d.from)] ?? String(d.from)} → ${KITCHEN[String(d.to)] ?? String(d.to)}`;
+    case 'order.item_status':
+      return `${String(d.name ?? 'Dish')}: ${String(d.to) === 'ready' ? 'ready' : 'started'}`;
     case 'order.cancelled':
       return `Order cancelled: ${String(d.reason ?? '')}`;
     case 'order.item_voided':

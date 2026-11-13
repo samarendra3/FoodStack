@@ -88,3 +88,8 @@ export type KitchenQuery = z.infer<typeof kitchenQuerySchema>;
 
 export const kitchenStatusSchema = z.strictObject({ to: z.enum(KITCHEN_STATUSES) });
 export type KitchenStatusInput = z.infer<typeof kitchenStatusSchema>;
+
+export const ITEM_KITCHEN_STATUSES = ['pending', 'preparing', 'ready'] as const;
+export type ItemKitchenStatus = (typeof ITEM_KITCHEN_STATUSES)[number];
+export const itemStatusSchema = z.strictObject({ to: z.enum(['preparing', 'ready']) });
+export type ItemStatusInput = z.infer<typeof itemStatusSchema>;

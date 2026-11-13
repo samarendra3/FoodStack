@@ -32,12 +32,28 @@ export interface KitchenTicket {
   status: TicketStatus;
   priority: TicketPriority;
   note?: string;
-  items: { id: string; name: string; qty: number; note?: string }[];
+  items: {
+    id: string;
+    name: string;
+    qty: number;
+    note?: string;
+    /** Per-dish progress; the ticket is READY when every dish is ready. */
+    kitchenStatus: ItemStatus;
+  }[];
 }
+
+export type ItemStatus = 'pending' | 'preparing' | 'ready';
+/** Next step when a cook taps a dish (pending → preparing → ready). */
+export const NEXT_ITEM: Record<ItemStatus, 'preparing' | 'ready' | null> = {
+  pending: 'preparing',
+  preparing: 'ready',
+  ready: null,
+};
 
 /** Valid forward transitions and the label of the button that performs each. */
 export const NEXT_STATUS: Record<TicketStatus, { to: TicketStatus; label: string } | null> = {
-  new: { to: 'accepted', label: 'Accept' },
+  // One workflow for every source; 'accepted' only appears on orders from before.
+  new: { to: 'preparing', label: 'Start preparing' },
   accepted: { to: 'preparing', label: 'Start preparing' },
   preparing: { to: 'ready', label: 'Mark ready' },
   ready: { to: 'completed', label: 'Complete' },
@@ -63,6 +79,8 @@ export interface KitchenFeed {
   error: string | null;
   /** Undefined until the status-transition API exists. */
   advance?: (ticketId: string, to: TicketStatus) => Promise<void>;
+  /** Moves one dish (pending → preparing → ready). */
+  advanceItem?: (ticketId: string, itemId: string, to: 'preparing' | 'ready') => Promise<void>;
 }
 
 interface ServerTicket {
@@ -76,7 +94,14 @@ interface ServerTicket {
   updatedAt: string;
   status: 'new' | 'accepted' | 'preparing' | 'ready' | 'served';
   note: string | null;
-  items: { id: string; name: string; qty: number; note: string | null; addons?: string[] }[];
+  items: {
+    id: string;
+    name: string;
+    qty: number;
+    note: string | null;
+    addons?: string[];
+    kitchenStatus?: ItemStatus;
+  }[];
 }
 
 const TYPE: Record<ServerTicket['orderType'], TicketOrderType> = {
@@ -118,6 +143,7 @@ export function useKitchenFeed(branchId: string): KitchenFeed {
             name: i.addons?.length ? `${i.name} + ${i.addons.join(', ')}` : i.name,
             qty: i.qty,
             note: i.note ?? undefined,
+            kitchenStatus: i.kitchenStatus ?? 'pending',
           })),
         })),
       );
@@ -153,6 +179,13 @@ export function useKitchenFeed(branchId: string): KitchenFeed {
       await client.request(`/kitchen/tickets/${ticketId}/status`, {
         method: 'POST',
         body: { to: to === 'completed' ? 'served' : to },
+      });
+      await qc.invalidateQueries({ queryKey: key });
+    },
+    advanceItem: async (ticketId, itemId, to) => {
+      await client.request(`/kitchen/tickets/${ticketId}/items/${itemId}/status`, {
+        method: 'POST',
+        body: { to },
       });
       await qc.invalidateQueries({ queryKey: key });
     },
