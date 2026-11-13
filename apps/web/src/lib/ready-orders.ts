@@ -4,7 +4,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth, useProfile } from '@/components/auth/auth-provider';
 import { type LiveState, useLiveEvents } from '@/lib/live-events';
-import { audio } from '@/lib/sound';
 
 /** An order the kitchen has marked ready, waiting for a waiter to take it to the table. */
 export interface ReadyOrder {
@@ -37,55 +36,6 @@ function saveKeys(storageKey: string, keys: Set<string>) {
     localStorage.setItem(storageKey, JSON.stringify([...keys].slice(-MAX_KEYS)));
   } catch {
     /* storage unavailable: dedupe still works for this tab */
-  }
-}
-
-/**
- * A classic "ring-ring … ring-ring" telephone ringtone, synthesised (no asset to load or block):
- * two warbling tones (a fast on/off trill gives the bell-hammer "trrring"), played as two
- * double-rings about 3 seconds in total.
- */
-export function playBell() {
-  const ctx = audio();
-  if (!ctx) return;
-  const RING = 0.4; // one "ring"
-  const pattern = [0, 0.6, 1.6, 2.2]; // ring ring … ring ring
-  const start = ctx.currentTime + 0.02;
-
-  const out = ctx.createGain();
-  out.gain.value = 0.18;
-  out.connect(ctx.destination);
-
-  for (const offset of pattern) {
-    const t = start + offset;
-    const env = ctx.createGain();
-    env.gain.setValueAtTime(0.0001, t);
-    env.gain.exponentialRampToValueAtTime(1, t + 0.02);
-    env.gain.setValueAtTime(1, t + RING - 0.04);
-    env.gain.exponentialRampToValueAtTime(0.0001, t + RING);
-    env.connect(out);
-
-    // Trill: square-wave LFO at 20 Hz gates the tones on and off, like a ringer's hammer.
-    const trill = ctx.createGain();
-    trill.gain.value = 0.5;
-    const lfo = ctx.createOscillator();
-    lfo.type = 'square';
-    lfo.frequency.value = 20;
-    const depth = ctx.createGain();
-    depth.gain.value = 0.5;
-    lfo.connect(depth).connect(trill.gain);
-    trill.connect(env);
-
-    for (const freq of [1046, 1318]) {
-      const osc = ctx.createOscillator();
-      osc.type = 'triangle';
-      osc.frequency.value = freq;
-      osc.connect(trill);
-      osc.start(t);
-      osc.stop(t + RING + 0.05);
-    }
-    lfo.start(t);
-    lfo.stop(t + RING + 0.05);
   }
 }
 

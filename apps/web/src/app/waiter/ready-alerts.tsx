@@ -17,11 +17,12 @@ import {
 import { AnimatePresence, motion } from 'motion/react';
 import { useCallback, useEffect, useState } from 'react';
 import { authErrorMessage } from '@/lib/auth/errors';
-import { playBell, type ReadyOrder, useReadyOrders } from '@/lib/ready-orders';
-import { audioReady, unlockAudio } from '@/lib/sound';
+import { type ReadyOrder, useReadyOrders } from '@/lib/ready-orders';
+import { audioReady, playReadyChime, unlockAudio } from '@/lib/sound';
+import { VolumeSlider } from '@/components/volume-slider';
 
 const MUTE_KEY = 'foodstack.waiter.bell-muted';
-/** The ringtone lasts ~2.6 s; repeat with a short pause, like an incoming call. */
+/** The ready chime lasts ~1.6 s; repeat it until the waiter acknowledges. */
 const RING_EVERY_MS = 4_000;
 
 function minutesAgo(iso: string) {
@@ -89,8 +90,8 @@ export function ReadyAlerts({
   const ringing = pending > 0 && !muted && soundOn;
   useEffect(() => {
     if (!ringing) return;
-    playBell();
-    const timer = setInterval(playBell, RING_EVERY_MS);
+    playReadyChime();
+    const timer = setInterval(playReadyChime, RING_EVERY_MS);
     return () => clearInterval(timer);
   }, [ringing]);
 
@@ -189,7 +190,7 @@ export function ReadyAlerts({
             unlockAudio();
             setTimeout(() => {
               setSoundOn(audioReady());
-              playBell();
+              playReadyChime();
             }, 50);
           }}
           className="fixed bottom-4 left-1/2 z-40 inline-flex -translate-x-1/2 items-center gap-2 rounded-full bg-slate-900 px-4 py-2.5 text-sm font-medium text-white shadow-xl dark:bg-white dark:text-slate-900"
@@ -219,6 +220,7 @@ export function ReadyAlerts({
               <header className="flex items-center gap-2 border-b border-slate-200 px-4 py-3 dark:border-white/10">
                 <BellRing className="size-5 text-amber-500" />
                 <h2 className="flex-1 text-base font-semibold">Ready for pickup ({total})</h2>
+                <VolumeSlider className="hidden w-24 sm:flex" onChange={() => playReadyChime()} />
                 <button
                   type="button"
                   onClick={toggleMute}

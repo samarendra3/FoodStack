@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth, useProfile } from '@/components/auth/auth-provider';
 import { authErrorMessage } from '@/lib/auth/errors';
 import { useLiveEvents } from '@/lib/live-events';
-import { audio } from '@/lib/sound';
+import { playNewOrderChime } from '@/lib/sound';
 
 /*
  * Kitchen ticket feed from GET /kitchen/tickets (open orders plus those served in the last
@@ -212,20 +212,7 @@ export function useNewTicketChime(
   return { muted, setMuted };
 }
 
-/** Kitchen "ding-dong" through the shared, user-unlocked audio context (see lib/sound). */
+/** NEW ORDER chime (rising "ding-ding-ding"), through the shared unlocked audio (lib/sound). */
 export function chime() {
-  const ctx = audio();
-  if (!ctx) return; // browser still blocks audio: the screen shows "tap to enable sound"
-  [880, 1320, 880, 1320].forEach((freq, i) => {
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.frequency.value = freq;
-    const t = ctx.currentTime + i * 0.18 + (i >= 2 ? 0.35 : 0);
-    gain.gain.setValueAtTime(0.0001, t);
-    gain.gain.exponentialRampToValueAtTime(0.3, t + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
-    osc.connect(gain).connect(ctx.destination);
-    osc.start(t);
-    osc.stop(t + 0.32);
-  });
+  playNewOrderChime();
 }

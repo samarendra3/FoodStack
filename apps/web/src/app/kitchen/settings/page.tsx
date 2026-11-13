@@ -6,6 +6,7 @@ import { useProfile } from '@/components/auth/auth-provider';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { CARD, KitchenFrame } from '../kitchen-frame';
 import { unlockAudio } from '@/lib/sound';
+import { VolumeSlider } from '@/components/volume-slider';
 import { chime } from '../kitchen-feed';
 import { CONNECTION } from '../status';
 
@@ -37,7 +38,11 @@ function Settings(p: {
   return (
     <div className="mx-auto max-w-[110rem] space-y-4 p-4 sm:p-6">
       <section className={cn(CARD, 'max-w-3xl divide-y divide-slate-200 dark:divide-white/10')}>
-        <Row title="New-order sound" hint="Plays a chime when a new order arrives.">
+        <Row
+          title="New-order sound"
+          hint="A rising three-note chime when a new order arrives (waiter, POS or QR)."
+        >
+          <VolumeSlider className="w-32" onChange={() => chime()} />
           <button
             type="button"
             onClick={() => {
