@@ -10,9 +10,10 @@ import {
   Post,
   Query,
   Req,
+  Res,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import { requestMeta } from '../../common/http/request-meta';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import type { AuthContext } from '../auth/auth.types';
@@ -35,7 +36,11 @@ import {
   reasonSchema,
   refundSchema,
 } from './orders.schemas';
+import { OrderEventsService } from './order-events';
 import { OrdersService } from './orders.service';
+
+const HEARTBEAT_MS = 15_000;
+const STREAM_TTL_MS = 10 * 60_000;
 
 const idempotencyKey = (v: string | undefined) => (v && /^[A-Za-z0-9_-]{8,80}$/.test(v) ? v : null);
 
@@ -46,7 +51,10 @@ const idempotencyKey = (v: string | undefined) => (v && /^[A-Za-z0-9_-]{8,80}$/.
 @ApiTags('Orders')
 @Controller()
 export class OrdersController {
-  constructor(private readonly orders: OrdersService) {}
+  constructor(
+    private readonly orders: OrdersService,
+    private readonly events: OrderEventsService,
+  ) {}
 
   @Post('orders')
   @RequirePermission('menu:read')
@@ -163,5 +171,69 @@ export class OrdersController {
     @Req() req: Request,
   ) {
     return this.orders.setKitchenStatus(auth, id, body.to, requestMeta(req));
+  }
+
+  // ---- waiter pickup (kitchen → waiter "order ready") ----
+
+  @Get('waiter/ready-orders')
+  @RequirePermission('waiter:access')
+  @ApiOperation({ summary: 'Orders ready for pickup in a branch (backlog after reconnect)' })
+  readyOrders(
+    @CurrentAuth() auth: AuthContext,
+    @Query(new ZodValidationPipe(kitchenQuerySchema)) query: KitchenQuery,
+  ) {
+    return this.orders.readyOrders(auth, query.branchId);
+  }
+
+  /**
+   * Server-Sent Events: `order.ready` / `order.served` for one branch. Authenticated like any
+   * request (Bearer token), so clients read it with fetch streaming, not EventSource. The stream
+   * ends after STREAM_TTL_MS so a revoked session or expired token stops receiving within minutes;
+   * the client reconnects (with a fresh token) and re-fetches the backlog.
+   */
+  @Get('waiter/ready-orders/stream')
+  @RequirePermission('waiter:access')
+  @ApiOperation({ summary: 'Live ready-order events for a branch (text/event-stream)' })
+  async readyStream(
+    @CurrentAuth() auth: AuthContext,
+    @Query(new ZodValidationPipe(kitchenQuerySchema)) query: KitchenQuery,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    const tenantId = await this.orders.authorizeWaiterFeed(auth, query.branchId);
+    res.status(200).set({
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no', // nginx: don't buffer the stream
+    });
+    res.flushHeaders();
+    res.write('retry: 3000\n\n');
+    const send = (event: string, data: unknown) =>
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    send('hello', { branchId: query.branchId });
+    const unsubscribe = this.events.subscribe(tenantId, query.branchId, (e) => {
+      const { tenantId: _t, ...payload } = e;
+      send(e.type, payload);
+    });
+    const heartbeat = setInterval(() => res.write(': ping\n\n'), HEARTBEAT_MS);
+    const ttl = setTimeout(() => res.end(), STREAM_TTL_MS);
+    req.on('close', () => {
+      clearInterval(heartbeat);
+      clearTimeout(ttl);
+      unsubscribe();
+    });
+  }
+
+  @Post('waiter/orders/:id/served')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('waiter:access')
+  @ApiOperation({ summary: 'Mark a ready order as served' })
+  served(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: Request,
+  ) {
+    return this.orders.markServed(auth, id, requestMeta(req));
   }
 }

@@ -167,7 +167,10 @@ export function useNewTicketChime(tickets: KitchenTicket[]) {
   }, []);
 
   useEffect(() => {
-    const ids = tickets.filter((t) => t.status === 'new').map((t) => t.id);
+    // QR orders arrive already in Preparing, so an unseen Preparing ticket is a new order too.
+    const ids = tickets
+      .filter((t) => t.status === 'new' || t.status === 'preparing')
+      .map((t) => t.id);
     if (seen.current === null) {
       seen.current = new Set(ids); // first load: don't chime for tickets already waiting
       return;

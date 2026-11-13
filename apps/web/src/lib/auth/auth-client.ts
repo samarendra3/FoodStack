@@ -18,10 +18,12 @@ export class AuthClient {
   private refreshTimer: ReturnType<typeof setTimeout> | undefined;
   private inFlight: Promise<AuthSession | null> | null = null;
   private readonly api;
+  private readonly baseUrl: string;
 
   private readonly listeners = new Set<(profile: SessionProfile | null) => void>();
 
   constructor(baseUrl: string) {
+    this.baseUrl = baseUrl.replace(/\/+$/, '');
     this.api = createApiClient({ baseUrl, getAccessToken: () => this.accessToken });
   }
 
@@ -153,6 +155,26 @@ export class AuthClient {
       }
       throw error;
     }
+  }
+
+  /**
+   * Opens an authorized streaming GET (Server-Sent Events). EventSource cannot send the Bearer
+   * header, so this uses fetch and hands back the raw Response; refreshes once on 401.
+   */
+  async stream(path: string, signal: AbortSignal): Promise<Response> {
+    if (!this.accessToken) await this.refresh();
+    const open = () =>
+      fetch(`${this.baseUrl}${path}`, {
+        headers: {
+          Accept: 'text/event-stream',
+          ...(this.accessToken ? { Authorization: `Bearer ${this.accessToken}` } : {}),
+        },
+        cache: 'no-store',
+        signal,
+      });
+    let res = await open();
+    if (res.status === 401 && (await this.refresh())) res = await open();
+    return res;
   }
 
   private accept<T extends AuthSession>(session: T): T {

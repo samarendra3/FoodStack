@@ -1,0 +1,300 @@
+import { randomBytes } from 'node:crypto';
+import type { AddressInfo } from 'node:net';
+import type { NestExpressApplication } from '@nestjs/platform-express';
+import { Test } from '@nestjs/testing';
+import request from 'supertest';
+import type { DataSource } from 'typeorm';
+import { AppModule } from '../src/app.module';
+import { configureApp } from '../src/app.setup';
+import { PasswordHasher } from '../src/core/security/password-hasher';
+import { connect } from './helpers';
+
+/**
+ * Kitchen → waiter "order ready" events: SSE delivery to every waiter of the branch, never to
+ * other branches or tenants, backlog recovery after a reconnect, and waiter-side "served".
+ */
+
+const PASSWORD = 'Correct-Horse-42';
+const API = '/api/v1';
+const suffix = () => randomBytes(4).toString('hex');
+const freshIp = () => `10.${[1, 2, 3].map(() => Math.floor(Math.random() * 250) + 1).join('.')}`;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+interface Sse {
+  status: number;
+  events: { event: string; data: Record<string, unknown> }[];
+  close: () => void;
+}
+
+describe('Ready-order events (integration)', () => {
+  let app: NestExpressApplication;
+  let base: string;
+  let migrator: DataSource;
+  const tenants: string[] = [];
+  const emails: Record<string, string> = {};
+  const tokens: Record<string, string> = {};
+  const streams: Sse[] = [];
+  let main: string;
+  let second: string;
+  let bravoMain: string;
+  let chai: string;
+
+  const call = (who: string, method: 'get' | 'post', url: string) =>
+    request(app.getHttpServer())
+      [method](`${API}${url}`)
+      .set('X-Forwarded-For', freshIp())
+      .set('Authorization', `Bearer ${tokens[who]}`);
+
+  /** Opens the SSE stream like the web app does (fetch + Bearer) and collects its events. */
+  async function listen(who: string | null, branchId: string): Promise<Sse> {
+    const ctrl = new AbortController();
+    const res = await fetch(`${base}${API}/waiter/ready-orders/stream?branchId=${branchId}`, {
+      headers: {
+        Accept: 'text/event-stream',
+        'X-Forwarded-For': freshIp(),
+        ...(who ? { Authorization: `Bearer ${tokens[who]}` } : {}),
+      },
+      signal: ctrl.signal,
+    });
+    const sse: Sse = { status: res.status, events: [], close: () => ctrl.abort() };
+    streams.push(sse);
+    if (res.ok && res.body) {
+      void (async () => {
+        const reader = res.body!.pipeThrough(new TextDecoderStream()).getReader();
+        let buf = '';
+        try {
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (done) return;
+            buf += value;
+            let cut: number;
+            while ((cut = buf.indexOf('\n\n')) >= 0) {
+              const block = buf.slice(0, cut);
+              buf = buf.slice(cut + 2);
+              const event = /^event: (.*)$/m.exec(block)?.[1];
+              const data = /^data: (.*)$/m.exec(block)?.[1];
+              if (event && data) sse.events.push({ event, data: JSON.parse(data) });
+            }
+          }
+        } catch {
+          /* aborted */
+        }
+      })();
+      await until(() => sse.events.some((e) => e.event === 'hello'));
+    }
+    return sse;
+  }
+
+  async function until(check: () => boolean, ms = 3000) {
+    const end = Date.now() + ms;
+    while (!check()) {
+      if (Date.now() > end) throw new Error('timed out waiting for event');
+      await sleep(20);
+    }
+  }
+
+  async function tenant(label: string) {
+    const [t] = await migrator.query(
+      `INSERT INTO tenants (slug, name) VALUES ($1, $2) RETURNING id`,
+      [`${label}-${suffix()}`, label],
+    );
+    tenants.push(t.id);
+    const [r] = await migrator.query(
+      `INSERT INTO restaurants (tenant_id, name, slug, currency_code, country_code, timezone)
+       VALUES ($1, $2, $3, 'INR', 'IN', 'Asia/Kolkata') RETURNING id`,
+      [t.id, label, `${label}-${suffix()}`],
+    );
+    const branch = async (code: string) =>
+      (
+        await migrator.query(
+          `INSERT INTO branches (tenant_id, restaurant_id, code, name, timezone, is_default)
+           VALUES ($1, $2, $3, $4, 'Asia/Kolkata', $5) RETURNING id`,
+          [t.id, r.id, code, `${code} branch`, code === 'MAIN'],
+        )
+      )[0].id as string;
+    return { id: t.id as string, main: await branch('MAIN'), second: await branch('SECOND') };
+  }
+
+  async function member(
+    key: string,
+    tenantId: string,
+    role: string,
+    hash: string,
+    branchId?: string,
+  ) {
+    emails[key] = `${key}-${suffix()}@example.test`;
+    const [u] = await migrator.query(
+      `INSERT INTO users (email, full_name, password_hash, email_verified_at)
+       VALUES ($1, $2, $3, now()) RETURNING id`,
+      [emails[key], key, hash],
+    );
+    const [m] = await migrator.query(
+      `INSERT INTO tenant_memberships (tenant_id, user_id, status, joined_at)
+       VALUES ($1, $2, 'active', now()) RETURNING id`,
+      [tenantId, u.id],
+    );
+    await migrator.query(
+      `INSERT INTO user_role_assignments (tenant_id, membership_id, role_id, scope_type, scope_id)
+       SELECT $1, $2, id, $4, $5 FROM roles WHERE tenant_id IS NULL AND code = $3`,
+      [tenantId, m.id, role, branchId ? 'branch' : 'tenant', branchId ?? null],
+    );
+  }
+
+  beforeAll(async () => {
+    migrator = await connect('migration');
+    await migrator.runMigrations({ transaction: 'each' });
+    const hash = await new PasswordHasher().hash(PASSWORD);
+    const alpha = await tenant('rdyalpha');
+    const bravo = await tenant('rdybravo');
+    main = alpha.main;
+    second = alpha.second;
+    bravoMain = bravo.main;
+    await member('owner', alpha.id, 'owner', hash);
+    await member('cook', alpha.id, 'kitchen_staff', hash, alpha.main);
+    await member('waiter1', alpha.id, 'waiter', hash, alpha.main);
+    await member('waiter2', alpha.id, 'waiter', hash, alpha.main);
+    await member('waiterSecond', alpha.id, 'waiter', hash, alpha.second);
+    await member('cashier', alpha.id, 'cashier', hash, alpha.main);
+    await member('bravoWaiter', bravo.id, 'waiter', hash, bravo.main);
+
+    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    app = moduleRef.createNestApplication<NestExpressApplication>({ logger: false });
+    configureApp(app);
+    await app.listen(0, '127.0.0.1');
+    base = `http://127.0.0.1:${(app.getHttpServer().address() as AddressInfo).port}`;
+    for (const who of Object.keys(emails)) {
+      const res = await request(app.getHttpServer())
+        .post(`${API}/auth/login`)
+        .set('X-Forwarded-For', freshIp())
+        .send({ email: emails[who], password: PASSWORD })
+        .expect(200);
+      tokens[who] = res.body.data.accessToken as string;
+    }
+    await call('owner', 'post', '/menu/import')
+      .send({ rows: [{ category: 'Drinks', name: 'Chai', priceMinor: 5000, diet: 'veg' }] })
+      .expect(201);
+    chai = (await call('owner', 'get', '/menu').expect(200)).body.data.items[0].id;
+  });
+
+  afterAll(async () => {
+    streams.forEach((s) => s.close());
+    await app?.close();
+    if (migrator?.isInitialized) {
+      for (const table of [
+        'order_discounts',
+        'order_items',
+        'orders',
+        'branch_order_counters',
+        'menu_item_variants',
+        'menu_items',
+        'menu_categories',
+        'user_role_assignments',
+      ]) {
+        await migrator.query(`DELETE FROM ${table} WHERE tenant_id = ANY($1::uuid[])`, [tenants]);
+      }
+      await migrator.destroy();
+    }
+  });
+
+  async function placeAndCookToPreparing(table: string) {
+    const order = (
+      await call('owner', 'post', '/orders')
+        .send({
+          branchId: main,
+          channel: 'dine_in',
+          tableLabel: table,
+          lines: [{ menuItemId: chai, quantity: 2, note: 'less sugar' }],
+        })
+        .expect(201)
+    ).body.data as { id: string; orderNumber: string | number };
+    for (const to of ['accepted', 'preparing']) {
+      await call('cook', 'post', `/kitchen/tickets/${order.id}/status`).send({ to }).expect(200);
+    }
+    return order;
+  }
+
+  it('authorizes the stream per branch and tenant', async () => {
+    expect((await listen(null, main)).status).toBe(401);
+    expect((await listen('cashier', main)).status).toBe(403); // no waiter:access
+    expect((await listen('waiterSecond', main)).status).toBe(403); // other branch
+    expect((await listen('bravoWaiter', main)).status).toBe(403); // other tenant
+    await call('cashier', 'get', `/waiter/ready-orders?branchId=${main}`).expect(403);
+  });
+
+  let ready: { id: string };
+
+  it('pushes order.ready to every waiter of the branch, and to no one else', async () => {
+    const w1 = await listen('waiter1', main);
+    const w2 = await listen('waiter2', main);
+    const other = await listen('waiterSecond', second);
+    const otherTenant = await listen('bravoWaiter', bravoMain);
+
+    ready = await placeAndCookToPreparing('T7');
+    // Preparing is not "ready": nothing is sent yet.
+    await sleep(300);
+    expect(w1.events.filter((e) => e.event !== 'hello')).toHaveLength(0);
+
+    const t0 = Date.now();
+    await call('cook', 'post', `/kitchen/tickets/${ready.id}/status`)
+      .send({ to: 'ready' })
+      .expect(200);
+    const isReady = (s: Sse) => s.events.some((e) => e.event === 'order.ready');
+    await until(() => isReady(w1) && isReady(w2));
+    const latency = Date.now() - t0;
+
+    const e = w1.events.find((x) => x.event === 'order.ready')!.data;
+    expect(e).toMatchObject({
+      orderId: ready.id,
+      branchId: main,
+      tableLabel: 'T7',
+      items: [expect.objectContaining({ name: 'Chai', qty: 2, note: 'less sugar' })],
+    });
+    expect(typeof e.orderNumber).toBe('string');
+    expect(e).not.toHaveProperty('tenantId');
+    expect(w2.events.filter((x) => x.event === 'order.ready')).toHaveLength(1); // exactly once
+
+    await sleep(400);
+    expect(other.events.filter((x) => x.event !== 'hello')).toHaveLength(0);
+    expect(otherTenant.events.filter((x) => x.event !== 'hello')).toHaveLength(0);
+    expect(latency).toBeLessThan(1000); // "instant": well under a second end to end
+  });
+
+  it('recovers ready orders missed while disconnected', async () => {
+    streams.forEach((s) => s.close()); // everyone goes offline
+    const missed = await placeAndCookToPreparing('T9');
+    await call('cook', 'post', `/kitchen/tickets/${missed.id}/status`)
+      .send({ to: 'ready' })
+      .expect(200);
+
+    const back = await listen('waiter1', main); // reconnect…
+    expect(back.events[0]!.event).toBe('hello');
+    const backlog = (
+      await call('waiter1', 'get', `/waiter/ready-orders?branchId=${main}`).expect(200)
+    ).body.data as { orderId: string; tableLabel: string }[];
+    expect(backlog.map((o) => o.orderId)).toEqual(expect.arrayContaining([ready.id, missed.id]));
+    // Other branch's backlog stays empty.
+    const otherBacklog = (
+      await call('waiterSecond', 'get', `/waiter/ready-orders?branchId=${second}`).expect(200)
+    ).body.data;
+    expect(otherBacklog).toHaveLength(0);
+  });
+
+  it('lets a waiter mark a ready order served and tells the other waiters', async () => {
+    const w2 = await listen('waiter2', main);
+    await call('waiterSecond', 'post', `/waiter/orders/${ready.id}/served`).expect(403);
+    await call('waiter1', 'post', `/waiter/orders/${ready.id}/served`).expect(200);
+    await until(() =>
+      w2.events.some((e) => e.event === 'order.served' && e.data.orderId === ready.id),
+    );
+    await call('waiter1', 'post', `/waiter/orders/${ready.id}/served`).expect(409); // already served
+    const backlog = (
+      await call('waiter1', 'get', `/waiter/ready-orders?branchId=${main}`).expect(200)
+    ).body.data as { orderId: string }[];
+    expect(backlog.map((o) => o.orderId)).not.toContain(ready.id);
+  });
+
+  it('cannot serve an order that is not ready yet', async () => {
+    const o = await placeAndCookToPreparing('T3');
+    await call('waiter1', 'post', `/waiter/orders/${o.id}/served`).expect(409);
+  });
+});
