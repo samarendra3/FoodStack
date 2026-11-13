@@ -14,13 +14,31 @@ export interface ReadyOrder {
   branchId: string;
   readyAt: string;
   items: { id: string; name: string; qty: number; note: string | null; addons?: string[] }[];
+  /** Who is taking it to the table (null for orders from before assignment existed). */
+  assignment?: Assignment | null;
+}
+
+export interface Assignment {
+  id: string;
+  status: 'unassigned' | 'assigned' | 'accepted';
+  waiterUserId: string | null;
+  waiterName: string | null;
+  assignedAt: string | null;
+  acceptedAt: string | null;
+  problemNote: string | null;
+}
+export interface WaiterStaff {
+  userId: string;
+  name: string;
+  clockedIn: boolean;
+  openTasks: number;
 }
 
 type ServerEvent = ReadyOrder & { type: 'order.ready' | 'order.served' };
 export type FeedState = LiveState;
 
-/** One notification per order *per time it became ready*, so a re-ready rings again. */
-const keyOf = (o: ReadyOrder) => `${o.orderId}:${o.readyAt}`;
+/** One notification per hand-over: a new assignment (or re-queue) of the order rings again. */
+const keyOf = (o: ReadyOrder) => `${o.orderId}:${o.assignment?.id ?? o.readyAt}`;
 const BACKSTOP_POLL_MS = 30_000;
 const MAX_KEYS = 300;
 
@@ -52,6 +70,20 @@ export function useReadyOrders(branchId: string, onNew: (orders: ReadyOrder[]) =
   const qc = useQueryClient();
   const tenantId = profile.activeTenant?.id;
   const userId = profile.user?.id ?? 'anon';
+  // Supervisor in this branch: tenant-wide, restaurant-level or branch-level grant (the server
+  // re-checks every assignment; this only decides what to show).
+  const restaurantId = profile.branches.find((b) => b.id === branchId)?.restaurantId;
+  const canAssign =
+    profile.permissions.tenant.includes('waiter:assign') ||
+    (restaurantId ? (profile.permissions.byRestaurant[restaurantId] ?? []) : []).includes(
+      'waiter:assign',
+    ) ||
+    (profile.permissions.byBranch[branchId] ?? []).includes('waiter:assign');
+  /** Needs this waiter: assigned to them and not yet accepted, or nobody has it. */
+  const mustAct = (o: ReadyOrder) =>
+    !o.assignment ||
+    o.assignment.status === 'unassigned' ||
+    (o.assignment.status === 'assigned' && o.assignment.waiterUserId === userId);
   const queryKey = ['ready-orders', tenantId, branchId] as const;
   const notifiedKey = `foodstack.ready.notified.${userId}.${branchId}`;
   const ackKey = `foodstack.ready.acked.${userId}.${branchId}`;
@@ -77,12 +109,13 @@ export function useReadyOrders(branchId: string, onNew: (orders: ReadyOrder[]) =
   useEffect(() => {
     if (!list.data) return;
     const seen = (notified.current ??= loadKeys(notifiedKey));
-    const fresh = list.data.filter((o) => !seen.has(keyOf(o)));
+    // Only what this waiter must act on: their own new assignment or the open queue.
+    const fresh = list.data.filter((o) => mustAct(o) && !seen.has(keyOf(o)));
     if (fresh.length === 0) return;
     fresh.forEach((o) => seen.add(keyOf(o)));
     saveKeys(notifiedKey, seen);
     onNewRef.current(fresh);
-  }, [list.data, notifiedKey]);
+  }, [list.data, notifiedKey, userId]); // eslint-disable-line react-hooks/exhaustive-deps -- mustAct depends only on userId
 
   // Live events; every (re)connect re-reads the backlog so nothing missed offline is lost.
   const state = useLiveEvents(
@@ -94,23 +127,18 @@ export function useReadyOrders(branchId: string, onNew: (orders: ReadyOrder[]) =
         void qc.invalidateQueries({ queryKey });
         return;
       }
-      if (event !== 'order.ready' && event !== 'order.served') return;
       const e = data as ServerEvent;
       if (e.branchId !== branchId) return;
-      qc.setQueryData<ReadyOrder[]>(queryKey, (prev = []) => {
-        const rest = prev.filter((o) => o.orderId !== e.orderId);
-        if (e.type === 'order.served') return rest;
-        const order: ReadyOrder = {
-          orderId: e.orderId,
-          orderNumber: e.orderNumber,
-          tableLabel: e.tableLabel,
-          billLabel: e.billLabel,
-          branchId: e.branchId,
-          readyAt: e.readyAt,
-          items: e.items,
-        };
-        return [...rest, order].sort((x, y) => x.readyAt.localeCompare(y.readyAt));
-      });
+      if (event === 'order.served') {
+        qc.setQueryData<ReadyOrder[]>(queryKey, (prev = []) =>
+          prev.filter((o) => o.orderId !== e.orderId),
+        );
+        return;
+      }
+      // ready / assignment changes: re-read the list (it carries the assignment).
+      if (event === 'order.ready' || event.startsWith('waiter.')) {
+        void qc.invalidateQueries({ queryKey });
+      }
     },
   );
 
@@ -144,10 +172,54 @@ export function useReadyOrders(branchId: string, onNew: (orders: ReadyOrder[]) =
     },
   });
 
+  const act = (path: string, body?: object) =>
+    client.request(path, { method: 'POST', ...(body ? { body } : {}) });
+  const refresh = () => void qc.invalidateQueries({ queryKey });
+  const accept = useMutation({
+    mutationFn: (id: string) => act(`/waiter/assignments/${id}/accept`),
+    onSettled: refresh,
+  });
+  const claim = useMutation({
+    mutationFn: (id: string) => act(`/waiter/assignments/${id}/claim`),
+    onSettled: refresh,
+  });
+  const problem = useMutation({
+    mutationFn: (v: { id: string; reason: string }) =>
+      act(`/waiter/assignments/${v.id}/problem`, { reason: v.reason }),
+    onSettled: refresh,
+  });
+  const assign = useMutation({
+    mutationFn: (v: { id: string; waiterUserId: string }) =>
+      act(`/waiter/assignments/${v.id}/assign`, { waiterUserId: v.waiterUserId }),
+    onSettled: refresh,
+  });
+  const staff = useQuery({
+    queryKey: ['waiter-staff', tenantId, branchId],
+    enabled: Boolean(tenantId && branchId && canAssign),
+    queryFn: () =>
+      client.request<WaiterStaff[]>(`/waiter/staff?${new URLSearchParams({ branchId })}`),
+    staleTime: 15_000,
+  });
+
   const orders = list.data ?? [];
   return {
+    me: userId,
+    canAssign,
     orders,
-    unacknowledged: orders.filter((o) => !acked.has(keyOf(o))),
+    mine: orders.filter((o) => o.assignment?.waiterUserId === userId),
+    queue: orders.filter((o) => !o.assignment || o.assignment.status === 'unassigned'),
+    others: orders.filter(
+      (o) =>
+        o.assignment &&
+        o.assignment.status !== 'unassigned' &&
+        o.assignment.waiterUserId !== userId,
+    ),
+    staff: staff.data ?? [],
+    accept,
+    claim,
+    problem,
+    assign,
+    unacknowledged: orders.filter((o) => mustAct(o) && !acked.has(keyOf(o))),
     isAcked: (o: ReadyOrder) => acked.has(keyOf(o)),
     acknowledge,
     markServed: served,

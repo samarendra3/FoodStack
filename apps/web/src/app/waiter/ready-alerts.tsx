@@ -14,8 +14,11 @@ import {
   WifiOff,
   X,
 } from 'lucide-react';
+import { Hand } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useCallback, useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { useAuth } from '@/components/auth/auth-provider';
 import { authErrorMessage } from '@/lib/auth/errors';
 import { type ReadyOrder, useReadyOrders } from '@/lib/ready-orders';
 import { audioReady, playReadyChime, unlockAudio } from '@/lib/sound';
@@ -71,10 +74,15 @@ export function ReadyAlerts({
   const onNew = useCallback(
     (fresh: ReadyOrder[]) => {
       for (const o of fresh.slice(0, 3)) {
-        toast.success(`Ready · ${where(o)}`, {
-          description: `Order #${o.orderNumber} · ${o.items.map((i) => `${i.qty}× ${i.name}`).join(', ')}`,
-          duration: 10_000,
-        });
+        toast.success(
+          o.assignment?.status === 'assigned'
+            ? `Assigned to you · ${where(o)}`
+            : `Ready · ${where(o)}`,
+          {
+            description: `Order #${o.orderNumber} · ${o.items.map((i) => `${i.qty}× ${i.name}`).join(', ')}`,
+            duration: 10_000,
+          },
+        );
       }
       if (fresh.length > 3) toast.info(`${fresh.length - 3} more orders ready`);
     },
@@ -257,89 +265,269 @@ export function ReadyAlerts({
                     Nothing waiting. New ready orders will ring here.
                   </p>
                 ) : (
-                  feed.orders.map((o) => {
-                    const fresh = !feed.isAcked(o);
-                    return (
-                      <article
-                        key={o.orderId}
-                        onClick={() => fresh && feed.acknowledge([o])}
-                        className={cn(
-                          'rounded-xl border p-3 transition',
-                          fresh
-                            ? 'border-amber-400 bg-amber-50 ring-2 ring-amber-400/40 dark:bg-amber-500/10'
-                            : 'border-slate-200 dark:border-white/10',
-                        )}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <p className="text-2xl leading-none font-bold tracking-tight">
-                              {where(o)}
-                            </p>
-                            <p className="mt-1 text-xs text-slate-500">
-                              Order #{o.orderNumber}
-                              {o.tableLabel && o.billLabel ? ` · ${o.billLabel}` : ''} ·{' '}
-                              {minutesAgo(o.readyAt)}
-                            </p>
-                          </div>
-                          <span className="rounded-full bg-emerald-600 px-2 py-0.5 text-xs font-semibold text-white">
-                            READY
-                          </span>
-                        </div>
-                        <ul className="mt-2 space-y-0.5 text-sm">
-                          {o.items.map((i) => (
-                            <li key={i.id}>
-                              <span className="font-semibold tabular-nums">{i.qty}×</span> {i.name}
-                              {i.addons?.length ? ` + ${i.addons.join(', ')}` : ''}
-                              {i.note ? (
-                                <span className="text-xs text-slate-500"> · {i.note}</span>
-                              ) : null}
-                            </li>
-                          ))}
-                        </ul>
-                        <div className="mt-3 flex gap-2">
-                          {o.tableLabel ? (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                feed.acknowledge([o]);
-                                setOpen(false);
-                                onViewTable(o.tableLabel!);
-                              }}
-                              className="inline-flex h-10 flex-1 items-center justify-center gap-1.5 rounded-lg border border-slate-200 text-sm font-medium hover:bg-slate-50 dark:border-white/10 dark:hover:bg-white/5"
-                            >
-                              <Eye className="size-4" /> View order
-                            </button>
-                          ) : null}
-                          <button
-                            type="button"
-                            disabled={
-                              feed.markServed.isPending && feed.markServed.variables === o.orderId
-                            }
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              serve(o);
-                            }}
-                            className="inline-flex h-10 flex-1 items-center justify-center gap-1.5 rounded-lg bg-emerald-600 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
-                          >
-                            {feed.markServed.isPending &&
-                            feed.markServed.variables === o.orderId ? (
-                              <Loader2 className="size-4 animate-spin" />
-                            ) : (
-                              <Check className="size-4" />
-                            )}
-                            Mark served
-                          </button>
-                        </div>
-                      </article>
-                    );
-                  })
+                  <>
+                    {(
+                      [
+                        ['Assigned to you', feed.mine],
+                        ['Waiting for a waiter', feed.queue],
+                        ['With other waiters', feed.others],
+                      ] as const
+                    ).map(([title, list]) =>
+                      list.length ? (
+                        <section key={title} className="space-y-3">
+                          <h3 className="text-xs font-semibold tracking-wide text-slate-500 uppercase">
+                            {title} ({list.length})
+                          </h3>
+                          {list.map((o) => {
+                            const fresh = !feed.isAcked(o);
+                            return (
+                              <article
+                                key={o.orderId}
+                                onClick={() => fresh && feed.acknowledge([o])}
+                                className={cn(
+                                  'rounded-xl border p-3 transition',
+                                  fresh
+                                    ? 'border-amber-400 bg-amber-50 ring-2 ring-amber-400/40 dark:bg-amber-500/10'
+                                    : 'border-slate-200 dark:border-white/10',
+                                )}
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div>
+                                    <p className="text-2xl leading-none font-bold tracking-tight">
+                                      {where(o)}
+                                    </p>
+                                    <p className="mt-1 text-xs text-slate-500">
+                                      Order #{o.orderNumber}
+                                      {o.tableLabel && o.billLabel
+                                        ? ` · ${o.billLabel}`
+                                        : ''} · {minutesAgo(o.readyAt)}
+                                    </p>
+                                  </div>
+                                  <span
+                                    className={cn(
+                                      'rounded-full px-2 py-0.5 text-xs font-semibold',
+                                      o.assignment?.status === 'accepted'
+                                        ? 'bg-sky-600 text-white'
+                                        : o.assignment?.status === 'assigned'
+                                          ? 'bg-amber-500 text-amber-950'
+                                          : 'bg-emerald-600 text-white',
+                                    )}
+                                  >
+                                    {o.assignment?.status === 'accepted'
+                                      ? `ON THE WAY · ${o.assignment.waiterName ?? ''}`
+                                      : o.assignment?.status === 'assigned'
+                                        ? `ASSIGNED · ${o.assignment.waiterName ?? ''}`
+                                        : 'READY'}
+                                  </span>
+                                </div>
+                                <ul className="mt-2 space-y-0.5 text-sm">
+                                  {o.items.map((i) => (
+                                    <li key={i.id}>
+                                      <span className="font-semibold tabular-nums">{i.qty}×</span>{' '}
+                                      {i.name}
+                                      {i.addons?.length ? ` + ${i.addons.join(', ')}` : ''}
+                                      {i.note ? (
+                                        <span className="text-xs text-slate-500"> · {i.note}</span>
+                                      ) : null}
+                                    </li>
+                                  ))}
+                                </ul>
+                                {o.assignment?.problemNote ? (
+                                  <p className="mt-2 rounded-md bg-red-50 px-2 py-1 text-xs text-red-700 dark:bg-red-500/10 dark:text-red-300">
+                                    Returned: {o.assignment.problemNote}
+                                  </p>
+                                ) : null}
+                                <TaskActions
+                                  o={o}
+                                  feed={feed}
+                                  onView={
+                                    o.tableLabel
+                                      ? () => {
+                                          feed.acknowledge([o]);
+                                          setOpen(false);
+                                          onViewTable(o.tableLabel!);
+                                        }
+                                      : null
+                                  }
+                                  onServe={() => serve(o)}
+                                  onError={(e) =>
+                                    toast.error('Not updated', { description: authErrorMessage(e) })
+                                  }
+                                />
+                              </article>
+                            );
+                          })}
+                        </section>
+                      ) : null,
+                    )}
+                  </>
                 )}
               </div>
+              <ServingHistory branchId={branchId} />
             </motion.aside>
           </motion.div>
         ) : null}
       </AnimatePresence>
     </>
+  );
+}
+
+type Feed = ReturnType<typeof useReadyOrders>;
+
+/** The buttons a waiter (or supervisor) sees on one ready order, by its hand-over state. */
+function TaskActions({
+  o,
+  feed,
+  onView,
+  onServe,
+  onError,
+}: {
+  o: ReadyOrder;
+  feed: Feed;
+  onView: (() => void) | null;
+  onServe: () => void;
+  onError: (e: unknown) => void;
+}) {
+  const a = o.assignment;
+  const mine = a?.waiterUserId === feed.me;
+  const busy =
+    feed.accept.isPending ||
+    feed.claim.isPending ||
+    feed.problem.isPending ||
+    feed.assign.isPending;
+  const stop = (fn: () => void) => (e: React.MouseEvent) => {
+    e.stopPropagation();
+    fn();
+  };
+  const btn =
+    'inline-flex h-10 flex-1 items-center justify-center gap-1.5 rounded-lg text-sm font-semibold disabled:opacity-60';
+  const outline = cn(
+    btn,
+    'border border-slate-200 font-medium hover:bg-slate-50 dark:border-white/10 dark:hover:bg-white/5',
+  );
+  const primary = cn(btn, 'bg-emerald-600 text-white hover:bg-emerald-700');
+  return (
+    <div className="mt-3 space-y-2">
+      <div className="flex gap-2">
+        {onView ? (
+          <button type="button" onClick={stop(onView)} className={outline}>
+            <Eye className="size-4" /> View order
+          </button>
+        ) : null}
+        {a && a.status === 'unassigned' ? (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={stop(() => feed.claim.mutate(a.id, { onError }))}
+            className={primary}
+          >
+            <Hand className="size-4" /> I&apos;ll take it
+          </button>
+        ) : a && a.status === 'assigned' && mine ? (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={stop(() => feed.accept.mutate(a.id, { onError }))}
+            className={primary}
+          >
+            <Check className="size-4" /> Accept
+          </button>
+        ) : !a || mine || feed.canAssign ? (
+          <button type="button" disabled={busy} onClick={stop(onServe)} className={primary}>
+            <Check className="size-4" /> Mark served
+          </button>
+        ) : null}
+      </div>
+      <div className="flex flex-wrap items-center gap-3 text-xs">
+        {a && mine && a.status !== 'unassigned' ? (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={stop(() => {
+              const reason = window.prompt('What is the problem? (it goes back to the queue)');
+              if (reason?.trim())
+                feed.problem.mutate({ id: a.id, reason: reason.trim() }, { onError });
+            })}
+            className="text-red-600 hover:underline dark:text-red-400"
+          >
+            Report a problem
+          </button>
+        ) : null}
+        {a && feed.canAssign ? (
+          <label
+            className="ml-auto flex items-center gap-1.5 text-slate-500"
+            onClick={(e) => e.stopPropagation()}
+          >
+            Assign to
+            <select
+              value=""
+              disabled={busy}
+              onChange={(e) => {
+                if (e.target.value)
+                  feed.assign.mutate({ id: a.id, waiterUserId: e.target.value }, { onError });
+              }}
+              className="h-8 rounded-md border border-slate-200 bg-transparent px-2 dark:border-white/10"
+            >
+              <option value="">Choose waiter…</option>
+              {feed.staff.map((w) => (
+                <option key={w.userId} value={w.userId}>
+                  {w.name} · {w.openTasks} open{w.clockedIn ? '' : ' · off shift'}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/** The waiter's own hand-overs in the last 24 hours (served, reassigned, cancelled). */
+function ServingHistory({ branchId }: { branchId: string }) {
+  const { client } = useAuth();
+  const [open, setOpen] = useState(false);
+  const q = useQuery({
+    queryKey: ['waiter-history', branchId],
+    enabled: open,
+    queryFn: () =>
+      client.request<
+        {
+          id: string;
+          orderNumber: string;
+          tableLabel: string | null;
+          status: string;
+          servedAt: string | null;
+        }[]
+      >(`/waiter/history?branchId=${encodeURIComponent(branchId)}`),
+  });
+  const time = (iso: string) =>
+    new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return (
+    <details
+      className="border-t border-slate-200 px-4 py-3 text-sm dark:border-white/10"
+      onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
+    >
+      <summary className="cursor-pointer font-medium text-slate-600 dark:text-slate-300">
+        My serving history (24 h)
+      </summary>
+      {open && q.isPending ? (
+        <Loader2 className="mt-2 size-4 animate-spin text-slate-400" />
+      ) : (
+        <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto">
+          {(q.data ?? []).length === 0 ? <li className="text-slate-500">Nothing yet.</li> : null}
+          {(q.data ?? []).map((h) => (
+            <li key={h.id} className="flex justify-between gap-2">
+              <span>
+                #{h.orderNumber}
+                {h.tableLabel ? ` · ${h.tableLabel}` : ''}
+              </span>
+              <span className="text-slate-500">
+                {h.status === 'served' && h.servedAt ? `served ${time(h.servedAt)}` : h.status}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </details>
   );
 }

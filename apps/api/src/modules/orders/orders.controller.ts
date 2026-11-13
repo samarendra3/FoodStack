@@ -13,6 +13,7 @@ import {
   Res,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { z } from 'zod';
 import type { Request, Response } from 'express';
 import { requestMeta } from '../../common/http/request-meta';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
@@ -39,6 +40,9 @@ import {
   refundSchema,
 } from './orders.schemas';
 import { type OrderEvent, OrderEventsService } from './order-events';
+import { WaiterAssignmentsService } from './waiter-assignments';
+
+const assignSchema = z.strictObject({ waiterUserId: z.uuid() });
 import { OrdersService } from './orders.service';
 
 const HEARTBEAT_MS = 15_000;
@@ -56,6 +60,7 @@ export class OrdersController {
   constructor(
     private readonly orders: OrdersService,
     private readonly events: OrderEventsService,
+    private readonly assignments: WaiterAssignmentsService,
   ) {}
 
   @Post('orders')
@@ -224,7 +229,13 @@ export class OrdersController {
     @Res() res: Response,
   ) {
     const tenantId = await this.orders.authorizeFeed(auth, query.branchId, 'waiter:access');
-    this.pipeEvents(req, res, tenantId, query.branchId, ['order.ready', 'order.served']);
+    this.pipeEvents(req, res, tenantId, query.branchId, [
+      'order.ready',
+      'order.served',
+      'waiter.assigned',
+      'waiter.accepted',
+      'waiter.unassigned',
+    ]);
   }
 
   /**
@@ -303,6 +314,78 @@ export class OrdersController {
       clearTimeout(ttl);
       unsubscribe();
     });
+  }
+
+  // ---- waiter assignment (who takes a ready order to the table) ----
+
+  @Post('waiter/assignments/:id/accept')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('waiter:access')
+  @ApiOperation({ summary: 'Accept the ready order assigned to you' })
+  acceptTask(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: Request,
+  ) {
+    return this.assignments.accept(auth, id, requestMeta(req));
+  }
+
+  @Post('waiter/assignments/:id/claim')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('waiter:access')
+  @ApiOperation({ summary: 'Take an order from the unassigned queue' })
+  claimTask(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: Request,
+  ) {
+    return this.assignments.claim(auth, id, requestMeta(req));
+  }
+
+  @Post('waiter/assignments/:id/problem')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('waiter:access')
+  @ApiOperation({ summary: 'Report a serving problem; the order returns to the queue' })
+  problemTask(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(reasonSchema)) body: ReasonInput,
+    @Req() req: Request,
+  ) {
+    return this.assignments.problem(auth, id, body.reason, requestMeta(req));
+  }
+
+  @Post('waiter/assignments/:id/assign')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('waiter:assign')
+  @ApiOperation({ summary: 'Assign or reassign a ready order to a waiter (supervisors)' })
+  assignTask(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(assignSchema)) body: { waiterUserId: string },
+    @Req() req: Request,
+  ) {
+    return this.assignments.assign(auth, id, body.waiterUserId, requestMeta(req));
+  }
+
+  @Get('waiter/staff')
+  @RequirePermission('waiter:assign')
+  @ApiOperation({ summary: 'Waiters of a branch with open workload (supervisors)' })
+  waiterStaff(
+    @CurrentAuth() auth: AuthContext,
+    @Query(new ZodValidationPipe(kitchenQuerySchema)) query: KitchenQuery,
+  ) {
+    return this.assignments.staff(auth, query.branchId);
+  }
+
+  @Get('waiter/history')
+  @RequirePermission('waiter:access')
+  @ApiOperation({ summary: 'Your serving history (last 24 hours)' })
+  waiterHistory(
+    @CurrentAuth() auth: AuthContext,
+    @Query(new ZodValidationPipe(kitchenQuerySchema)) query: KitchenQuery,
+  ) {
+    return this.assignments.history(auth, query.branchId);
   }
 
   @Post('waiter/orders/:id/served')

@@ -34,6 +34,7 @@ import { OrderEvents1798000031000 } from './migrations/1798000031000-OrderEvents
 import { SecureQrAndGuestDetails1798000032000 } from './migrations/1798000032000-SecureQrAndGuestDetails';
 import { OrderItemAddons1798000033000 } from './migrations/1798000033000-OrderItemAddons';
 import { ItemKitchenStatus1798000034000 } from './migrations/1798000034000-ItemKitchenStatus';
+import { WaiterAssignments1798000035000 } from './migrations/1798000035000-WaiterAssignments';
 
 /**
  * All migrations in order, for code that cannot load them by file glob (the e2e test setup).
@@ -76,4 +77,5 @@ export const ALL_MIGRATIONS = [
   SecureQrAndGuestDetails1798000032000,
   OrderItemAddons1798000033000,
   ItemKitchenStatus1798000034000,
+  WaiterAssignments1798000035000,
 ];

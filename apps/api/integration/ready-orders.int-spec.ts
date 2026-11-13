@@ -535,13 +535,14 @@ describe('Ready-order events (integration)', () => {
       'order.created',
       'order.status',
       'order.ready',
+      'waiter.unassigned', // nobody clocked in: the order waits in the queue
       'order.served',
       'payment.recorded',
     ]);
     expect(timeline[0]!.actor).toEqual({ kind: 'staff', name: 'waiter1' });
     expect(timeline[2]!.actor.name).toBe('cook');
     expect(timeline[2]!.details).toEqual({ from: 'preparing', to: 'ready' });
-    expect(timeline[4]!.details).toMatchObject({ method: 'cash', paidInFull: true });
+    expect(timeline[5]!.details).toMatchObject({ method: 'cash', paidInFull: true });
     expect(timeline[2]!.details).not.toHaveProperty('items');
 
     // Another branch's waiter and another tenant cannot read it.

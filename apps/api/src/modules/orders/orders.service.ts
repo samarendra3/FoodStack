@@ -16,6 +16,7 @@ import { PromotionsService } from '../promotions/promotions.service';
 import { CacheNs } from '../../shared/cache/cache.keys';
 import { CacheService } from '../../shared/cache/cache.service';
 import { type EventActor, OrderEventsService, type ReadyPayload } from './order-events';
+import { WaiterAssignmentsService } from './waiter-assignments';
 import {
   type CreateOrderInput,
   type KitchenStatus,
@@ -80,6 +81,9 @@ const TIMELINE_FIELDS: Record<string, string[]> = {
   'order.created': ['orderNumber', 'channel', 'tableLabel', 'itemCount', 'totalMinor'],
   'order.status': ['from', 'to'],
   'order.item_status': ['name', 'from', 'to'],
+  'waiter.assigned': ['waiterName', 'auto'],
+  'waiter.accepted': ['claimed'],
+  'waiter.unassigned': ['problemNote'],
   'order.ready': ['from', 'to'],
   'order.served': ['from', 'to'],
   'order.cancelled': ['reason'],
@@ -175,6 +179,7 @@ export class OrdersService {
     private readonly subscriptions: SubscriptionLifecycleService,
     private readonly cache: CacheService,
     private readonly events: OrderEventsService,
+    private readonly assignments: WaiterAssignmentsService,
   ) {}
 
   create(
@@ -588,6 +593,7 @@ export class OrdersService {
         [id, reason, auth.userId],
       );
       await this.subscriptions.releaseOrderSlot(db, id);
+      await this.assignments.closeOnCancelled(db, id);
       await this.audit(db, actorOf(auth), meta, 'order.cancelled', id, { reason });
       await this.events.record(db, {
         tenantId: order.tenant_id,
@@ -799,10 +805,15 @@ export class OrdersService {
         db,
         rows.map((o) => o.id),
       );
+      const open = await this.assignments.openFor(
+        db,
+        rows.map((o) => o.id),
+      );
       return rows.map((o) => ({
         orderId: o.id,
         branchId: o.branch_id,
         ...this.readyPayload(o, items),
+        assignment: open.get(o.id) ?? null,
       }));
     });
   }
@@ -902,6 +913,10 @@ export class OrdersService {
       },
       actor: eventActor(actorOf(auth)),
     });
+    // Same transaction: a READY order is handed to a waiter (or the unassigned queue); a
+    // SERVED order closes its hand-over.
+    if (to === 'ready') await this.assignments.assignOnReady(db, order, eventActor(actorOf(auth)));
+    if (to === 'served') await this.assignments.closeOnServed(db, id, auth.userId);
   }
 
   /**

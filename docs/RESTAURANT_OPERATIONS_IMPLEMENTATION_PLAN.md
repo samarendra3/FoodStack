@@ -1,6 +1,6 @@
 # Restaurant Operations — Audit & Implementation Plan
 
-Status: **APPROVED. Phases 1–4 complete; phases 5–11 pending.**
+Status: **APPROVED. Phases 1–5 complete; phases 6–11 pending.**
 Scope: QR ordering, payments, kitchen, automatic waiter assignment, billing, invoices and receipt
 sharing, as one order lifecycle on the existing FoodStack architecture.
 
@@ -214,7 +214,8 @@ Approved order of work: 1 outbox and timeline · 2 signed QR links and QR improv
 | 2 | Signed QR links + QR ordering improvements | **Complete** (tests below) |
 | 3 | Add-ons + per-item instructions | **Complete** (tests below) |
 | 4 | Item-level kitchen status + unified workflow | **Complete** (tests below) |
-| 5–11 | — | Pending |
+| 5 | Automatic workload-based waiter assignment | **Complete** (tests below) |
+| 6–11 | — | Pending (6, 9, 10 need provider accounts) |
 
 ### Phase 1 report — Durable transactional outbox and readable order timeline
 
@@ -349,3 +350,48 @@ Approved order of work: 1 outbox and timeline · 2 signed QR links and QR improv
 
 **Behaviour change to note**
 - QR orders now arrive as **NEW** like every other order. The kitchen bell still rings for them, and a cook starts them with one tap (or by starting any dish).
+
+### Phase 5 report — Automatic workload-based waiter assignment
+
+**Delivered**
+- Migration `1798000035000-WaiterAssignments` (reversible):
+  - `waiter_assignments` with status `unassigned → assigned → accepted → served`, plus history states `reassigned` and `cancelled`; timestamps, assigning user and problem note
+  - partial unique index: **one open assignment per order**
+  - tenant RLS
+  - new permission **`waiter:assign`** for owner, restaurant admin and branch manager
+- **Automatic assignment in the READY transaction:**
+  - Eligible: active member with `waiter:access` for the branch, **clocked in at that branch**, and not a supervisor (`waiter:assign` holders assign; they are not auto-assigned).
+  - Fair pick: fewest open tasks, then longest since last assignment, then a stable tie-break.
+  - A per-branch advisory lock plus the unique index prevent double assignment, even with concurrent READY calls.
+  - Nobody eligible → **unassigned queue**.
+- Served (by a waiter or the kitchen) closes the assignment; a cancelled order cancels it.
+- APIs (all branch-checked and audited):
+  - `POST /waiter/assignments/:id/accept` (own only)
+  - `/claim` (from the queue, first wins)
+  - `/problem {reason}` (back to the queue with the note)
+  - `/assign {waiterUserId}` (supervisors; target must serve this branch; keeps a `reassigned` history row)
+  - `GET /waiter/staff` (supervisors: waiters, clock-in state, open tasks)
+  - `GET /waiter/history` (own, 24 h)
+  - `GET /waiter/ready-orders` now includes each order's assignment.
+- Events: `waiter.assigned`, `waiter.accepted`, `waiter.unassigned` on the waiter stream (and in the timeline). Missed events are recovered by the Phase 1 replay and backlog.
+- Waiter app panel:
+  - sections: **Assigned to you**, **Waiting for a waiter**, **With other waiters**
+  - per-order actions: Accept, I'll take it, Mark served, Report a problem, and (supervisors) Assign to…
+  - status badge (Assigned / On the way + name); returned-with-problem note
+  - **My serving history (24 h)**
+  - the chime rings until **your** assignment is accepted or the queue is picked up (it no longer rings for orders assigned to someone else)
+
+**Tests (evidence)**
+- New `integration/waiter-assignments.int-spec.ts` (6 tests):
+  - no one clocked in → queue; claim once, second claim 409; served removes it
+  - fair distribution across clocked-in waiters; never the supervisor or an off-shift waiter
+  - only the assignee can accept; problem re-queues with note
+  - supervisor assign / reassign with history; waiters 403; other-branch waiter refused; staff list scoped
+  - **3 concurrent READY calls → exactly 1 succeeds and 1 open assignment**
+  - branch and tenant isolation; serving history
+- Full API integration **342/344** on the first run. The 2 failures were the new timeline event (test expectation updated) and the known timing-sensitive `email-outbox` test; both pass on re-run (42/42).
+- API unit **177/177**; web unit **36/36**; `tsc` and ESLint clean on both apps.
+
+**Known limitations**
+- Orders already in the unassigned queue are not automatically handed to a waiter who clocks in later. The waiter (or a supervisor) picks them up from the queue, which is visible and rings.
+- There is no maximum load per waiter; the pick is "fewest open tasks".
