@@ -33,3 +33,6 @@ infrastructure/docker/ha/secrets.env
 backend.hcl
 crash.log
 uploads/
+*.bak
+*.bak-*
+*.step5
