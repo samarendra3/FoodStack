@@ -124,6 +124,25 @@ export function TableSessionPanel({
     await qc.invalidateQueries({ queryKey: ['table-session'] });
     await qc.invalidateQueries({ queryKey: ['tables'] });
   };
+  const clearTable = async () => {
+    if (
+      !window.confirm(
+        `Clear table ${tableLabel}? Confirm that all guests have left. This closes the sitting and frees every seat.`,
+      )
+    )
+      return;
+    try {
+      await client.request(`/table-sessions/${d!.session.id}/clear`, {
+        method: 'POST',
+        body: { confirmGuestsDeparted: true },
+      });
+      notify.success(`Table ${tableLabel} cleared`);
+      await refresh();
+      await qc.invalidateQueries();
+    } catch (e) {
+      notify.error(e);
+    }
+  };
   const close = async () => {
     try {
       await client.request(`/table-sessions/${d!.session.id}/close`, { method: 'POST' });
@@ -374,6 +393,19 @@ export function TableSessionPanel({
               onClick={close}
             >
               Close table
+            </button>
+            <button
+              type="button"
+              className={btn}
+              disabled={d.totals.outstandingMinor > 0}
+              title={
+                d.totals.outstandingMinor > 0
+                  ? 'Settle every bill first'
+                  : 'Guests have left: close the sitting and free all seats'
+              }
+              onClick={clearTable}
+            >
+              Clear table
             </button>
           </div>
         ) : null}

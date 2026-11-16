@@ -125,7 +125,7 @@ const codeOf = (e: unknown) =>
 const messageOf = (e: unknown) =>
   e instanceof Error ? e.message : 'Something went wrong. Please try again.';
 
-export default function GuestTablePage({
+function GuestTableInner({
   params,
 }: {
   params: Promise<{ tenantId: string; tableId: string }>;
@@ -877,5 +877,199 @@ function Center({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-dvh flex-col items-center justify-center bg-slate-50 p-6 text-slate-900">
       {children}
     </div>
+  );
+}
+
+
+/* ---- Seat gate: guest count, capacity and the Table Full screen ---- */
+
+type SeatGate =
+  | { kind: 'checking' }
+  | { kind: 'pick'; available: number; capacity: number }
+  | { kind: 'full' }
+  | { kind: 'ready' };
+
+const problemOf = (e: unknown) =>
+  e instanceof ApiError
+    ? (e.problem as { code?: string; available?: number; capacity?: number })
+    : {};
+
+export default function GuestTablePage(props: {
+  params: Promise<{ tenantId: string; tableId: string }>;
+}) {
+  const { tenantId, tableId } = use(props.params);
+  const [gate, setGate] = useState<SeatGate>({ kind: 'checking' });
+  const [size, setSize] = useState(1);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const reqKey = `foodstack.party.${tableId}`;
+
+  const requestId = () => {
+    try {
+      let id = sessionStorage.getItem(reqKey);
+      if (!id) {
+        id = crypto.randomUUID();
+        sessionStorage.setItem(reqKey, id);
+      }
+      return id;
+    } catch {
+      return crypto.randomUUID();
+    }
+  };
+  const clearRequestId = () => {
+    try {
+      sessionStorage.removeItem(reqKey);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const join = async (partySize?: number) => {
+    const saved = read(tokenKey(tenantId));
+    const key = qrKey();
+    const v = await api.request<GuestView>('/public/guest/join', {
+      method: 'POST',
+      body: {
+        tenantId,
+        tableId,
+        ...(key ? { key } : {}),
+        ...(partySize ? { partySize, requestId: requestId() } : {}),
+      },
+      headers: saved ? { 'X-Guest-Token': saved } : undefined,
+    });
+    write(tokenKey(tenantId), v.token!);
+    return v;
+  };
+
+  /** Fresh seat count from the server; also validates the table and QR code. */
+  const refresh = async () => {
+    const key = qrKey();
+    const qs = new URLSearchParams({ tenantId, tableId, ...(key ? { key } : {}) });
+    const c = await api.request<{ capacity: number; available: number }>(
+      `/public/guest/capacity?${qs.toString()}`,
+    );
+    if (c.available === 0) setGate({ kind: 'full' });
+    else {
+      setSize((n) => Math.min(Math.max(n, 1), c.available));
+      setGate({ kind: 'pick', available: c.available, capacity: c.capacity });
+    }
+  };
+
+  const onError = async (e: unknown) => {
+    const code = problemOf(e).code;
+    if (code === 'TABLE_FULL') return setGate({ kind: 'full' });
+    if (code === 'PARTY_SIZE_REQUIRED' || code === 'NOT_ENOUGH_SEATS') {
+      if (code === 'NOT_ENOUGH_SEATS') setMsg('Another group just took some seats. Please choose again.');
+      try {
+        return await refresh();
+      } catch (err) {
+        return onError(err);
+      }
+    }
+    // Invalid or expired QR, ordering unavailable, network: the existing page explains it.
+    setGate({ kind: 'ready' });
+  };
+
+  useEffect(() => {
+    join()
+      .then(() => setGate({ kind: 'ready' }))
+      .catch(onError);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId, tableId]);
+
+  const confirm = async () => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      await join(size);
+      clearRequestId();
+      setGate({ kind: 'ready' });
+    } catch (e) {
+      await onError(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // autoRefreshFull: while the table is full, look again every 8 seconds.
+  useEffect(() => {
+    if (gate.kind !== 'full') return;
+    const t = setInterval(() => {
+      refresh().catch(() => undefined);
+    }, 8000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gate.kind]);
+
+  if (gate.kind === 'ready') return <GuestTableInner params={props.params} />;
+
+  if (gate.kind === 'checking')
+    return (
+      <main className="flex min-h-dvh items-center justify-center p-6 text-sm text-muted-foreground">
+        Checking your table…
+      </main>
+    );
+
+  if (gate.kind === 'full')
+    return (
+      <main className="flex min-h-dvh flex-col items-center justify-center gap-4 p-6 text-center">
+        <div className="text-5xl" aria-hidden>
+          🪑
+        </div>
+        <h1 className="text-2xl font-semibold">This table is full</h1>
+        <p className="max-w-sm text-muted-foreground">
+          All seats at this table are taken right now. Please ask our staff to seat you at another
+          table.
+        </p>
+        <button
+          type="button"
+          className="rounded-lg border px-4 py-2 text-sm font-medium"
+          onClick={() => {
+            setGate({ kind: 'checking' });
+            refresh().catch(onError);
+          }}
+        >
+          Check again
+        </button>
+      </main>
+    );
+
+  return (
+    <main className="mx-auto flex min-h-dvh max-w-md flex-col justify-center gap-6 p-6">
+      <div className="space-y-1 text-center">
+        <h1 className="text-2xl font-semibold">How many guests?</h1>
+        <p className="text-sm text-muted-foreground">
+          {gate.available} of {gate.capacity} seats available at this table
+        </p>
+      </div>
+      {msg ? (
+        <p role="alert" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
+          {msg}
+        </p>
+      ) : null}
+      <div className="grid grid-cols-4 gap-2">
+        {Array.from({ length: gate.available }, (_, i) => i + 1).map((n) => (
+          <button
+            key={n}
+            type="button"
+            onClick={() => setSize(n)}
+            aria-pressed={size === n}
+            className={`rounded-lg border py-3 text-lg font-medium ${
+              size === n ? 'border-emerald-600 bg-emerald-600 text-white' : ''
+            }`}
+          >
+            {n}
+          </button>
+        ))}
+      </div>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={confirm}
+        className="rounded-lg bg-emerald-600 py-3 font-medium text-white disabled:opacity-60"
+      >
+        {busy ? 'Reserving…' : `Reserve ${size} seat${size === 1 ? '' : 's'} and continue`}
+      </button>
+    </main>
   );
 }

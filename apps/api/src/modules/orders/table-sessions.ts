@@ -30,6 +30,7 @@ import { ACTIVE_TENANT_STATUSES } from '../auth/access.service';
 import type { AuthContext, RequestMeta } from '../auth/auth.types';
 import { CurrentAuth, Public, RequirePermission } from '../auth/decorators';
 import { OnlinePaymentsService } from './online-payments';
+import { SeatReservationsService } from './seat-reservations';
 import { createOrderSchema, paymentSchema } from './orders.schemas';
 import {
   type Actor,
@@ -67,7 +68,26 @@ const joinSchema = z.strictObject({
     .regex(/^[A-Za-z0-9_-]{16,64}$/)
     .optional(),
   name: z.string().trim().max(20).optional(),
+  /** Guests in the group = seats to reserve. Required for a NEW guest. */
+  partySize: z.number().int().min(1).max(50).optional(),
+  /** Client-generated id so a retried request returns the same reservation. */
+  requestId: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{8,80}$/)
+    .optional(),
 });
+const capacityQuery = z.strictObject({
+  tenantId: z.uuid(),
+  tableId: z.uuid(),
+  key: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z0-9_-]{16,64}$/)
+    .optional(),
+});
+const clearSchema = z.strictObject({ confirmGuestsDeparted: z.literal(true) });
+const occupancyQuery = z.strictObject({ branchId: z.uuid() });
+const guestIdParam = z.uuid();
 const guestOrderSchema = createOrderSchema
   .pick({ lines: true, note: true })
   .extend({ paymentPreference: z.enum(['counter_cash', 'counter_card', 'online']).nullish() });
@@ -130,6 +150,7 @@ export class GuestSessionsService {
     private readonly db: DbContext,
     private readonly orders: OrdersService,
     private readonly payments: OnlinePaymentsService,
+    private readonly seats: SeatReservationsService,
   ) {}
 
   /** Starts an online payment for one of THIS guest's open orders. */
@@ -203,7 +224,13 @@ export class GuestSessionsService {
              FROM table_guests g JOIN table_sessions s ON s.id = g.session_id WHERE g.token_hash = $1`,
           [hash(token!)],
         );
-        if (g && g.status === 'open' && g.table_id === table.id) {
+        const seatOk = g
+          ? await db.one<{ ok: boolean }>(
+              `SELECT (EXISTS (SELECT 1 FROM table_seat_reservations WHERE guest_id = $1 AND status = 'active')) AS ok`,
+              [g.id],
+            )
+          : null;
+        if (g && g.status === 'open' && g.table_id === table.id && seatOk?.ok) {
           await db.query('UPDATE table_guests SET last_seen_at = now() WHERE id = $1', [g.id]);
           return { token: token!, restored: true, ...(await this.view(db, g.session_id, g.id)) };
         }
@@ -220,6 +247,43 @@ export class GuestSessionsService {
         });
       }
 
+      // Seat gate. Nothing below this point (sitting, guest, cart, order) exists for a rejected
+      // party. The table lock is the one openTableSession uses, so scans queue up here.
+      await this.seats.lockTable(db, input.tenantId, table.id);
+      if (input.requestId) {
+        // Retry of the same request: same reservation, nothing new. The first response may have
+        // been lost, so issue a fresh token for that guest (the old one stops working).
+        const prior = await db.one<{ guest_id: string; session_id: string }>(
+          `SELECT guest_id, session_id FROM table_seat_reservations
+            WHERE table_id = $1 AND request_id = $2 AND status = 'active'`,
+          [table.id, input.requestId],
+        );
+        if (prior) {
+          const reissued = `${input.tenantId}.${randomBytes(32).toString('base64url')}`;
+          await db.query(
+            'UPDATE table_guests SET token_hash = $2, last_seen_at = now() WHERE id = $1',
+            [prior.guest_id, hash(reissued)],
+          );
+          return {
+            token: reissued,
+            restored: true,
+            ...(await this.view(db, prior.session_id, prior.guest_id)),
+          };
+        }
+      }
+      if (input.partySize === undefined) {
+        const a = await this.seats.availability(db, table.id);
+        throw new ConflictException({
+          code: a && a.available === 0 ? 'TABLE_FULL' : 'PARTY_SIZE_REQUIRED',
+          message:
+            a && a.available === 0
+              ? 'This table is full right now. Please ask our staff for another table.'
+              : 'How many guests are in your group?',
+          ...a,
+        });
+      }
+      await this.seats.assertRoom(db, input.tenantId, table.id, input.partySize);
+
       // New guest (first scan, a closed sitting, or another table): join or open the sitting.
       const sessionId = await openTableSession(db, input.tenantId, table.branch_id, table.id, 'qr');
       // openTableSession holds the per-table lock, so guest numbers cannot collide.
@@ -233,7 +297,67 @@ export class GuestSessionsService {
          VALUES ($1, $2, $3, $4, $5) RETURNING id`,
         [input.tenantId, sessionId, hash(fresh), input.name || `Guest ${next!.n}`, next!.n],
       );
-      return { token: fresh, restored: false, ...(await this.view(db, sessionId, g!.id)) };
+      await this.seats.reserve(db, {
+        tenantId: input.tenantId,
+        branchId: table.branch_id,
+        tableId: table.id,
+        sessionId,
+        guestId: g!.id,
+        seats: input.partySize,
+        requestId: input.requestId,
+      });
+      return {
+        token: fresh,
+        restored: false,
+        partySize: input.partySize,
+        availability: await this.seats.availability(db, table.id),
+        ...(await this.view(db, sessionId, g!.id)),
+      };
+    });
+  }
+
+  /** Seats left at a table, for the guest-count selector. Validates the QR like join(). */
+  capacity(input: z.infer<typeof capacityQuery>) {
+    return this.db.run({ tenantId: input.tenantId }, async (db) => {
+      const table = await db.one<{
+        id: string;
+        label: string;
+        tenant_status: string;
+        qr_key: string;
+        qr_legacy_links: boolean;
+      }>(
+        `SELECT t.id, t.label, tn.status AS tenant_status, t.qr_key, r.qr_legacy_links
+           FROM dining_tables t
+           JOIN branches b ON b.id = t.branch_id
+           JOIN restaurants r ON r.id = b.restaurant_id AND r.status = 'active'
+           JOIN tenants tn ON tn.id = t.tenant_id
+          WHERE t.id = $1 AND t.deleted_at IS NULL`,
+        [input.tableId],
+      );
+      if (!table)
+        throw new NotFoundException({
+          code: 'TABLE_NOT_FOUND',
+          message: 'This table QR code is not valid.',
+        });
+      if (!ACTIVE_TENANT_STATUSES.includes(table.tenant_status)) {
+        throw new ConflictException({
+          code: 'ORDERING_UNAVAILABLE',
+          message: 'Ordering is not available right now.',
+        });
+      }
+      const allowed = input.key ? keyMatches(input.key, table.qr_key) : table.qr_legacy_links;
+      if (!allowed) {
+        throw new GoneException({
+          code: 'QR_LINK_EXPIRED',
+          message: 'This QR code is no longer valid. Please scan the code on your table.',
+        });
+      }
+      const a = await this.seats.availability(db, table.id);
+      return {
+        table: { id: table.id, label: table.label },
+        ...a!,
+        status: a!.available === 0 ? 'TABLE_FULL' : 'AVAILABLE',
+      };
     });
   }
 
@@ -390,6 +514,13 @@ export class GuestSessionsController {
     return this.guests.join(body, token);
   }
 
+  @Get('capacity')
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  @ApiOperation({ summary: 'Seats left at a table (QR validated); drives the guest-count picker' })
+  capacity(@Query(new ZodValidationPipe(capacityQuery)) q: z.infer<typeof capacityQuery>) {
+    return this.guests.capacity(q);
+  }
+
   @Put('contact')
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @ApiOperation({ summary: "Set the guest's mobile number and receipt / marketing consent" })
@@ -479,6 +610,42 @@ export class TableSessionsController {
   ) {
     const { guestId, unassigned, ...payment } = body;
     return this.orders.paySession(auth, id, { guestId, unassigned }, payment, requestMeta(req));
+  }
+
+  @Get('occupancy')
+  @RequirePermission('menu:read')
+  @ApiOperation({ summary: 'Per-table capacity, occupied and available seats, with groups' })
+  occupancy(
+    @CurrentAuth() auth: AuthContext,
+    @Query(new ZodValidationPipe(occupancyQuery)) q: z.infer<typeof occupancyQuery>,
+  ) {
+    return this.orders.tableOccupancy(auth, q.branchId);
+  }
+
+  @Post(':id/guests/:guestId/release')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @RequirePermission('menu:read')
+  @ApiOperation({ summary: "Release one group's seats (only when its bill is fully settled)" })
+  async releaseGuest(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('guestId', new ZodValidationPipe(guestIdParam)) guestId: string,
+    @Req() req: Request,
+  ) {
+    await this.orders.releaseGuestSeats(auth, id, guestId, requestMeta(req));
+  }
+
+  @Post(':id/clear')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @RequirePermission('menu:read')
+  @ApiOperation({ summary: 'Clear the table after guests left: closes the sitting, frees all seats' })
+  async clear(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(clearSchema)) _body: z.infer<typeof clearSchema>,
+    @Req() req: Request,
+  ) {
+    await this.orders.closeSession(auth, id, requestMeta(req), 'staff_cleared');
   }
 
   @Post(':id/close')
