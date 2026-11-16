@@ -4,6 +4,7 @@ import { QrCode, Timer, UserRound } from 'lucide-react';
 import { useState } from 'react';
 import { useRestaurantOverview } from '../overview';
 import { TableSessionPanel } from '../tables/table-session-panel';
+import { OccupancyPanel } from './occupancy-panel';
 import { Badge, BranchPicker, money, Table, timeOnly, Toolbar, useOps } from '../_kit/ops-kit';
 import {
   Card,
@@ -79,6 +80,7 @@ export default function DiningSessionsPage() {
           loading={q.isPending}
         />
       </StatGrid>
+      {branchId ? <OccupancyPanel branchId={branchId} /> : null}
       <Card>
         {q.isPending ? (
           <Skeleton className="h-40" />

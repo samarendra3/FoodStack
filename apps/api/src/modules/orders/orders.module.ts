@@ -12,6 +12,7 @@ import {
   OnlinePaymentsService,
 } from './online-payments.controller';
 import { OrdersService } from './orders.service';
+import { SeatReservationsService } from './seat-reservations';
 import {
   GuestSessionsController,
   GuestSessionsService,
@@ -34,6 +35,7 @@ import {
     BillingDeskService,
     InvoicesService,
     GuestSessionsService,
+    SeatReservationsService,
   ],
 })
 export class OrdersModule {}

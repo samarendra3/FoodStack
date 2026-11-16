@@ -25,6 +25,7 @@ import {
   type PaymentInput,
   type RefundInput,
 } from './orders.schemas';
+import { SeatReservationsService } from './seat-reservations';
 
 const forbidden = (message: string) => new ForbiddenException({ code: 'ORDER_FORBIDDEN', message });
 const conflict = (code: string, message: string) => new ConflictException({ code, message });
@@ -185,6 +186,7 @@ export class OrdersService {
     private readonly cache: CacheService,
     private readonly events: OrderEventsService,
     private readonly assignments: WaiterAssignmentsService,
+    private readonly seats: SeatReservationsService,
   ) {}
 
   /** Set by InvoicesService: issues the GST invoice when a bill is settled (same transaction). */
@@ -1399,7 +1401,12 @@ export class OrdersService {
   }
 
   /** Ends a sitting. Refused while any bill is open; the next scan starts a new sitting. */
-  closeSession(auth: AuthContext, sessionId: string, meta: RequestMeta) {
+  closeSession(
+    auth: AuthContext,
+    sessionId: string,
+    meta: RequestMeta,
+    reason: 'session_closed' | 'staff_cleared' = 'session_closed',
+  ) {
     return this.run(auth, async (db, access) => {
       const s = await db.one<SessionRow>(`${SESSION_SQL} WHERE s.id = $1 FOR UPDATE OF s`, [
         sessionId,
@@ -1423,10 +1430,20 @@ export class OrdersService {
           'Settle or cancel every open bill before closing the table.',
         );
       }
+      const pending = await db.one<{ n: string }>(
+        `SELECT count(*) AS n FROM payment_intents i JOIN orders o ON o.id = i.order_id
+          WHERE o.table_session_id = $1 AND i.status = 'created' AND i.expires_at > now()`,
+        [sessionId],
+      );
+      if (Number(pending?.n ?? 0) > 0) {
+        throw conflict('PAYMENT_PENDING', 'An online payment is still in progress for this table.');
+      }
       await db.query(
         `UPDATE table_sessions SET status = 'closed', closed_at = now(), closed_by = $2 WHERE id = $1`,
         [sessionId, auth.userId],
       );
+      // Seats are freed only here: every bill settled and the sitting closed, one transaction.
+      await this.seats.releaseSession(db, sessionId, reason, auth.userId);
       await writeAudit(db, {
         action: 'table_session.closed',
         tenantId: auth.tenantId,
@@ -1437,6 +1454,149 @@ export class OrdersService {
         entityId: sessionId,
         metadata: { table: s.table_label },
         ...meta,
+      });
+    });
+  }
+
+  /** Staff: free one group's seats once THAT guest's bill is fully settled. */
+  releaseGuestSeats(auth: AuthContext, sessionId: string, guestId: string, meta: RequestMeta) {
+    return this.run(auth, async (db, access) => {
+      const s = await db.one<SessionRow>(`${SESSION_SQL} WHERE s.id = $1 FOR UPDATE OF s`, [
+        sessionId,
+      ]);
+      if (!s) throw notFound('Table session');
+      this.require(
+        access,
+        s.branch_id,
+        ['pos:access', 'waiter:access'],
+        'You cannot release seats at this table.',
+      );
+      if (s.status !== 'open')
+        throw conflict('SESSION_CLOSED', 'This table session is already closed.');
+      const g = await db.one<{ id: string }>(
+        'SELECT id FROM table_guests WHERE id = $1 AND session_id = $2',
+        [guestId, sessionId],
+      );
+      if (!g) throw notFound('Guest');
+      const open = await db.one<{ n: string }>(
+        `SELECT count(*) AS n FROM orders WHERE guest_id = $1 AND status = 'open'`,
+        [guestId],
+      );
+      if (Number(open?.n ?? 0) > 0) {
+        throw conflict(
+          'GUEST_HAS_OPEN_BILL',
+          'This group still has an unpaid or partly paid bill. Seats stay reserved.',
+        );
+      }
+      const pending = await db.one<{ n: string }>(
+        `SELECT count(*) AS n FROM payment_intents i JOIN orders o ON o.id = i.order_id
+          WHERE o.guest_id = $1 AND i.status = 'created' AND i.expires_at > now()`,
+        [guestId],
+      );
+      if (Number(pending?.n ?? 0) > 0) {
+        throw conflict('PAYMENT_PENDING', 'An online payment is still in progress for this group.');
+      }
+      const active = await db.one<{ id: string }>(
+        `SELECT id FROM table_seat_reservations WHERE guest_id = $1 AND status = 'active'`,
+        [guestId],
+      );
+      if (!active) throw conflict('NO_ACTIVE_RESERVATION', 'This group holds no seats.');
+      await this.seats.releaseGuest(db, guestId, 'guest_settled', auth.userId);
+      await writeAudit(db, {
+        action: 'table_seat.released',
+        tenantId: auth.tenantId,
+        actorUserId: auth.userId,
+        actorSessionId: auth.sessionId,
+        actorAudience: 'tenant',
+        entityType: 'table_guest',
+        entityId: guestId,
+        metadata: { table: s.table_label },
+        ...meta,
+      });
+    });
+  }
+
+  /** Staff floor view: capacity, occupied, available and each group's seats and payment state. */
+  tableOccupancy(auth: AuthContext, branchId: string) {
+    return this.run(auth, async (db, access) => {
+      this.require(
+        access,
+        branchId,
+        ['pos:access', 'waiter:access', 'order:read'],
+        'You cannot view this branch.',
+      );
+      const tables = await db.query<{
+        id: string;
+        label: string;
+        area: string;
+        seats: number;
+        occupied: number;
+      }>(
+        `SELECT t.id, t.label, t.area, t.seats,
+                coalesce((SELECT sum(r.seats) FROM table_seat_reservations r
+                           WHERE r.table_id = t.id AND r.status = 'active'), 0)::int AS occupied
+           FROM dining_tables t
+          WHERE t.branch_id = $1 AND t.deleted_at IS NULL
+          ORDER BY t.area, t.sort_order, t.label`,
+        [branchId],
+      );
+      const groups = await db.query<Record<string, string | number>>(
+        `SELECT r.table_id, r.session_id, r.guest_id, r.seats, r.created_at,
+                g.display_name, g.guest_number,
+                coalesce((SELECT sum(o.total_minor) FROM orders o
+                           WHERE o.guest_id = g.id AND o.status <> 'cancelled'), 0) AS total,
+                coalesce((SELECT sum(o.paid_minor) FROM orders o
+                           WHERE o.guest_id = g.id AND o.status <> 'cancelled'), 0) AS paid,
+                coalesce((SELECT sum(o.total_minor - o.paid_minor) FROM orders o
+                           WHERE o.guest_id = g.id AND o.status = 'open'), 0) AS due,
+                (SELECT count(*) FROM payment_intents i JOIN orders o ON o.id = i.order_id
+                  WHERE o.guest_id = g.id AND i.status = 'created' AND i.expires_at > now()) AS pending
+           FROM table_seat_reservations r JOIN table_guests g ON g.id = r.guest_id
+          WHERE r.branch_id = $1 AND r.status = 'active'
+          ORDER BY g.guest_number`,
+        [branchId],
+      );
+      return tables.map((t) => {
+        const mine = groups
+          .filter((x) => x.table_id === t.id)
+          .map((x) => {
+            const total = Number(x.total);
+            const paid = Number(x.paid);
+            const due = Number(x.due);
+            const paymentStatus =
+              Number(x.pending) > 0
+                ? 'pending'
+                : total === 0
+                  ? 'no_orders'
+                  : due === 0
+                    ? 'paid'
+                    : paid > 0
+                      ? 'partial'
+                      : 'unpaid';
+            return {
+              guestId: x.guest_id as string,
+              sessionId: x.session_id as string,
+              name: x.display_name as string,
+              number: Number(x.guest_number),
+              seats: Number(x.seats),
+              totalMinor: total,
+              paidMinor: paid,
+              outstandingMinor: due,
+              paymentStatus,
+              canRelease: due === 0 && Number(x.pending) === 0,
+            };
+          });
+        return {
+          id: t.id,
+          label: t.label,
+          area: t.area,
+          capacity: t.seats,
+          occupied: t.occupied,
+          available: Math.max(t.seats - t.occupied, 0),
+          status: t.occupied === 0 ? 'available' : t.occupied >= t.seats ? 'full' : 'partial',
+          sessionId: mine[0]?.sessionId ?? null,
+          groups: mine,
+        };
       });
     });
   }
